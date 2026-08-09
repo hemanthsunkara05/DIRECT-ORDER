@@ -4,7 +4,7 @@ import { EnvValidationError, validateEnv } from '../src/platform/config/env.sche
 const BASE_VALID_ENV = {
   API_BASE_URL: 'http://localhost:4000',
   WEB_BASE_URL: 'http://localhost:3000',
-  DATABASE_URL: 'postgresql://user:pass@localhost:5432/direct_order',
+  APP_DATABASE_URL: 'postgresql://direct_order_app:pass@localhost:5432/direct_order',
 };
 
 describe('validateEnv', () => {
@@ -14,7 +14,7 @@ describe('validateEnv', () => {
     expect(env.APP_ENV).toBe('local');
     expect(env.PORT).toBe(4000);
     expect(env.LOG_LEVEL).toBe('info');
-    expect(env.DATABASE_URL).toBe(BASE_VALID_ENV.DATABASE_URL);
+    expect(env.APP_DATABASE_URL).toBe(BASE_VALID_ENV.APP_DATABASE_URL);
   });
 
   it('coerces PORT and DATABASE_POOL_MAX from strings', () => {
@@ -23,19 +23,19 @@ describe('validateEnv', () => {
     expect(env.DATABASE_POOL_MAX).toBe(25);
   });
 
-  it('rejects a missing DATABASE_URL', () => {
-    const { DATABASE_URL: _DATABASE_URL, ...rest } = BASE_VALID_ENV;
+  it('rejects a missing APP_DATABASE_URL', () => {
+    const { APP_DATABASE_URL: _APP_DATABASE_URL, ...rest } = BASE_VALID_ENV;
     expect(() => validateEnv(rest)).toThrow(EnvValidationError);
   });
 
   it('names the missing variable in the error message', () => {
-    const { DATABASE_URL: _DATABASE_URL, ...rest } = BASE_VALID_ENV;
+    const { APP_DATABASE_URL: _APP_DATABASE_URL, ...rest } = BASE_VALID_ENV;
     try {
       validateEnv(rest);
       expect.fail('expected validateEnv to throw');
     } catch (error) {
       expect(error).toBeInstanceOf(EnvValidationError);
-      expect((error as EnvValidationError).message).toContain('DATABASE_URL');
+      expect((error as EnvValidationError).message).toContain('APP_DATABASE_URL');
     }
   });
 
@@ -68,7 +68,7 @@ describe('validateEnv', () => {
       } catch (error) {
         expect(error).toBeInstanceOf(EnvValidationError);
         const message = (error as EnvValidationError).message;
-        expect(message).toContain('DATABASE_URL');
+        expect(message).toContain('APP_DATABASE_URL');
         // API_BASE_URL / WEB_BASE_URL are caught by the base schema (they
         // have no default), so they surface as schema issues rather than
         // the production-only check — either way, every missing variable
@@ -76,9 +76,9 @@ describe('validateEnv', () => {
       }
     });
 
-    it('rejects an empty-string DATABASE_URL under production even though the base schema treats "" as present', () => {
+    it('rejects an empty-string APP_DATABASE_URL under production even though the base schema treats "" as present', () => {
       expect(() =>
-        validateEnv({ ...BASE_VALID_ENV, APP_ENV: 'production', DATABASE_URL: '   ' }),
+        validateEnv({ ...BASE_VALID_ENV, APP_ENV: 'production', APP_DATABASE_URL: '   ' }),
       ).toThrow(EnvValidationError);
     });
   });

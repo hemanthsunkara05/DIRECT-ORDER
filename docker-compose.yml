@@ -12,6 +12,11 @@ services:
       - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Runs once, only against an empty data directory: creates the
+      # restricted `direct_order_app` role the application connects as
+      # (APP_DATABASE_URL). See infrastructure/postgres/init and
+      # prisma/grants.sql for the full local role-separation setup.
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U direct_order -d direct_order']
       interval: 5s

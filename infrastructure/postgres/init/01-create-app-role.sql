@@ -1,0 +1,18 @@
+-- Runs exactly once, automatically, the first time the postgres
+-- container initializes an EMPTY data directory (standard behavior of
+-- the official postgres image for anything mounted into
+-- /docker-entrypoint-initdb.d/, per its entrypoint script — it does
+-- NOT re-run on every `docker compose up`, only on a fresh volume).
+--
+-- Creates the restricted role the running application connects as,
+-- distinct from the migration/owner role (POSTGRES_USER in
+-- docker-compose.yml). Privileges on actual tables are granted
+-- separately by prisma/grants.sql, run AFTER migrations create those
+-- tables — this script runs before any table exists, so it can only
+-- create the login role itself.
+--
+-- Local development password only — never use this value anywhere
+-- real. Production provisions its own credentials through the
+-- platform's secret manager
+-- (PRODUCT/docs/10-infrastructure-deployment.md §16.3), not this file.
+CREATE ROLE direct_order_app WITH LOGIN PASSWORD 'direct_order_app';

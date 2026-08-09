@@ -25,7 +25,7 @@ const TEST_ENV: Env = {
   API_BASE_URL: 'http://localhost:4000',
   WEB_BASE_URL: 'http://localhost:3000',
   LOG_LEVEL: 'silent',
-  DATABASE_URL: 'postgresql://test:test@localhost:5432/direct_order_test',
+  APP_DATABASE_URL: 'postgresql://direct_order_app:test@localhost:5432/direct_order_test',
   DATABASE_POOL_MAX: 5,
 };
 

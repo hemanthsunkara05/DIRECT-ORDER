@@ -45,7 +45,9 @@ export class PrismaService
     @Inject(PINO_LOGGER) private readonly logger: Logger,
   ) {
     super({
-      datasources: { db: { url: env.DATABASE_URL } },
+      // The restricted runtime role, not the migration/owner role — see
+      // env.schema.ts and prisma/grants.sql.
+      datasources: { db: { url: env.APP_DATABASE_URL } },
       log: [
         { emit: 'event', level: 'warn' },
         { emit: 'event', level: 'error' },

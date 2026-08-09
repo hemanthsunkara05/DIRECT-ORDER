@@ -5,19 +5,21 @@ import { LoggingModule } from './logging/logging.module.js';
 import { CorrelationMiddleware } from './logging/correlation.middleware.js';
 import { ErrorsModule } from './errors/errors.module.js';
 import { DatabaseModule } from './database/database.module.js';
+import { AuditModule } from './audit/audit.module.js';
 import { HealthModule } from './health/health.module.js';
 
 /**
  * Aggregates every foundation-layer concern (config, logging, error
- * handling, database connectivity, health) into one module that
- * AppModule imports. Domain modules (restaurants, ordering, payments,
- * ...) added in later phases depend on this but never the reverse
- * (PRODUCT/docs/12-repository-structure.md — dependency direction).
+ * handling, database connectivity, audit logging, health) into one
+ * module that AppModule imports. Domain modules (restaurants, ordering,
+ * payments, ...) added in later phases depend on this but never the
+ * reverse (PRODUCT/docs/12-repository-structure.md — dependency direction).
  *
- * ConfigModule, LoggingModule, and DatabaseModule are each `@Global()`,
- * so importing them once here makes their providers (APP_CONFIG,
- * PINO_LOGGER, PrismaService, ...) injectable anywhere in the
- * application without every future domain module re-importing them.
+ * ConfigModule, LoggingModule, DatabaseModule, and AuditModule are each
+ * `@Global()`, so importing them once here makes their providers
+ * (APP_CONFIG, PINO_LOGGER, PrismaService, AuditService, ...) injectable
+ * anywhere in the application without every future domain module
+ * re-importing them.
  */
 @Module({})
 export class PlatformModule implements NestModule {
@@ -29,6 +31,7 @@ export class PlatformModule implements NestModule {
         LoggingModule,
         ErrorsModule,
         DatabaseModule,
+        AuditModule,
         HealthModule,
       ],
     };

@@ -1,14 +1,15 @@
 // Direct-Order — Prisma schema
 //
-// Phase 1 (Foundation) deliberately has ZERO domain models. Its only
-// job is to prove the migration pipeline works: `prisma generate`
-// produces a usable client, and `prisma migrate dev` can create and
-// apply a migration against a real database.
+// Phase 2 (Core schema and tenancy): identity, restaurant-as-tenant,
+// staff membership, and the append-only audit log. See
+// PRODUCT/docs/01-domain-model.md §5.1–5.2 and
+// PRODUCT/docs/02-database-schema.md for the authoritative field-level
+// specification this schema implements.
 //
-// Domain models (User, Restaurant, MenuItem, Order, ...) arrive in
-// Phase 2 per PRODUCT/docs/13-implementation-phases.md, following the
-// exact schema in PRODUCT/docs/02-database-schema.md. Do not add
-// models here ahead of that phase.
+// Deliberately excludes anything not yet needed: Customer, AdminUser,
+// OtpChallenge (Phase 3 auth), OperatingHours/SpecialHours/ClosurePeriod
+// (Phase 7 public page), and every order/payment/catalog table (Phases
+// 6+). Do not add them ahead of the phase that needs them.
 
 generator client {
   provider = "prisma-client-js"
@@ -17,4 +18,303 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+/// Platform-controlled restaurant lifecycle (docs/03-state-machines.md §7.5).
+/// Distinct from `Restaurant.onboardingStatus`, which tracks the owner's own
+/// progress through the onboarding wizard and never gates public visibility
+/// or ordering on its own — only `status` and `orderingEnabled` do that.
+enum RestaurantStatus {
+  DRAFT
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+  CLOSED
+  REJECTED
+}
+
+enum RestaurantOnboardingStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum RestaurantStaffRole {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+/// A RestaurantStaff row is created only once an invitation is accepted
+/// (see StaffInvitationStatus) — so its own status only ever needs to
+/// express whether an existing membership is currently usable.
+enum RestaurantStaffStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum StaffInvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Identity
+// ─────────────────────────────────────────────────────────────────
+
+/// A human principal who can authenticate. Covers restaurant users and
+/// (in later phases) admins and registered customers. Guests never get a
+/// User row. Never hard-deleted — disabling revokes all sessions instead.
+///
+/// INVARIANT (enforced at the application/service layer for now — Prisma's
+/// schema DSL cannot express a declarative "at least one of two nullable
+/// columns is non-null" CHECK constraint; add one to the generated
+/// migration when it exists): at least one of `email`/`phone` must be set.
+model User {
+  id              String     @id @default(uuid(7)) @db.Uuid
+  email           String?    @unique
+  phone           String?    @unique
+  passwordHash    String?    @map("password_hash")
+  fullName        String     @map("full_name")
+  status          UserStatus @default(ACTIVE)
+  emailVerifiedAt DateTime?  @map("email_verified_at") @db.Timestamptz
+  phoneVerifiedAt DateTime?  @map("phone_verified_at") @db.Timestamptz
+  mfaSecret       String?    @map("mfa_secret")
+  mfaEnabledAt    DateTime?  @map("mfa_enabled_at") @db.Timestamptz
+  lastLoginAt     DateTime?  @map("last_login_at") @db.Timestamptz
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+
+  sessions             Session[]
+  restaurantStaff      RestaurantStaff[] @relation("StaffMember")
+  staffMembersInvited  RestaurantStaff[] @relation("StaffInvitedBy")
+  staffInvitationsSent StaffInvitation[] @relation("InvitationSentBy")
+
+  @@map("users")
+}
+
+/// Server-side record making refresh tokens revocable (docs/09-security.md
+/// §15.2). Reuse of an already-rotated token is a token-theft signal —
+/// handled at the service layer in Phase 3, not by this table alone.
+model Session {
+  id               String    @id @default(uuid(7)) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  refreshTokenHash String    @unique @map("refresh_token_hash")
+  userAgent        String?   @map("user_agent")
+  ipHash           String?   @map("ip_hash")
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz
+  rotatedFromId    String?   @map("rotated_from_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Restaurant (tenant root)
+// ─────────────────────────────────────────────────────────────────
+
+/// The tenant. Every restaurant-owned resource in every later phase
+/// carries a non-null restaurantId back to this table
+/// (docs/02-database-schema.md §6.5, tenant isolation).
+///
+/// Slug format (lowercase alphanumeric + hyphens, 3–63 chars, reserved-word
+/// check) is validated at the service layer in Phase 5, where restaurant
+/// creation is actually implemented — only uniqueness is enforced here.
+model Restaurant {
+  id               String                      @id @default(uuid(7)) @db.Uuid
+  slug             String                      @unique
+  name             String
+  description      String?
+  phone            String?
+  email            String?
+  timezone         String                      @default("Asia/Kolkata")
+  status           RestaurantStatus            @default(DRAFT)
+  onboardingStatus RestaurantOnboardingStatus  @default(NOT_STARTED) @map("onboarding_status")
+  orderingEnabled  Boolean                     @default(false) @map("ordering_enabled")
+  avgPrepMinutes   Int?                        @map("avg_prep_minutes")
+  ratingAvg        Decimal?                    @map("rating_avg") @db.Decimal(3, 2)
+  ratingCount      Int                         @default(0) @map("rating_count")
+  createdAt        DateTime                    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime                    @updatedAt @map("updated_at") @db.Timestamptz
+
+  address     RestaurantAddress?
+  branding    RestaurantBranding?
+  settings    RestaurantSettings?
+  staff       RestaurantStaff[]
+  invitations StaffInvitation[]
+
+  @@map("restaurants")
+  @@index([status])
+}
+
+/// Pickup address for delivery and the public location. 1:1 with
+/// Restaurant; meaningless without it, hence CASCADE
+/// (docs/02-database-schema.md §6.1, deletion policy).
+model RestaurantAddress {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  restaurantId String   @unique @map("restaurant_id") @db.Uuid
+  line1        String
+  line2        String?
+  locality     String?
+  city         String
+  state        String
+  postalCode   String   @map("postal_code")
+  latitude     Decimal? @db.Decimal(9, 6)
+  longitude    Decimal? @db.Decimal(9, 6)
+  landmark     String?
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@map("restaurant_addresses")
+}
+
+/// Branding kept separate from Restaurant itself so the public ordering
+/// page (Phase 7) can fetch it cheaply and independently.
+model RestaurantBranding {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  restaurantId      String   @unique @map("restaurant_id") @db.Uuid
+  logoUrl           String?  @map("logo_url")
+  coverImageUrl     String?  @map("cover_image_url")
+  themePrimaryColor String?  @map("theme_primary_color")
+  themeAccentColor  String?  @map("theme_accent_color")
+  tagline           String?
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@map("restaurant_branding")
+}
+
+/// Operational configuration. Money fields are integer paise (`*Minor`,
+/// BigInt) per INV-1/BR-1 — never a float, never a Decimal used for
+/// arithmetic. `deliveryFeeMode` stays a plain string for now rather than
+/// an enum: Phase 11 (delivery integration) will determine the real set of
+/// modes once there is an actual provider to model against; formalising it
+/// here would be guessing ahead of that requirement.
+model RestaurantSettings {
+  id                   String   @id @default(uuid(7)) @db.Uuid
+  restaurantId         String   @unique @map("restaurant_id") @db.Uuid
+  minOrderAmountMinor  BigInt   @default(0) @map("min_order_amount_minor")
+  packagingFeeMinor    BigInt   @default(0) @map("packaging_fee_minor")
+  deliveryFeeMode      String   @default("FLAT") @map("delivery_fee_mode")
+  deliveryFeeFlatMinor BigInt   @default(0) @map("delivery_fee_flat_minor")
+  acceptsOnlinePayment Boolean  @default(false) @map("accepts_online_payment")
+  autoAcceptOrders     Boolean  @default(false) @map("auto_accept_orders")
+  notificationEmails   String[] @map("notification_emails")
+  notificationPhones   String[] @map("notification_phones")
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@map("restaurant_settings")
+}
+
+/// Membership linking a User to a Restaurant with a role. Created only
+/// once a StaffInvitation is accepted — see StaffInvitationStatus; there
+/// is deliberately no INVITED value on RestaurantStaffStatus itself.
+///
+/// INVARIANT enforced at the service layer (Phase 5): every restaurant
+/// must retain at least one ACTIVE OWNER; the last one cannot be disabled
+/// or have its role changed.
+model RestaurantStaff {
+  id              String                @id @default(uuid(7)) @db.Uuid
+  userId          String                @map("user_id") @db.Uuid
+  restaurantId    String                @map("restaurant_id") @db.Uuid
+  role            RestaurantStaffRole
+  status          RestaurantStaffStatus @default(ACTIVE)
+  invitedByUserId String?               @map("invited_by_user_id") @db.Uuid
+  joinedAt        DateTime              @default(now()) @map("joined_at") @db.Timestamptz
+  disabledAt      DateTime?             @map("disabled_at") @db.Timestamptz
+  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime              @updatedAt @map("updated_at") @db.Timestamptz
+
+  user          User       @relation("StaffMember", fields: [userId], references: [id], onDelete: Restrict)
+  invitedByUser User?      @relation("StaffInvitedBy", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+  restaurant    Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  // Phase 2 acceptance criterion: duplicate (user_id, restaurant_id) fails
+  // at the database level, not just in application code.
+  @@unique([userId, restaurantId])
+  @@map("restaurant_staff")
+  @@index([restaurantId, status])
+}
+
+/// Single-use, expiring invitation. The raw token exists only in the
+/// emailed link (Phase 5) — only its hash is ever persisted.
+model StaffInvitation {
+  id              String                @id @default(uuid(7)) @db.Uuid
+  restaurantId    String                @map("restaurant_id") @db.Uuid
+  email           String
+  role            RestaurantStaffRole
+  status          StaffInvitationStatus @default(PENDING)
+  tokenHash       String                @unique @map("token_hash")
+  invitedByUserId String                @map("invited_by_user_id") @db.Uuid
+  expiresAt       DateTime              @map("expires_at") @db.Timestamptz
+  acceptedAt      DateTime?             @map("accepted_at") @db.Timestamptz
+  revokedAt       DateTime?             @map("revoked_at") @db.Timestamptz
+  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz
+
+  restaurant    Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  invitedByUser User       @relation("InvitationSentBy", fields: [invitedByUserId], references: [id], onDelete: Restrict)
+
+  @@map("staff_invitations")
+  @@index([restaurantId, status])
+  @@index([email])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Audit
+// ─────────────────────────────────────────────────────────────────
+
+/// Append-only record of every privileged or state-changing action
+/// (docs/02-database-schema.md, audit_logs). No `@relation` to the entities
+/// it references: an audit record must remain exactly as it was recorded
+/// even if the referenced restaurant/entity is later modified, and must
+/// never be blocked from being written by a foreign-key constraint.
+///
+/// The application's own AuditRepository (apps/api/src/platform/audit)
+/// exposes create + read only — no update, no delete — as the first layer
+/// of enforcement. `prisma/grants.sql` revokes UPDATE/DELETE on this table
+/// from the restricted runtime database role as the second, database-level
+/// layer (defence in depth: an application bug reaching for `$executeRaw`
+/// still cannot rewrite history).
+model AuditLog {
+  id            String   @id @default(uuid(7)) @db.Uuid
+  actorType     String   @map("actor_type")
+  actorId       String?  @map("actor_id") @db.Uuid
+  action        String
+  entityType    String   @map("entity_type")
+  entityId      String?  @map("entity_id") @db.Uuid
+  restaurantId  String?  @map("restaurant_id") @db.Uuid
+  before        Json?
+  after         Json?
+  reason        String?
+  correlationId String?  @map("correlation_id")
+  ipHash        String?  @map("ip_hash")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("audit_logs")
+  @@index([entityType, entityId, createdAt(sort: Desc)])
+  @@index([actorType, actorId, createdAt(sort: Desc)])
+  @@index([restaurantId, createdAt(sort: Desc)])
 }

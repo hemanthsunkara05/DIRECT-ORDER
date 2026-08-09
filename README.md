@@ -53,7 +53,9 @@ docker compose up -d
 # Wait ~10s for health checks to pass, or run: docker compose ps
 
 pnpm db:generate   # Generates the Prisma client
-pnpm db:migrate    # Creates and applies migrations (empty in Phase 1)
+pnpm db:migrate    # Creates and applies migrations
+pnpm db:grants     # Applies restricted runtime-role privileges (prisma/grants.sql)
+pnpm db:seed       # Optional: two sample restaurants with distinct owners/staff
 
 pnpm dev
 # Starts api (http://localhost:4000), web (http://localhost:3000),
@@ -86,6 +88,7 @@ Run from the repository root unless noted.
 | `pnpm db:generate`       | Regenerate the Prisma client after a schema change                   |
 | `pnpm db:migrate`        | Create + apply a new migration (local development)                   |
 | `pnpm db:migrate:deploy` | Apply existing migrations without creating a new one (CI/production) |
+| `pnpm db:grants`         | Apply `prisma/grants.sql` (restricted runtime-role privileges)       |
 | `pnpm db:seed`           | Run `prisma/seed.ts`                                                 |
 
 Scope a command to one workspace with `--filter`, e.g.:
@@ -101,7 +104,18 @@ See [.env.example](.env.example) for the complete list, grouped by concern, each
 
 **Never commit `.env` or any file containing real secrets.** `.env.example` contains variable names and formats only.
 
-In production (`APP_ENV=production`), the API refuses to start if `DATABASE_URL`, `API_BASE_URL`, or `WEB_BASE_URL` are missing — it names the exact variable rather than failing later with an obscure error.
+In production (`APP_ENV=production`), the API refuses to start if `APP_DATABASE_URL`, `API_BASE_URL`, or `WEB_BASE_URL` are missing — it names the exact variable rather than failing later with an obscure error. `DATABASE_URL` (a separate variable) is used only by the Prisma CLI for migrations and grants, never by the running application — see Database roles below.
+
+## Database roles
+
+Two separate Postgres roles, deliberately (Phase 2, `docs/02-database-schema.md`):
+
+- **`direct_order`** (`DATABASE_URL`) — the owner/migration role. Used only by `prisma migrate` and `pnpm db:grants`. Has full DDL privileges.
+- **`direct_order_app`** (`APP_DATABASE_URL`) — the restricted runtime role the API and worker actually connect as. Created locally by `infrastructure/postgres/init/01-create-app-role.sql` on first `docker compose up`; its table-level privileges come from `prisma/grants.sql`, applied via `pnpm db:grants` after every migration.
+
+The point: even if application code were compromised or buggy, it cannot rewrite `audit_logs` — `direct_order_app` is granted `SELECT, INSERT` on that table only, never `UPDATE`/`DELETE`, enforced by Postgres itself rather than trusted to application code alone.
+
+Production provisions its own equivalent roles through the platform's secret manager, not these files.
 
 ## Testing
 

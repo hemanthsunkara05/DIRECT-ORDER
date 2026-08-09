@@ -5,6 +5,6 @@
     "moduleResolution": "NodeNext",
     "noEmit": true
   },
-  "include": ["prisma/**/*.ts"],
+  "include": ["prisma/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["prisma/generated"]
 }
