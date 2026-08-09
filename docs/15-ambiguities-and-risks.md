@@ -10,12 +10,13 @@ Items marked **REQUIRES PRODUCT DECISION** must be answered by the product owner
 
 ## AMB-1 — Layer 2 discovery: forbidden or required?
 
-**Conflict.** The product requirements state that the shared discovery marketplace must not be built, that each restaurant's link works independently, and that there is deliberately no central app customers must discover restaurants through. A later requirement then specifies cross-restaurant search, filtering, "browse nearby", popularity ranking, and a discovery page with "nearby / popular / top rated" sections. **These describe the same surface.** Cross-restaurant discovery *is* Layer 2.
+**Conflict.** The product requirements state that the shared discovery marketplace must not be built, that each restaurant's link works independently, and that there is deliberately no central app customers must discover restaurants through. A later requirement then specifies cross-restaurant search, filtering, "browse nearby", popularity ranking, and a discovery page with "nearby / popular / top rated" sections. **These describe the same surface.** Cross-restaurant discovery _is_ Layer 2.
 
 **Interpretations**
+
 1. Discovery was deferred; the later requirement was written without reference to the earlier constraint.
 2. Scope genuinely expanded and Layer 2 is now in scope.
-3. Search is intended only *within* a restaurant's menu, plus admin search.
+3. Search is intended only _within_ a restaurant's menu, plus admin search.
 
 **Recommended: interpretation 3 for launch, with 1 as the path forward.** Ship in-restaurant menu search and admin search. Build cross-restaurant discovery behind `DISCOVERY_ENABLED=false`.
 
@@ -44,6 +45,7 @@ Open sub-question: should points earned as a guest be retroactively granted on l
 **Unresolved in the source material and explicitly flagged there.** Do funds settle to a platform account and then to restaurants, or directly to each restaurant?
 
 **Interpretations**
+
 1. **Platform collects, then remits.** Simple to build; likely makes the platform a payment aggregator, which in India carries RBI licensing implications, and the platform holds customer funds.
 2. **Direct settlement to each restaurant** (Razorpay Route or per-restaurant sub-merchant accounts). Each restaurant completes its own KYC; the platform never holds funds.
 
@@ -116,6 +118,7 @@ Delivery can fail for reasons attributable to the customer (unreachable, wrong a
 Coupons, restaurant promotions, platform promotions, loyalty redemption, and referral coupons can all apply to one order. No stacking rule is specified.
 
 **Recommended:**
+
 - At most **one promotion or coupon** per order. If several are eligible, apply the one giving the greatest customer benefit and state which was applied.
 - **Loyalty redemption may combine** with one promotion, applied after the promotion discount.
 - Combined discounts never exceed the discountable base; the total never goes below zero.
@@ -197,26 +200,26 @@ Financial-record retention in India is commonly cited as 7–8 years, but the ex
 
 # 23. Risk Register
 
-| ID | Risk | Category | Severity | Likelihood | Mitigation |
-|---|---|---|---|---|---|
-| RISK-1 | **Payment settlement structure unresolved** — building on the wrong model requires reworking payments, onboarding, and reconciliation | Financial / Legal | **CRITICAL** | High | AMB-3. Provider adapter isolates the change. Do not process real money until decided |
-| RISK-2 | **Cross-tenant data leak** — one restaurant sees another's customers or revenue | Security | **CRITICAL** | Medium | Guards + repository scoping + parameterised isolation suite + optional RLS. Highest test priority |
-| RISK-3 | **Delivery provider API unavailable** — Uber Direct self-serve access in Bengaluru unconfirmed | Technical / Business | **HIGH** | High | Provider abstraction + mock adapter; manual dispatch fallback; never claim production delivery when mocked |
-| RISK-4 | **Duplicate or missed financial operation** under concurrency or webhook retry | Financial | **CRITICAL** | Medium | Database-level idempotency constraints, row locking, outbox pattern, reconciliation, dedicated concurrency tests |
-| RISK-5 | **Payment gateway KYC delay** blocks launch | Business | **HIGH** | Medium | Start KYC immediately, in parallel with development. Not an engineering task |
-| RISK-6 | **Restaurant misses an order** — dashboard closed, connection dropped, notification failed | Operational | **HIGH** | Medium | SSE + replay + polling fallback + SMS alert + audible indicator. Database is authoritative, never the stream |
-| RISK-7 | **Webhook forgery** marks unpaid orders paid | Security / Financial | **CRITICAL** | Low | Raw-body signature verification, constant-time comparison, replay protection, amount verification, alerting on signature failures |
-| RISK-8 | **Scope overrun** — building loyalty, referrals, and discovery before the pilot proves demand | Delivery | **HIGH** | High | Phases 1–11 are the pilot. Do not start Phase 12 before a real restaurant is live |
-| RISK-9 | **Backups never restore-tested** — discovering this during an incident | Operational | **HIGH** | Medium | Monthly restore drill; report `NOT VERIFIED` until one passes |
-| RISK-10 | **Promotion or loyalty abuse** — coupon farming, referral rings, reward loops | Financial | **MEDIUM** | Medium | Server-side limits with row locking, reservation model, qualification on delivery, one-referrer-per-customer, rate limits |
-| RISK-11 | **WhatsApp/DLT approval delay** degrades order alerting | Operational | **MEDIUM** | High | SMS-first; WhatsApp as enhancement; in-app always available |
-| RISK-12 | **Timezone and overnight-hours bugs** — restaurant shown closed while open | Technical | **MEDIUM** | Medium | Single availability authority, restaurant-timezone evaluation, explicit overnight tests |
-| RISK-13 | **Analytics or notification failure rolling back a transaction** | Technical | **HIGH** | Low | Outbox pattern, async consumers, explicit tests that provider outage does not affect order state |
-| RISK-14 | **Postgres search outgrown** as restaurant count rises | Scalability | **LOW** | Low | Documented migration triggers; act on measurement, not anticipation |
-| RISK-15 | **Admin account compromise** | Security | **HIGH** | Low | Mandatory MFA, short sessions, full audit, no state-machine override, least-privilege admin roles |
-| RISK-16 | **Tax treatment incorrect** — under-collecting GST creates liability | Legal / Financial | **HIGH** | Medium | AMB-13. Configurable, separately persisted, requires professional advice before live operation |
-| RISK-17 | **Solo-team operational load** — one person cannot run 24/7 incident response | Operational | **MEDIUM** | High | Alert only on genuinely actionable conditions; runbooks; graceful degradation; managed infrastructure |
-| RISK-18 | **Order state corruption via manual intervention** | Financial / Data | **HIGH** | Low | No override path exists; corrections are compensating operations; all transitions audited |
+| ID      | Risk                                                                                                                                  | Category             | Severity     | Likelihood | Mitigation                                                                                                                        |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| RISK-1  | **Payment settlement structure unresolved** — building on the wrong model requires reworking payments, onboarding, and reconciliation | Financial / Legal    | **CRITICAL** | High       | AMB-3. Provider adapter isolates the change. Do not process real money until decided                                              |
+| RISK-2  | **Cross-tenant data leak** — one restaurant sees another's customers or revenue                                                       | Security             | **CRITICAL** | Medium     | Guards + repository scoping + parameterised isolation suite + optional RLS. Highest test priority                                 |
+| RISK-3  | **Delivery provider API unavailable** — Uber Direct self-serve access in Bengaluru unconfirmed                                        | Technical / Business | **HIGH**     | High       | Provider abstraction + mock adapter; manual dispatch fallback; never claim production delivery when mocked                        |
+| RISK-4  | **Duplicate or missed financial operation** under concurrency or webhook retry                                                        | Financial            | **CRITICAL** | Medium     | Database-level idempotency constraints, row locking, outbox pattern, reconciliation, dedicated concurrency tests                  |
+| RISK-5  | **Payment gateway KYC delay** blocks launch                                                                                           | Business             | **HIGH**     | Medium     | Start KYC immediately, in parallel with development. Not an engineering task                                                      |
+| RISK-6  | **Restaurant misses an order** — dashboard closed, connection dropped, notification failed                                            | Operational          | **HIGH**     | Medium     | SSE + replay + polling fallback + SMS alert + audible indicator. Database is authoritative, never the stream                      |
+| RISK-7  | **Webhook forgery** marks unpaid orders paid                                                                                          | Security / Financial | **CRITICAL** | Low        | Raw-body signature verification, constant-time comparison, replay protection, amount verification, alerting on signature failures |
+| RISK-8  | **Scope overrun** — building loyalty, referrals, and discovery before the pilot proves demand                                         | Delivery             | **HIGH**     | High       | Phases 1–11 are the pilot. Do not start Phase 12 before a real restaurant is live                                                 |
+| RISK-9  | **Backups never restore-tested** — discovering this during an incident                                                                | Operational          | **HIGH**     | Medium     | Monthly restore drill; report `NOT VERIFIED` until one passes                                                                     |
+| RISK-10 | **Promotion or loyalty abuse** — coupon farming, referral rings, reward loops                                                         | Financial            | **MEDIUM**   | Medium     | Server-side limits with row locking, reservation model, qualification on delivery, one-referrer-per-customer, rate limits         |
+| RISK-11 | **WhatsApp/DLT approval delay** degrades order alerting                                                                               | Operational          | **MEDIUM**   | High       | SMS-first; WhatsApp as enhancement; in-app always available                                                                       |
+| RISK-12 | **Timezone and overnight-hours bugs** — restaurant shown closed while open                                                            | Technical            | **MEDIUM**   | Medium     | Single availability authority, restaurant-timezone evaluation, explicit overnight tests                                           |
+| RISK-13 | **Analytics or notification failure rolling back a transaction**                                                                      | Technical            | **HIGH**     | Low        | Outbox pattern, async consumers, explicit tests that provider outage does not affect order state                                  |
+| RISK-14 | **Postgres search outgrown** as restaurant count rises                                                                                | Scalability          | **LOW**      | Low        | Documented migration triggers; act on measurement, not anticipation                                                               |
+| RISK-15 | **Admin account compromise**                                                                                                          | Security             | **HIGH**     | Low        | Mandatory MFA, short sessions, full audit, no state-machine override, least-privilege admin roles                                 |
+| RISK-16 | **Tax treatment incorrect** — under-collecting GST creates liability                                                                  | Legal / Financial    | **HIGH**     | Medium     | AMB-13. Configurable, separately persisted, requires professional advice before live operation                                    |
+| RISK-17 | **Solo-team operational load** — one person cannot run 24/7 incident response                                                         | Operational          | **MEDIUM**   | High       | Alert only on genuinely actionable conditions; runbooks; graceful degradation; managed infrastructure                             |
+| RISK-18 | **Order state corruption via manual intervention**                                                                                    | Financial / Data     | **HIGH**     | Low        | No override path exists; corrections are compensating operations; all transitions audited                                         |
 
 ## Risk posture
 

@@ -4,12 +4,12 @@
 
 ## 16.1 Environments
 
-| Environment | Purpose | Database | Payments | Delivery | Notifications |
-|---|---|---|---|---|---|
-| **local** | Development | Docker Postgres + Redis | Razorpay test | Mock | Console adapter |
-| **test** | Automated tests | Testcontainers, ephemeral | Stub | Mock | Memory adapter |
-| **staging** | Pre-production | Managed, separate instance | Razorpay test | Mock or provider sandbox | Real providers, internal recipients only |
-| **production** | Live | Managed + PITR | Razorpay live | Provider live (when approved) | Real providers |
+| Environment    | Purpose         | Database                   | Payments      | Delivery                      | Notifications                            |
+| -------------- | --------------- | -------------------------- | ------------- | ----------------------------- | ---------------------------------------- |
+| **local**      | Development     | Docker Postgres + Redis    | Razorpay test | Mock                          | Console adapter                          |
+| **test**       | Automated tests | Testcontainers, ephemeral  | Stub          | Mock                          | Memory adapter                           |
+| **staging**    | Pre-production  | Managed, separate instance | Razorpay test | Mock or provider sandbox      | Real providers, internal recipients only |
+| **production** | Live            | Managed + PITR             | Razorpay live | Provider live (when approved) | Real providers                           |
 
 **Hard separations.** Staging never holds production payment credentials. Development never connects to the production database. Production startup **fails loudly** if a sandbox payment key is detected — a silent fallback to test mode would mean taking orders that collect no money.
 
@@ -92,37 +92,37 @@ PAYMENTS_LIVE_MODE           # explicit opt-in to real money
 
 **Backup permissions are separate from application credentials** — a compromised application must not be able to delete its own backups.
 
-| Objective | Target | Current capability |
-|---|---|---|
-| RPO | ≤ 5 minutes | PITR-dependent, confirm with provider |
-| RTO | ≤ 2 hours | Unverified until a restore drill passes |
+| Objective | Target      | Current capability                      |
+| --------- | ----------- | --------------------------------------- |
+| RPO       | ≤ 5 minutes | PITR-dependent, confirm with provider   |
+| RTO       | ≤ 2 hours   | Unverified until a restore drill passes |
 
 ## 16.5 Failure behaviour
 
-| Dependency down | Behaviour |
-|---|---|
-| Postgres | API returns 503 on `/ready`, traffic drains. **No degraded write path** — inconsistent financial state is worse than downtime |
-| Redis | Jobs pause and queue in the outbox; rate limiting fails **closed** for auth, open for reads; caching bypassed. Ordering continues |
-| Payment provider | Checkout blocked with a clear message. Never fabricate success. Existing orders continue to be fulfilled |
+| Dependency down   | Behaviour                                                                                                                         |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Postgres          | API returns 503 on `/ready`, traffic drains. **No degraded write path** — inconsistent financial state is worse than downtime     |
+| Redis             | Jobs pause and queue in the outbox; rate limiting fails **closed** for auth, open for reads; caching bypassed. Ordering continues |
+| Payment provider  | Checkout blocked with a clear message. Never fabricate success. Existing orders continue to be fulfilled                          |
 | Delivery provider | Orders accepted and prepared; dispatch queues and retries; restaurant and admin alerted. Order is **not** marked out for delivery |
-| SMS/WhatsApp | Notifications queue and retry; in-app notifications unaffected; business flows unaffected |
-| Object storage | Existing CDN-cached images serve; new uploads fail with a clear error; ordering unaffected |
-| Search | Falls back to category browse. Ordering unaffected |
+| SMS/WhatsApp      | Notifications queue and retry; in-app notifications unaffected; business flows unaffected                                         |
+| Object storage    | Existing CDN-cached images serve; new uploads fail with a clear error; ordering unaffected                                        |
+| Search            | Falls back to category browse. Ordering unaffected                                                                                |
 
 **Never degrade:** payment verification, authorization, tenant isolation, financial calculation, audit logging.
 
 ## 16.6 Cost profile (pilot scale)
 
-| Item | Estimate/month |
-|---|---|
-| Vercel (frontend) | $0–20 |
-| API + worker hosting | $20–40 |
-| Managed Postgres | $20–30 |
-| Managed Redis | $0–10 |
-| Object storage + CDN (R2) | $1–5 |
-| Sentry | $0–26 |
-| SMS (~1,000 messages) | ₹150–250 |
-| **Total** | **≈ $50–120** |
+| Item                      | Estimate/month |
+| ------------------------- | -------------- |
+| Vercel (frontend)         | $0–20          |
+| API + worker hosting      | $20–40         |
+| Managed Postgres          | $20–30         |
+| Managed Redis             | $0–10          |
+| Object storage + CDN (R2) | $1–5           |
+| Sentry                    | $0–26          |
+| SMS (~1,000 messages)     | ₹150–250       |
+| **Total**                 | **≈ $50–120**  |
 
 Payment gateway fees (~2% + GST) are transaction costs, not infrastructure. The first cost cliffs at growth are SMS volume and Postgres tier.
 
@@ -175,12 +175,12 @@ Contract migrations (dropping columns) ship in a **later** deploy, once no runni
 
 ## 17.4 Rollback
 
-| Component | Procedure |
-|---|---|
-| Frontend | Instant revert to previous deployment |
-| Backend/worker | Redeploy previous image tag |
-| Configuration | Restore previous values, restart |
-| Database | **Do not blindly reverse a migration.** Expand-only migrations are backward compatible, so an application rollback alone is usually sufficient. Genuine data corruption uses PITR to a pre-incident timestamp — a deliberate, approved decision |
+| Component      | Procedure                                                                                                                                                                                                                                       |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend       | Instant revert to previous deployment                                                                                                                                                                                                           |
+| Backend/worker | Redeploy previous image tag                                                                                                                                                                                                                     |
+| Configuration  | Restore previous values, restart                                                                                                                                                                                                                |
+| Database       | **Do not blindly reverse a migration.** Expand-only migrations are backward compatible, so an application rollback alone is usually sufficient. Genuine data corruption uses PITR to a pre-incident timestamp — a deliberate, approved decision |
 
 Rollback triggers: error rate above 5% for 5 minutes, payment success below 90%, authentication broken, any tenant-isolation failure, database corruption.
 
@@ -193,19 +193,19 @@ Graceful shutdown on SIGTERM: stop accepting connections → drain in-flight req
 
 ## 17.6 Monitoring and alerts
 
-| Alert | Threshold | Severity |
-|---|---|---|
-| API 5xx rate | > 2% for 5 min | HIGH |
-| `/ready` failing | Any instance, 2 min | CRITICAL |
-| Payment success rate | < 90% over 15 min | CRITICAL |
-| Webhook signature failures | > 5 in 10 min | CRITICAL (possible attack) |
-| Reconciliation issue created | Any, severity CRITICAL | CRITICAL |
-| Delivery dispatch failures | > 20% over 30 min | HIGH |
-| Any DLQ non-empty | ≥ 1 | HIGH |
-| Queue oldest job age | > 10 min | HIGH |
-| Database connections | > 80% of pool | MEDIUM |
-| Notification failure rate | > 20% over 30 min | MEDIUM |
-| Backup job failed | Any | HIGH |
+| Alert                        | Threshold              | Severity                   |
+| ---------------------------- | ---------------------- | -------------------------- |
+| API 5xx rate                 | > 2% for 5 min         | HIGH                       |
+| `/ready` failing             | Any instance, 2 min    | CRITICAL                   |
+| Payment success rate         | < 90% over 15 min      | CRITICAL                   |
+| Webhook signature failures   | > 5 in 10 min          | CRITICAL (possible attack) |
+| Reconciliation issue created | Any, severity CRITICAL | CRITICAL                   |
+| Delivery dispatch failures   | > 20% over 30 min      | HIGH                       |
+| Any DLQ non-empty            | ≥ 1                    | HIGH                       |
+| Queue oldest job age         | > 10 min               | HIGH                       |
+| Database connections         | > 80% of pool          | MEDIUM                     |
+| Notification failure rate    | > 20% over 30 min      | MEDIUM                     |
+| Backup job failed            | Any                    | HIGH                       |
 
 Every alert names a runbook. An alert without a documented response is noise and should be deleted or fixed.
 
@@ -221,13 +221,13 @@ Each contains: symptoms, diagnostic commands, immediate mitigation, recovery, ve
 
 Report each as exactly one of `IMPLEMENTED` / `CONFIGURED` / `VERIFIED` / `REQUIRES EXTERNAL ACTION`. Never claim a state you have not observed.
 
-| Dependency | Blocking? |
-|---|---|
-| Razorpay live account + KYC | **Blocks real payments** |
-| Payment settlement/legal structure | **Blocks real payments** (AMB-3) |
-| Uber Direct API approval | Blocks automated delivery; mock mode ships without it |
-| MSG91 account + DLT templates | Blocks SMS |
-| WhatsApp Business API approval | Blocks WhatsApp; SMS is the fallback |
-| Domain + DNS | Blocks production launch |
-| Cloud accounts | Blocks production launch |
-| Backup restore drill | Blocks a truthful "disaster recovery ready" claim |
+| Dependency                         | Blocking?                                             |
+| ---------------------------------- | ----------------------------------------------------- |
+| Razorpay live account + KYC        | **Blocks real payments**                              |
+| Payment settlement/legal structure | **Blocks real payments** (AMB-3)                      |
+| Uber Direct API approval           | Blocks automated delivery; mock mode ships without it |
+| MSG91 account + DLT templates      | Blocks SMS                                            |
+| WhatsApp Business API approval     | Blocks WhatsApp; SMS is the fallback                  |
+| Domain + DNS                       | Blocks production launch                              |
+| Cloud accounts                     | Blocks production launch                              |
+| Backup restore drill               | Blocks a truthful "disaster recovery ready" claim     |

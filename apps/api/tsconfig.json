@@ -1,0 +1,7 @@
+{
+  "extends": "@direct-order/config/tsconfig/nestjs.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src", "test"]
+}

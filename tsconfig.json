@@ -1,0 +1,10 @@
+{
+  "extends": "@direct-order/config/tsconfig/base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true
+  },
+  "include": ["prisma/**/*.ts"],
+  "exclude": ["prisma/generated"]
+}

@@ -1,0 +1,43 @@
+{
+  "name": "direct-order",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Direct-Order — commission-free direct ordering platform for independent restaurants",
+  "packageManager": "pnpm@11.21.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter=./apps/* run dev",
+    "build": "pnpm --recursive --filter=./apps/* --filter=./packages/* run build",
+    "build:packages": "pnpm --recursive --filter=./packages/* run build",
+    "typecheck": "pnpm run build:packages && tsc -p tsconfig.json --noEmit && pnpm --recursive run typecheck",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm run build:packages && pnpm --recursive run test",
+    "test:e2e": "pnpm --filter=./apps/web run test:e2e",
+    "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema prisma/schema.prisma",
+    "db:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "devDependencies": {
+    "@direct-order/config": "workspace:*",
+    "@eslint/eslintrc": "^3.2.0",
+    "@eslint/js": "^9.18.0",
+    "@prisma/client": "^6.2.1",
+    "@types/node": "^22.10.5",
+    "eslint": "^9.18.0",
+    "eslint-config-next": "^15.1.4",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "prisma": "^6.2.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.19.1"
+  }
+}

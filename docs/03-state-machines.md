@@ -51,21 +51,21 @@ stateDiagram-v2
 
 ### Transition table
 
-| From | To | Actor | Preconditions | Side effects |
-|---|---|---|---|---|
-| — | PENDING_PAYMENT | SYSTEM (checkout) | Cart validated, pricing computed, payment intent created | Promotion + loyalty **reserved** |
-| PENDING_PAYMENT | PLACED | SYSTEM (verified payment) | Payment CAPTURED, amount matches `payable_total_minor` exactly | Confirm reservations; notify restaurant + customer; emit ORDER_PLACED |
-| PENDING_PAYMENT | PAYMENT_FAILED | SYSTEM | Provider reports failure | Release reservations; notify customer |
-| PENDING_PAYMENT | EXPIRED | SYSTEM (job) | Older than `ORDER_PAYMENT_TTL_MINUTES` (default 30), no capture | Release reservations. Records retained |
-| PAYMENT_FAILED | PENDING_PAYMENT | CUSTOMER | Within TTL; cart still valid; **re-validate and re-price** | New payment attempt on the **same order** |
-| PLACED | ACCEPTED | RESTAURANT (OWNER/MANAGER/STAFF) | Restaurant not suspended | Notify customer; start prep timer |
-| PLACED | REJECTED | RESTAURANT | Reason required | **Trigger full refund**; notify customer; release loyalty/promotion |
-| PLACED / ACCEPTED / PREPARING / READY_FOR_PICKUP | CANCELLED | ADMIN (or CUSTOMER only while PLACED, see AMB-6) | Reason required | Refund per policy; cancel delivery if created; notify all |
-| ACCEPTED | PREPARING | RESTAURANT | — | Notify customer |
-| PREPARING | READY_FOR_PICKUP | RESTAURANT | — | **Enqueue delivery dispatch**; notify customer |
-| READY_FOR_PICKUP | OUT_FOR_DELIVERY | SYSTEM (delivery webhook) | Delivery PICKED_UP | Notify customer |
-| OUT_FOR_DELIVERY | DELIVERED | SYSTEM (delivery webhook) | Delivery DELIVERED | Grant loyalty; qualify referral; enable review; notify |
-| OUT_FOR_DELIVERY | DELIVERY_FAILED | SYSTEM | Provider reports failure | Alert restaurant + admin; create support case |
+| From                                             | To               | Actor                                            | Preconditions                                                   | Side effects                                                          |
+| ------------------------------------------------ | ---------------- | ------------------------------------------------ | --------------------------------------------------------------- | --------------------------------------------------------------------- |
+| —                                                | PENDING_PAYMENT  | SYSTEM (checkout)                                | Cart validated, pricing computed, payment intent created        | Promotion + loyalty **reserved**                                      |
+| PENDING_PAYMENT                                  | PLACED           | SYSTEM (verified payment)                        | Payment CAPTURED, amount matches `payable_total_minor` exactly  | Confirm reservations; notify restaurant + customer; emit ORDER_PLACED |
+| PENDING_PAYMENT                                  | PAYMENT_FAILED   | SYSTEM                                           | Provider reports failure                                        | Release reservations; notify customer                                 |
+| PENDING_PAYMENT                                  | EXPIRED          | SYSTEM (job)                                     | Older than `ORDER_PAYMENT_TTL_MINUTES` (default 30), no capture | Release reservations. Records retained                                |
+| PAYMENT_FAILED                                   | PENDING_PAYMENT  | CUSTOMER                                         | Within TTL; cart still valid; **re-validate and re-price**      | New payment attempt on the **same order**                             |
+| PLACED                                           | ACCEPTED         | RESTAURANT (OWNER/MANAGER/STAFF)                 | Restaurant not suspended                                        | Notify customer; start prep timer                                     |
+| PLACED                                           | REJECTED         | RESTAURANT                                       | Reason required                                                 | **Trigger full refund**; notify customer; release loyalty/promotion   |
+| PLACED / ACCEPTED / PREPARING / READY_FOR_PICKUP | CANCELLED        | ADMIN (or CUSTOMER only while PLACED, see AMB-6) | Reason required                                                 | Refund per policy; cancel delivery if created; notify all             |
+| ACCEPTED                                         | PREPARING        | RESTAURANT                                       | —                                                               | Notify customer                                                       |
+| PREPARING                                        | READY_FOR_PICKUP | RESTAURANT                                       | —                                                               | **Enqueue delivery dispatch**; notify customer                        |
+| READY_FOR_PICKUP                                 | OUT_FOR_DELIVERY | SYSTEM (delivery webhook)                        | Delivery PICKED_UP                                              | Notify customer                                                       |
+| OUT_FOR_DELIVERY                                 | DELIVERED        | SYSTEM (delivery webhook)                        | Delivery DELIVERED                                              | Grant loyalty; qualify referral; enable review; notify                |
+| OUT_FOR_DELIVERY                                 | DELIVERY_FAILED  | SYSTEM                                           | Provider reports failure                                        | Alert restaurant + admin; create support case                         |
 
 ### Explicitly forbidden
 
@@ -75,7 +75,7 @@ stateDiagram-v2
 
 ### Concurrency
 
-Two staff accepting simultaneously: both transactions attempt `SELECT ... FOR UPDATE` on the order. The first commits PLACED→ACCEPTED; the second re-reads ACCEPTED and returns **200 idempotent** (same target state, already reached). Two staff performing *different* transitions — one accepts, one rejects — the loser gets **409** with current state. Exactly one refund can ever be triggered.
+Two staff accepting simultaneously: both transactions attempt `SELECT ... FOR UPDATE` on the order. The first commits PLACED→ACCEPTED; the second re-reads ACCEPTED and returns **200 idempotent** (same target state, already reached). Two staff performing _different_ transitions — one accepts, one rejects — the loser gets **409** with current state. Exactly one refund can ever be triggered.
 
 ---
 
@@ -98,14 +98,14 @@ stateDiagram-v2
     REFUNDED --> [*]
 ```
 
-| Rule | Detail |
-|---|---|
-| Authority | Only the payments module writes payment state, only in response to a **verified** provider signal |
-| Monotonicity | Never regress. A `payment.authorized` webhook arriving after CAPTURED is **ignored and logged**, not applied |
-| Out-of-order | Compare provider event timestamp / sequence. Older event than current state → ignore, record in `webhook_events` as IGNORED |
-| Amount check | If provider amount ≠ `order.payable_total_minor`, do **not** mark CAPTURED. Set `reconciliation_status = 'AMOUNT_MISMATCH'`, raise a CRITICAL ReconciliationIssue, alert |
-| Currency check | Mismatch is treated identically to amount mismatch |
-| Frontend | A frontend "payment success" callback triggers a **server-side verification fetch**. It never writes state on its own |
+| Rule           | Detail                                                                                                                                                                   |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Authority      | Only the payments module writes payment state, only in response to a **verified** provider signal                                                                        |
+| Monotonicity   | Never regress. A `payment.authorized` webhook arriving after CAPTURED is **ignored and logged**, not applied                                                             |
+| Out-of-order   | Compare provider event timestamp / sequence. Older event than current state → ignore, record in `webhook_events` as IGNORED                                              |
+| Amount check   | If provider amount ≠ `order.payable_total_minor`, do **not** mark CAPTURED. Set `reconciliation_status = 'AMOUNT_MISMATCH'`, raise a CRITICAL ReconciliationIssue, alert |
+| Currency check | Mismatch is treated identically to amount mismatch                                                                                                                       |
+| Frontend       | A frontend "payment success" callback triggers a **server-side verification fetch**. It never writes state on its own                                                    |
 
 ---
 
@@ -124,12 +124,12 @@ stateDiagram-v2
 
 **Creation guard** (inside one transaction): lock the payment row → sum non-FAILED refunds → reject if `sum + new > captured_minor` → insert. This is what makes INV-6 hold under concurrency.
 
-| Trigger | Amount | Initiator |
-|---|---|---|
-| Restaurant rejects a paid order | Full | SYSTEM (automatic) |
-| Admin cancels before delivery | Full (see AMB-7) | ADMIN |
-| Support-approved goodwill refund | Partial or full | ADMIN / SUPPORT with permission |
-| Delivery permanently failed | Per policy — REQUIRES PRODUCT DECISION (AMB-8) | ADMIN |
+| Trigger                          | Amount                                         | Initiator                       |
+| -------------------------------- | ---------------------------------------------- | ------------------------------- |
+| Restaurant rejects a paid order  | Full                                           | SYSTEM (automatic)              |
+| Admin cancels before delivery    | Full (see AMB-7)                               | ADMIN                           |
+| Support-approved goodwill refund | Partial or full                                | ADMIN / SUPPORT with permission |
+| Delivery permanently failed      | Per policy — REQUIRES PRODUCT DECISION (AMB-8) | ADMIN                           |
 
 Refund status is only ever COMPLETED on **provider confirmation**. Customers are shown "Refund initiated" until then — never "Refunded".
 
@@ -157,13 +157,13 @@ stateDiagram-v2
     FAILED --> [*]
 ```
 
-| Rule | Detail |
-|---|---|
-| One per order | `UNIQUE (order_id)`. "Mark ready" twice creates exactly one delivery — the second insert hits the constraint and is treated as success |
-| Timeout ≠ failure | A provider timeout after the request may mean the delivery **was** created. Never blindly retry: reconcile by provider idempotency key or query the provider first |
-| Out-of-order events | `DELIVERED` arriving before `PICKED_UP`: apply the terminal state, record the anomaly, do not error. Regressions (DELIVERED → PICKED_UP) are ignored |
-| Event idempotency | `UNIQUE (delivery_id, provider_event_id)` |
-| Order coupling | Delivery state drives order state only for READY_FOR_PICKUP → OUT_FOR_DELIVERY → DELIVERED. A delivery failure never corrupts payment records |
+| Rule                | Detail                                                                                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| One per order       | `UNIQUE (order_id)`. "Mark ready" twice creates exactly one delivery — the second insert hits the constraint and is treated as success                             |
+| Timeout ≠ failure   | A provider timeout after the request may mean the delivery **was** created. Never blindly retry: reconcile by provider idempotency key or query the provider first |
+| Out-of-order events | `DELIVERED` arriving before `PICKED_UP`: apply the terminal state, record the anomaly, do not error. Regressions (DELIVERED → PICKED_UP) are ignored               |
+| Event idempotency   | `UNIQUE (delivery_id, provider_event_id)`                                                                                                                          |
+| Order coupling      | Delivery state drives order state only for READY_FOR_PICKUP → OUT_FOR_DELIVERY → DELIVERED. A delivery failure never corrupts payment records                      |
 
 ---
 
@@ -181,13 +181,13 @@ stateDiagram-v2
     REJECTED --> PENDING_APPROVAL: resubmitted
 ```
 
-| State | Public page | New orders | Staff login | Existing orders |
-|---|---|---|---|---|
-| DRAFT | 404 | No | Yes | n/a |
-| PENDING_APPROVAL | 404 | No | Yes | n/a |
-| ACTIVE | Visible | Yes, if open | Yes | Manageable |
-| SUSPENDED | "Unavailable" | **No** | Yes, read-only + existing order management | **Must still be fulfillable** |
-| CLOSED | "No longer available" | No | Read-only | Manageable until complete |
+| State            | Public page           | New orders   | Staff login                                | Existing orders               |
+| ---------------- | --------------------- | ------------ | ------------------------------------------ | ----------------------------- |
+| DRAFT            | 404                   | No           | Yes                                        | n/a                           |
+| PENDING_APPROVAL | 404                   | No           | Yes                                        | n/a                           |
+| ACTIVE           | Visible               | Yes, if open | Yes                                        | Manageable                    |
+| SUSPENDED        | "Unavailable"         | **No**       | Yes, read-only + existing order management | **Must still be fulfillable** |
+| CLOSED           | "No longer available" | No           | Read-only                                  | Manageable until complete     |
 
 **Suspension does not cancel or refund existing orders.** Orders in flight complete normally; only new order creation is blocked. Suspending a restaurant mid-service must never strand a paid customer.
 

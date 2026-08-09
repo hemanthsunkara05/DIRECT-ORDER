@@ -8,45 +8,45 @@ Security is designed in, not added at the end. This document is the reference fo
 
 ### Assets, ranked by consequence of compromise
 
-| Asset | Impact if compromised |
-|---|---|
-| Payment integrity | Direct financial loss, restaurant trust destroyed, potential legal exposure |
-| Tenant isolation | One restaurant reads another's customers and revenue — existential for a trust-based product |
-| Admin credentials | Full platform control, refund abuse, data exfiltration |
-| Customer PII (phone, address) | Privacy harm, regulatory exposure, physical-safety risk |
-| Loyalty and referral balances | Financial leakage through reward farming |
-| Audit log integrity | Loss of forensic capability; abuse becomes undetectable |
+| Asset                         | Impact if compromised                                                                        |
+| ----------------------------- | -------------------------------------------------------------------------------------------- |
+| Payment integrity             | Direct financial loss, restaurant trust destroyed, potential legal exposure                  |
+| Tenant isolation              | One restaurant reads another's customers and revenue — existential for a trust-based product |
+| Admin credentials             | Full platform control, refund abuse, data exfiltration                                       |
+| Customer PII (phone, address) | Privacy harm, regulatory exposure, physical-safety risk                                      |
+| Loyalty and referral balances | Financial leakage through reward farming                                                     |
+| Audit log integrity           | Loss of forensic capability; abuse becomes undetectable                                      |
 
 ### Actors and their plausible attacks
 
-| Actor | Attack |
-|---|---|
-| Unauthenticated attacker | Enumerate orders/coupons, forge webhooks, brute-force login, scrape menus |
-| Malicious customer | Manipulate prices/totals, replay payments, farm coupons and referrals, access other orders, submit XSS in reviews |
-| Restaurant staff | Access another restaurant's data, escalate to owner, alter historical prices, manipulate own ratings |
-| Restaurant owner | Reach platform-admin capability, view competitor data, manipulate ranking |
-| Compromised admin account | Fraudulent refunds, data export, audit tampering |
-| Malicious webhook sender | Forge payment success, replay events, mark unpaid orders paid |
-| Compromised provider | Send malformed or hostile payloads |
-| Automated bot | Credential stuffing, coupon brute-force, scraping, checkout spam |
+| Actor                     | Attack                                                                                                            |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Unauthenticated attacker  | Enumerate orders/coupons, forge webhooks, brute-force login, scrape menus                                         |
+| Malicious customer        | Manipulate prices/totals, replay payments, farm coupons and referrals, access other orders, submit XSS in reviews |
+| Restaurant staff          | Access another restaurant's data, escalate to owner, alter historical prices, manipulate own ratings              |
+| Restaurant owner          | Reach platform-admin capability, view competitor data, manipulate ranking                                         |
+| Compromised admin account | Fraudulent refunds, data export, audit tampering                                                                  |
+| Malicious webhook sender  | Forge payment success, replay events, mark unpaid orders paid                                                     |
+| Compromised provider      | Send malformed or hostile payloads                                                                                |
+| Automated bot             | Credential stuffing, coupon brute-force, scraping, checkout spam                                                  |
 
 ---
 
 ## 15.2 Authentication
 
-| Control | Implementation |
-|---|---|
-| Password hashing | argon2id, memory 64 MB, iterations 3, parallelism 4 |
-| Password policy | Minimum 10 characters, checked against a common-password list. No forced rotation, no composition rules — both harm real-world security |
-| Access token | JWT, 15-minute expiry, carries identity only. **Authority is re-derived per request** |
-| Refresh token | Opaque random 256-bit, stored hashed, rotated on every use |
-| Token-reuse detection | Reuse of a rotated refresh token revokes the entire session family and raises a security event |
-| Cookies | `HttpOnly; Secure; SameSite=Lax; Path=/` |
-| Customer auth | Phone OTP, 6 digits, 5-minute expiry, 5 attempts, hashed at rest |
-| Admin MFA | TOTP, mandatory, enforced at the guard not the UI |
-| Session revocation | Logout, password change, staff disable, user disable, admin action — all revoke immediately |
-| Enumeration | Login, registration, password reset, and OTP request return identical responses and comparable timing regardless of account existence |
-| Brute force | Per-IP rate limit plus per-account exponential backoff; lockout after 10 failures with a 15-minute window |
+| Control               | Implementation                                                                                                                          |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Password hashing      | argon2id, memory 64 MB, iterations 3, parallelism 4                                                                                     |
+| Password policy       | Minimum 10 characters, checked against a common-password list. No forced rotation, no composition rules — both harm real-world security |
+| Access token          | JWT, 15-minute expiry, carries identity only. **Authority is re-derived per request**                                                   |
+| Refresh token         | Opaque random 256-bit, stored hashed, rotated on every use                                                                              |
+| Token-reuse detection | Reuse of a rotated refresh token revokes the entire session family and raises a security event                                          |
+| Cookies               | `HttpOnly; Secure; SameSite=Lax; Path=/`                                                                                                |
+| Customer auth         | Phone OTP, 6 digits, 5-minute expiry, 5 attempts, hashed at rest                                                                        |
+| Admin MFA             | TOTP, mandatory, enforced at the guard not the UI                                                                                       |
+| Session revocation    | Logout, password change, staff disable, user disable, admin action — all revoke immediately                                             |
+| Enumeration           | Login, registration, password reset, and OTP request return identical responses and comparable timing regardless of account existence   |
+| Brute force           | Per-IP rate limit plus per-account exponential backoff; lockout after 10 failures with a 15-minute window                               |
 
 ## 15.3 Authorization
 
@@ -62,27 +62,27 @@ Optional fourth layer for Phase 18: Postgres Row-Level Security with per-request
 
 Zod at every boundary. **Unknown fields are stripped, not merged** — the structural defence against mass assignment. `role`, `restaurantId`, `isAdmin`, `status`, and every price field are absent from client-writable schemas entirely; they are not merely ignored.
 
-| Vector | Control |
-|---|---|
-| SQL injection | Parameterised queries only. Raw SQL uses `$queryRaw` with bound parameters. String-concatenated SQL is forbidden; enforce with a lint rule |
-| Dynamic ORDER BY | Sort fields resolved through an allowlist map, never interpolated |
-| XSS | React escapes by default. `dangerouslySetInnerHTML` is banned by lint rule. Restaurant names, menu text, and reviews are treated as hostile |
-| Mass assignment | Schema strip |
-| Path traversal | Storage keys are server-generated UUIDs; client filenames never reach a path |
-| Prototype pollution | Zod parsing rejects `__proto__` keys |
-| Oversized payloads | 1 MB JSON body limit; 5 MB image upload limit |
+| Vector              | Control                                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQL injection       | Parameterised queries only. Raw SQL uses `$queryRaw` with bound parameters. String-concatenated SQL is forbidden; enforce with a lint rule  |
+| Dynamic ORDER BY    | Sort fields resolved through an allowlist map, never interpolated                                                                           |
+| XSS                 | React escapes by default. `dangerouslySetInnerHTML` is banned by lint rule. Restaurant names, menu text, and reviews are treated as hostile |
+| Mass assignment     | Schema strip                                                                                                                                |
+| Path traversal      | Storage keys are server-generated UUIDs; client filenames never reach a path                                                                |
+| Prototype pollution | Zod parsing rejects `__proto__` keys                                                                                                        |
+| Oversized payloads  | 1 MB JSON body limit; 5 MB image upload limit                                                                                               |
 
 ## 15.5 Payment security
 
-| Control | Implementation |
-|---|---|
-| Amount authority | Server-computed only; provider amount compared exactly before capture is honoured |
-| Webhook signature | HMAC over the **raw** body before parsing. Constant-time comparison |
-| Replay protection | `UNIQUE (provider, provider_event_id)` plus timestamp tolerance where the provider supplies one |
-| Idempotency | Database constraints on orders, payments, refunds, deliveries |
-| Card data | Never touches our systems — the provider's hosted flow handles it |
-| Credentials | Server-side only; never in the frontend bundle, never in logs |
-| State authority | Payment state changes only through the payments module, only on verified signals |
+| Control           | Implementation                                                                                        |
+| ----------------- | ----------------------------------------------------------------------------------------------------- |
+| Amount authority  | Server-computed only; provider amount compared exactly before capture is honoured                     |
+| Webhook signature | HMAC over the **raw** body before parsing. Constant-time comparison                                   |
+| Replay protection | `UNIQUE (provider, provider_event_id)` plus timestamp tolerance where the provider supplies one       |
+| Idempotency       | Database constraints on orders, payments, refunds, deliveries                                         |
+| Card data         | Never touches our systems — the provider's hosted flow handles it                                     |
+| Credentials       | Server-side only; never in the frontend bundle, never in logs                                         |
+| State authority   | Payment state changes only through the payments module, only on verified signals                      |
 | Mismatch handling | Amount or currency mismatch raises a CRITICAL reconciliation issue and alerts; it never auto-resolves |
 
 ### Attacks that must be tested and must fail
@@ -130,16 +130,16 @@ Production errors return a safe code, message, and request ID. Stack traces, SQL
 
 ## 15.10 Data privacy
 
-| Data | Purpose | Retention |
-|---|---|---|
-| Customer name, phone, address | Order fulfilment | Order lifetime + 7 years (financial records) |
-| Email | Receipts, account | Until deletion request |
-| Order history | Fulfilment, support, analytics | 7 years **[requires legal confirmation]** |
-| Payment references | Reconciliation | 7 years |
-| Session, OTP | Authentication | 30 days / 5 minutes |
-| Audit logs | Forensics, compliance | 3 years **[requires legal confirmation]** |
-| Analytics events | Product analysis | 13 months |
-| Support cases | Service history | 3 years |
+| Data                          | Purpose                        | Retention                                    |
+| ----------------------------- | ------------------------------ | -------------------------------------------- |
+| Customer name, phone, address | Order fulfilment               | Order lifetime + 7 years (financial records) |
+| Email                         | Receipts, account              | Until deletion request                       |
+| Order history                 | Fulfilment, support, analytics | 7 years **[requires legal confirmation]**    |
+| Payment references            | Reconciliation                 | 7 years                                      |
+| Session, OTP                  | Authentication                 | 30 days / 5 minutes                          |
+| Audit logs                    | Forensics, compliance          | 3 years **[requires legal confirmation]**    |
+| Analytics events              | Product analysis               | 13 months                                    |
+| Support cases                 | Service history                | 3 years                                      |
 
 **Third-party sharing** — minimum necessary in every case: payment provider receives amount, order reference, and customer contact; delivery provider receives pickup and dropoff addresses, customer name and phone, and order reference — never payment details; notification providers receive phone/email and message content; storage receives images only.
 

@@ -18,14 +18,14 @@ Test effort follows consequence of failure:
 
 ## 18.2 Test types
 
-| Type | Tool | Scope | Speed |
-|---|---|---|---|
-| Unit | Vitest | Pure logic: pricing, state guards, validators, formatters | ms |
-| Integration | Vitest + Supertest + Testcontainers | HTTP → service → real Postgres | seconds |
-| Contract | Vitest | Provider adapters against recorded fixtures | ms |
-| Concurrency | Vitest + parallel requests | Races on shared resources | seconds |
-| E2E | Playwright | Full browser journeys | minutes |
-| Load | k6 | Staging only | minutes |
+| Type        | Tool                                | Scope                                                     | Speed   |
+| ----------- | ----------------------------------- | --------------------------------------------------------- | ------- |
+| Unit        | Vitest                              | Pure logic: pricing, state guards, validators, formatters | ms      |
+| Integration | Vitest + Supertest + Testcontainers | HTTP → service → real Postgres                            | seconds |
+| Contract    | Vitest                              | Provider adapters against recorded fixtures               | ms      |
+| Concurrency | Vitest + parallel requests          | Races on shared resources                                 | seconds |
+| E2E         | Playwright                          | Full browser journeys                                     | minutes |
+| Load        | k6                                  | Staging only                                              | minutes |
 
 **Integration tests use a real PostgreSQL via Testcontainers, never mocks.** Most of what we must prove — unique constraints, CHECK constraints, row locking, transaction isolation — exists only in the database. Mocking it tests nothing that matters here.
 
@@ -37,8 +37,10 @@ Single item · multiple items · quantities · packaging fee · delivery fee · 
 
 ```ts
 it('never produces a negative payable total', () => {
-  const r = pricing.calculate({ items: [{ priceMinor: 10000n, qty: 1 }],
-                                promotion: { type: 'FIXED_AMOUNT', valueMinor: 50000n } });
+  const r = pricing.calculate({
+    items: [{ priceMinor: 10000n, qty: 1 }],
+    promotion: { type: 'FIXED_AMOUNT', valueMinor: 50000n },
+  });
   expect(r.payableTotalMinor).toBe(0n);
   expect(r.discountMinor).toBeLessThanOrEqual(r.discountableBaseMinor);
 });
@@ -68,7 +70,8 @@ Write this as a **parameterised suite over the endpoint list** so a new endpoint
 describe.each(TENANT_SCOPED_ENDPOINTS)('tenant isolation: %s %s', (method, path) => {
   it('returns 404 for another restaurant resource', async () => {
     const { restaurantA, restaurantB } = await seedTwoRestaurants();
-    const res = await request(app)[method](path.replace(':id', restaurantB.resourceId))
+    const res = await request(app)
+      [method](path.replace(':id', restaurantB.resourceId))
       .set('Cookie', await sessionFor(restaurantA.owner));
     expect(res.status).toBe(404);
   });
@@ -130,7 +133,7 @@ async function concurrent<T>(n: number, fn: () => Promise<T>) {
 it('coupon with limit 1 survives 10 simultaneous claims', async () => {
   const promo = await seedPromotion({ usageLimitTotal: 1 });
   const results = await concurrent(10, () => checkout({ couponCode: promo.code }));
-  const ok = results.filter(r => r.status === 'fulfilled' && r.value.status === 201);
+  const ok = results.filter((r) => r.status === 'fulfilled' && r.value.status === 201);
   expect(ok).toHaveLength(1);
   expect(await countRedemptions(promo.id)).toBe(1);
 });
@@ -172,16 +175,16 @@ Every one of these must return zero rows.
 
 ## 18.7 CI gates
 
-| Gate | Blocks merge |
-|---|---|
-| Typecheck, lint, format | Yes |
-| Unit + integration tests | Yes |
-| Authorization + tenant isolation suites | Yes |
-| Financial invariant tests | Yes |
-| Build (both apps) | Yes |
-| Secret scan | Yes |
-| `npm audit` high/critical | Yes |
-| E2E (main branch) | Yes |
-| Load tests | No — staging, on demand |
+| Gate                                    | Blocks merge            |
+| --------------------------------------- | ----------------------- |
+| Typecheck, lint, format                 | Yes                     |
+| Unit + integration tests                | Yes                     |
+| Authorization + tenant isolation suites | Yes                     |
+| Financial invariant tests               | Yes                     |
+| Build (both apps)                       | Yes                     |
+| Secret scan                             | Yes                     |
+| `npm audit` high/critical               | Yes                     |
+| E2E (main branch)                       | Yes                     |
+| Load tests                              | No — staging, on demand |
 
 **Never:** delete a failing test, weaken an assertion, or skip a suite to make CI green. A failing security or financial test is a genuine defect. If a test is flaky, fix the flakiness or the race it exposed — do not retry-loop around it.

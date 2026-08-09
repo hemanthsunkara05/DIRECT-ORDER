@@ -1,0 +1,195 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '11.21.0'
+
+jobs:
+  quality:
+    name: Lint, format, typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client
+        run: pnpm db:generate
+      - name: Format check
+        run: pnpm format:check
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+
+  test:
+    name: Unit + integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client
+        run: pnpm db:generate
+      - name: Run tests (all workspaces)
+        run: pnpm test
+
+  build:
+    name: Build all apps and packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client
+        run: pnpm db:generate
+      - name: Build
+        run: pnpm build
+
+  # This job runs a real PostgreSQL service container and starts the
+  # actual API process against it — the one thing that could not be
+  # verified in the environment this phase was implemented in (no local
+  # Docker). It proves GET /ready genuinely reflects live database state,
+  # per the Phase 1 acceptance criteria
+  # (PRODUCT/docs/14-acceptance-criteria.md).
+  live-database-smoke-test:
+    name: Live database smoke test (/health, /ready)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: direct_order
+          POSTGRES_PASSWORD: direct_order
+          POSTGRES_DB: direct_order
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U direct_order -d direct_order"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: production
+      APP_ENV: staging
+      PORT: 4000
+      API_BASE_URL: http://localhost:4000
+      WEB_BASE_URL: http://localhost:3000
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://direct_order:direct_order@localhost:5432/direct_order
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client
+        run: pnpm db:generate
+      - name: Build API
+        run: pnpm --filter=@direct-order/api run build
+      - name: Start API in the background
+        run: |
+          node apps/api/dist/main.js &
+          echo $! > api.pid
+      - name: Wait for /health (liveness — must be immediate)
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:4000/health; then exit 0; fi
+            sleep 1
+          done
+          echo "::error::/health never became available"
+          exit 1
+      - name: Wait for /ready to report the live database as ok
+        run: |
+          for i in $(seq 1 30); do
+            status=$(curl -s -o /tmp/ready.json -w '%{http_code}' http://localhost:4000/ready || true)
+            if [ "$status" = "200" ]; then
+              cat /tmp/ready.json
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::/ready never reported healthy against the live database"
+          cat /tmp/ready.json || true
+          exit 1
+      - name: Stop the API
+        if: always()
+        run: kill "$(cat api.pid)" 2>/dev/null || true
+
+  e2e:
+    name: Playwright smoke test (apps/web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright browsers
+        run: pnpm --filter=@direct-order/web exec playwright install --with-deps chromium
+      - name: Run Playwright
+        run: pnpm --filter=@direct-order/web run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7
+
+  security:
+    name: Dependency audit + secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Audit dependencies (fail on high/critical)
+        run: pnpm audit --audit-level=high
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

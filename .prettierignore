@@ -1,0 +1,12 @@
+node_modules
+dist
+build
+.next
+out
+coverage
+pnpm-lock.yaml
+prisma/generated
+prisma/migrations
+playwright-report
+test-results
+*.tsbuildinfo

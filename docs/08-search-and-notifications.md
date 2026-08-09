@@ -6,11 +6,11 @@
 
 Two distinct surfaces, frequently conflated — keep them separate:
 
-| Surface | Scope | Status |
-|---|---|---|
-| **In-restaurant menu search** | Items within one restaurant, from its ordering page | **Ship in Phase 7.** Directly serves Layer 1 |
-| **Cross-restaurant discovery** | Restaurants and items across the platform | **Build, flag off.** Enabling it launches Layer 2 — see AMB-1 |
-| **Admin search** | Restaurants, orders, users, payments | Ship in Phase 11. Always available to admins |
+| Surface                        | Scope                                               | Status                                                        |
+| ------------------------------ | --------------------------------------------------- | ------------------------------------------------------------- |
+| **In-restaurant menu search**  | Items within one restaurant, from its ordering page | **Ship in Phase 7.** Directly serves Layer 1                  |
+| **Cross-restaurant discovery** | Restaurants and items across the platform           | **Build, flag off.** Enabling it launches Layer 2 — see AMB-1 |
+| **Admin search**               | Restaurants, orders, users, payments                | Ship in Phase 11. Always available to admins                  |
 
 The discovery code is written so that flipping `DISCOVERY_ENABLED` is a product decision, not an engineering project.
 
@@ -36,24 +36,24 @@ Use the `simple` dictionary rather than `english`: menu content is largely trans
 
 ## 13.3 Query handling
 
-| Concern | Treatment |
-|---|---|
-| Normalisation | Trim, collapse whitespace, casefold, Unicode NFC. Do not strip diacritics — they carry meaning |
-| Minimum length | 2 characters; shorter returns empty rather than scanning |
-| Maximum length | 100 characters, truncated |
-| Injection | `websearch_to_tsquery` with a parameterised value. Never string-concatenate a query |
-| Empty result | Explicit empty state with a next action, never a broken page |
+| Concern        | Treatment                                                                                      |
+| -------------- | ---------------------------------------------------------------------------------------------- |
+| Normalisation  | Trim, collapse whitespace, casefold, Unicode NFC. Do not strip diacritics — they carry meaning |
+| Minimum length | 2 characters; shorter returns empty rather than scanning                                       |
+| Maximum length | 100 characters, truncated                                                                      |
+| Injection      | `websearch_to_tsquery` with a parameterised value. Never string-concatenate a query            |
+| Empty result   | Explicit empty state with a next action, never a broken page                                   |
 
 ## 13.4 Filters and sorting
 
-| Filter | Source |
-|---|---|
-| `openNow` | **`isAcceptingOrders()`** — the same authority as the restaurant page (BR-142) |
-| `rating` | `restaurants.rating_avg`, published reviews only |
-| `priceRange` | Aggregated item price band |
-| `dietary` | `menu_items.dietary_tag` |
-| `hasOffers` | Live promotion validation, not merely "a promotion row exists" |
-| `distance` | Haversine against restaurant coordinates |
+| Filter       | Source                                                                         |
+| ------------ | ------------------------------------------------------------------------------ |
+| `openNow`    | **`isAcceptingOrders()`** — the same authority as the restaurant page (BR-142) |
+| `rating`     | `restaurants.rating_avg`, published reviews only                               |
+| `priceRange` | Aggregated item price band                                                     |
+| `dietary`    | `menu_items.dietary_tag`                                                       |
+| `hasOffers`  | Live promotion validation, not merely "a promotion row exists"                 |
+| `distance`   | Haversine against restaurant coordinates                                       |
 
 Sorting: `RELEVANCE` (default), `RATING`, `DISTANCE`, `POPULARITY`, `PRICE`.
 
@@ -90,12 +90,12 @@ Search results are **advisory**. Checkout revalidates availability, prices, and 
 
 ## 13.7 Location
 
-| Situation | Behaviour |
-|---|---|
-| Permission granted | Use coordinates, show approximate distance ("2.4 km") |
-| Permission denied | Fall back to city selection; distance filter hidden, not broken |
-| Coordinates unavailable | Proximity term uses the neutral 0.5 value |
-| Precision | Round displayed distance to 0.1 km. Never expose exact customer coordinates in a response |
+| Situation               | Behaviour                                                                                 |
+| ----------------------- | ----------------------------------------------------------------------------------------- |
+| Permission granted      | Use coordinates, show approximate distance ("2.4 km")                                     |
+| Permission denied       | Fall back to city selection; distance filter hidden, not broken                           |
+| Coordinates unavailable | Proximity term uses the neutral 0.5 value                                                 |
+| Precision               | Round displayed distance to 0.1 km. Never expose exact customer coordinates in a response |
 
 ## 13.8 Caching and performance
 
@@ -119,51 +119,51 @@ Deduplication is structural: `UNIQUE (event_id, recipient_type, recipient_id, ch
 
 ## 14.2 Channels
 
-| Channel | Use | Provider |
-|---|---|---|
-| `IN_APP` | Notification centre, always created | First-party |
-| `SMS` | Order status for customers, new-order alerts for restaurants | MSG91 (DLT templates required) |
-| `WHATSAPP` | Richer order updates where approved | Gupshup/Interakt |
-| `EMAIL` | Receipts, invitations, password reset, digests | Resend/SES |
-| `PUSH` | Optional, later | Web Push |
+| Channel    | Use                                                          | Provider                       |
+| ---------- | ------------------------------------------------------------ | ------------------------------ |
+| `IN_APP`   | Notification centre, always created                          | First-party                    |
+| `SMS`      | Order status for customers, new-order alerts for restaurants | MSG91 (DLT templates required) |
+| `WHATSAPP` | Richer order updates where approved                          | Gupshup/Interakt               |
+| `EMAIL`    | Receipts, invitations, password reset, digests               | Resend/SES                     |
+| `PUSH`     | Optional, later                                              | Web Push                       |
 
 **SMS is the reliable baseline for India.** WhatsApp Business API approval has real lead time and DLT template registration gates SMS content — both are external dependencies. Ship SMS-first; treat WhatsApp as an enhancement.
 
 ## 14.3 Categories and preferences
 
-| Category | Disableable | Examples |
-|---|---|---|
-| `SECURITY` | **No** | Password changed, new device, MFA change |
-| `TRANSACTIONAL` | **No** | Order placed, accepted, ready, delivered, payment, refund |
-| `ACCOUNT` | Partially | Staff invitation, role change, support replies |
-| `MARKETING` | **Yes, opt-in** | Promotions, re-engagement, referral nudges |
+| Category        | Disableable     | Examples                                                  |
+| --------------- | --------------- | --------------------------------------------------------- |
+| `SECURITY`      | **No**          | Password changed, new device, MFA change                  |
+| `TRANSACTIONAL` | **No**          | Order placed, accepted, ready, delivered, payment, refund |
+| `ACCOUNT`       | Partially       | Staff invitation, role change, support replies            |
+| `MARKETING`     | **Yes, opt-in** | Promotions, re-engagement, referral nudges                |
 
 Marketing requires explicit consent (`marketing_consent_at`); account creation is not consent (BR-129). Every marketing message carries a working unsubscribe that never affects transactional delivery.
 
 ## 14.4 Notification catalogue
 
-| Type | Recipient | Channels | Category |
-|---|---|---|---|
-| `ORDER_PLACED_CUSTOMER` | Customer | IN_APP, SMS | TRANSACTIONAL |
-| `ORDER_PLACED_RESTAURANT` | Restaurant | IN_APP, SMS, WHATSAPP | TRANSACTIONAL |
-| `ORDER_ACCEPTED` | Customer | IN_APP, SMS | TRANSACTIONAL |
-| `ORDER_REJECTED` | Customer | IN_APP, SMS | TRANSACTIONAL |
-| `ORDER_PREPARING` | Customer | IN_APP | TRANSACTIONAL |
-| `ORDER_READY` | Customer | IN_APP, SMS | TRANSACTIONAL |
-| `DELIVERY_ASSIGNED` | Customer | IN_APP, SMS | TRANSACTIONAL |
-| `DELIVERY_OUT` | Customer | IN_APP, SMS | TRANSACTIONAL |
-| `ORDER_DELIVERED` | Customer | IN_APP, SMS | TRANSACTIONAL |
-| `PAYMENT_FAILED` | Customer | IN_APP, SMS | TRANSACTIONAL |
-| `REFUND_INITIATED` | Customer | IN_APP, SMS | TRANSACTIONAL |
-| `REFUND_COMPLETED` | Customer | IN_APP, SMS | TRANSACTIONAL |
-| `DELIVERY_FAILED` | Restaurant + Admin | IN_APP, SMS | TRANSACTIONAL |
-| `STAFF_INVITATION` | Invitee | EMAIL | ACCOUNT |
-| `SUPPORT_REPLY` | Case reporter | IN_APP, EMAIL | ACCOUNT |
-| `REVIEW_RECEIVED` | Restaurant | IN_APP | ACCOUNT |
-| `LOYALTY_EARNED` | Customer | IN_APP | ACCOUNT |
-| `REFERRAL_REWARDED` | Referrer | IN_APP, SMS | ACCOUNT |
-| `REVIEW_REMINDER` | Customer | IN_APP | MARKETING |
-| `PROMOTION_AVAILABLE` | Customer | IN_APP, EMAIL | MARKETING |
+| Type                      | Recipient          | Channels              | Category      |
+| ------------------------- | ------------------ | --------------------- | ------------- |
+| `ORDER_PLACED_CUSTOMER`   | Customer           | IN_APP, SMS           | TRANSACTIONAL |
+| `ORDER_PLACED_RESTAURANT` | Restaurant         | IN_APP, SMS, WHATSAPP | TRANSACTIONAL |
+| `ORDER_ACCEPTED`          | Customer           | IN_APP, SMS           | TRANSACTIONAL |
+| `ORDER_REJECTED`          | Customer           | IN_APP, SMS           | TRANSACTIONAL |
+| `ORDER_PREPARING`         | Customer           | IN_APP                | TRANSACTIONAL |
+| `ORDER_READY`             | Customer           | IN_APP, SMS           | TRANSACTIONAL |
+| `DELIVERY_ASSIGNED`       | Customer           | IN_APP, SMS           | TRANSACTIONAL |
+| `DELIVERY_OUT`            | Customer           | IN_APP, SMS           | TRANSACTIONAL |
+| `ORDER_DELIVERED`         | Customer           | IN_APP, SMS           | TRANSACTIONAL |
+| `PAYMENT_FAILED`          | Customer           | IN_APP, SMS           | TRANSACTIONAL |
+| `REFUND_INITIATED`        | Customer           | IN_APP, SMS           | TRANSACTIONAL |
+| `REFUND_COMPLETED`        | Customer           | IN_APP, SMS           | TRANSACTIONAL |
+| `DELIVERY_FAILED`         | Restaurant + Admin | IN_APP, SMS           | TRANSACTIONAL |
+| `STAFF_INVITATION`        | Invitee            | EMAIL                 | ACCOUNT       |
+| `SUPPORT_REPLY`           | Case reporter      | IN_APP, EMAIL         | ACCOUNT       |
+| `REVIEW_RECEIVED`         | Restaurant         | IN_APP                | ACCOUNT       |
+| `LOYALTY_EARNED`          | Customer           | IN_APP                | ACCOUNT       |
+| `REFERRAL_REWARDED`       | Referrer           | IN_APP, SMS           | ACCOUNT       |
+| `REVIEW_REMINDER`         | Customer           | IN_APP                | MARKETING     |
+| `PROMOTION_AVAILABLE`     | Customer           | IN_APP, EMAIL         | MARKETING     |
 
 ## 14.5 Content safety
 
@@ -171,7 +171,7 @@ Templates are parameterised; dynamic values are escaped. Restaurant names, menu 
 
 Never included in any notification: passwords, tokens, OTPs beyond the OTP message itself, full payment details, card data, delivery addresses in push previews, other customers' data, internal support notes.
 
-Push and SMS previews appear on lock screens — keep them minimal: *"Order DO-260809-K3F2 is on the way"*, never the address or amount.
+Push and SMS previews appear on lock screens — keep them minimal: _"Order DO-260809-K3F2 is on the way"_, never the address or amount.
 
 ## 14.6 Reliability
 

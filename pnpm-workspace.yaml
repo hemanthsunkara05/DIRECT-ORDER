@@ -1,0 +1,26 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# pnpm 10+ refuses to run dependency install/postinstall scripts unless
+# explicitly allowed, to limit supply-chain risk from transitive
+# dependencies (PRODUCT/docs/09-security.md §15.11). Every package below
+# is a direct, deliberately-chosen dependency of this stack and its
+# install script is a legitimate native-binary/engine download, not
+# arbitrary third-party code:
+#   - @nestjs/core: peer-dependency compatibility check
+#   - @prisma/client, @prisma/engines, prisma: downloads Prisma's query
+#     engine binaries, required for the ORM to function at all
+#   - esbuild: downloads its native binary (used transitively by tsx/vitest)
+#   - sharp: downloads its native image-processing binary (used by
+#     Next.js's built-in image optimization)
+#   - unrs-resolver: native module resolver used transitively by ESLint's
+#     Next.js config
+allowBuilds:
+  '@nestjs/core': true
+  '@prisma/client': true
+  '@prisma/engines': true
+  esbuild: true
+  prisma: true
+  sharp: true
+  unrs-resolver: true

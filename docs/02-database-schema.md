@@ -6,29 +6,29 @@ PostgreSQL 16. Managed through Prisma migrations. This document specifies the co
 
 ## 6.1 Global conventions
 
-| Concern | Convention |
-|---|---|
-| Table names | `snake_case`, plural (`order_items`) |
-| Column names | `snake_case` |
-| Primary key | `id UUID PRIMARY KEY` — UUIDv7 generated in the application |
-| Foreign keys | `<entity>_id`, always with an explicit `ON DELETE` rule |
-| Timestamps | `TIMESTAMPTZ NOT NULL DEFAULT now()`, stored UTC |
-| Money | `BIGINT` minor units, column suffix `_minor` |
-| Currency | `CHAR(3) NOT NULL DEFAULT 'INR'` |
-| Enums | Postgres native `ENUM` types |
-| Soft delete | `archived_at TIMESTAMPTZ NULL` — never a boolean |
-| Booleans | `is_` / `has_` prefix |
+| Concern      | Convention                                                  |
+| ------------ | ----------------------------------------------------------- |
+| Table names  | `snake_case`, plural (`order_items`)                        |
+| Column names | `snake_case`                                                |
+| Primary key  | `id UUID PRIMARY KEY` — UUIDv7 generated in the application |
+| Foreign keys | `<entity>_id`, always with an explicit `ON DELETE` rule     |
+| Timestamps   | `TIMESTAMPTZ NOT NULL DEFAULT now()`, stored UTC            |
+| Money        | `BIGINT` minor units, column suffix `_minor`                |
+| Currency     | `CHAR(3) NOT NULL DEFAULT 'INR'`                            |
+| Enums        | Postgres native `ENUM` types                                |
+| Soft delete  | `archived_at TIMESTAMPTZ NULL` — never a boolean            |
+| Booleans     | `is_` / `has_` prefix                                       |
 
 ### Deletion policy
 
-| Data | Policy |
-|---|---|
-| Orders, payments, refunds, deliveries, ledgers, audit logs | **Never deleted.** No `ON DELETE CASCADE` reaches them. |
-| Menu items, categories | Archived (`archived_at`), never deleted — orders reference them |
-| Restaurants, users | Status change only; `ON DELETE RESTRICT` from financial tables |
-| Carts, OTP challenges, expired sessions | Hard-deletable by cleanup jobs |
+| Data                                                       | Policy                                                          |
+| ---------------------------------------------------------- | --------------------------------------------------------------- |
+| Orders, payments, refunds, deliveries, ledgers, audit logs | **Never deleted.** No `ON DELETE CASCADE` reaches them.         |
+| Menu items, categories                                     | Archived (`archived_at`), never deleted — orders reference them |
+| Restaurants, users                                         | Status change only; `ON DELETE RESTRICT` from financial tables  |
+| Carts, OTP challenges, expired sessions                    | Hard-deletable by cleanup jobs                                  |
 
-**Rule:** `ON DELETE CASCADE` is permitted only where the child is meaningless without the parent *and* carries no financial or audit value (e.g. `cart_items` → `carts`). Everywhere else use `RESTRICT`.
+**Rule:** `ON DELETE CASCADE` is permitted only where the child is meaningless without the parent _and_ carries no financial or audit value (e.g. `cart_items` → `carts`). Everywhere else use `RESTRICT`.
 
 ---
 

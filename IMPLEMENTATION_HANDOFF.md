@@ -11,34 +11,34 @@
 
 Read this file completely, then read [docs/13-implementation-phases.md](docs/13-implementation-phases.md) before writing any code.
 
-| # | Section | Document |
-|---|---|---|
-| — | Prompt coverage map (verification) | [docs/00-prompt-coverage.md](docs/00-prompt-coverage.md) |
-| 1 | Executive Summary | this file |
-| 2 | Product Scope | this file |
-| 3 | Architecture | this file |
-| 4 | Technology Stack | this file |
-| 5 | Domain Model | [docs/01-domain-model.md](docs/01-domain-model.md) |
-| 6 | Database Schema | [docs/02-database-schema.md](docs/02-database-schema.md) |
-| 7 | State Machines | [docs/03-state-machines.md](docs/03-state-machines.md) |
-| 8 | API Specification | [docs/04-api-specification.md](docs/04-api-specification.md) |
-| 9 | Authorization Matrix | [docs/05-authorization-matrix.md](docs/05-authorization-matrix.md) |
-| 10 | Business Rules | [docs/06-business-rules.md](docs/06-business-rules.md) |
-| 11 | Event Architecture | [docs/07-events-and-jobs.md](docs/07-events-and-jobs.md) |
-| 12 | Background Jobs | [docs/07-events-and-jobs.md](docs/07-events-and-jobs.md) |
-| 13 | Search | [docs/08-search-and-notifications.md](docs/08-search-and-notifications.md) |
-| 14 | Notifications | [docs/08-search-and-notifications.md](docs/08-search-and-notifications.md) |
-| 15 | Security | [docs/09-security.md](docs/09-security.md) |
-| 16 | Infrastructure | [docs/10-infrastructure-deployment.md](docs/10-infrastructure-deployment.md) |
-| 17 | Deployment | [docs/10-infrastructure-deployment.md](docs/10-infrastructure-deployment.md) |
-| 18 | Testing Strategy | [docs/11-testing-strategy.md](docs/11-testing-strategy.md) |
-| 19 | Repository Structure | [docs/12-repository-structure.md](docs/12-repository-structure.md) |
-| 20 | Implementation Phases | [docs/13-implementation-phases.md](docs/13-implementation-phases.md) |
-| 21 | Acceptance Criteria | [docs/14-acceptance-criteria.md](docs/14-acceptance-criteria.md) |
-| 22 | Ambiguities | [docs/15-ambiguities-and-risks.md](docs/15-ambiguities-and-risks.md) |
-| 23 | Risk Register | [docs/15-ambiguities-and-risks.md](docs/15-ambiguities-and-risks.md) |
-| 24 | Sonnet Execution Protocol | [docs/16-execution-protocol.md](docs/16-execution-protocol.md) |
-| 25 | Definition of Done | [docs/16-execution-protocol.md](docs/16-execution-protocol.md) |
+| #   | Section                            | Document                                                                     |
+| --- | ---------------------------------- | ---------------------------------------------------------------------------- |
+| —   | Prompt coverage map (verification) | [docs/00-prompt-coverage.md](docs/00-prompt-coverage.md)                     |
+| 1   | Executive Summary                  | this file                                                                    |
+| 2   | Product Scope                      | this file                                                                    |
+| 3   | Architecture                       | this file                                                                    |
+| 4   | Technology Stack                   | this file                                                                    |
+| 5   | Domain Model                       | [docs/01-domain-model.md](docs/01-domain-model.md)                           |
+| 6   | Database Schema                    | [docs/02-database-schema.md](docs/02-database-schema.md)                     |
+| 7   | State Machines                     | [docs/03-state-machines.md](docs/03-state-machines.md)                       |
+| 8   | API Specification                  | [docs/04-api-specification.md](docs/04-api-specification.md)                 |
+| 9   | Authorization Matrix               | [docs/05-authorization-matrix.md](docs/05-authorization-matrix.md)           |
+| 10  | Business Rules                     | [docs/06-business-rules.md](docs/06-business-rules.md)                       |
+| 11  | Event Architecture                 | [docs/07-events-and-jobs.md](docs/07-events-and-jobs.md)                     |
+| 12  | Background Jobs                    | [docs/07-events-and-jobs.md](docs/07-events-and-jobs.md)                     |
+| 13  | Search                             | [docs/08-search-and-notifications.md](docs/08-search-and-notifications.md)   |
+| 14  | Notifications                      | [docs/08-search-and-notifications.md](docs/08-search-and-notifications.md)   |
+| 15  | Security                           | [docs/09-security.md](docs/09-security.md)                                   |
+| 16  | Infrastructure                     | [docs/10-infrastructure-deployment.md](docs/10-infrastructure-deployment.md) |
+| 17  | Deployment                         | [docs/10-infrastructure-deployment.md](docs/10-infrastructure-deployment.md) |
+| 18  | Testing Strategy                   | [docs/11-testing-strategy.md](docs/11-testing-strategy.md)                   |
+| 19  | Repository Structure               | [docs/12-repository-structure.md](docs/12-repository-structure.md)           |
+| 20  | Implementation Phases              | [docs/13-implementation-phases.md](docs/13-implementation-phases.md)         |
+| 21  | Acceptance Criteria                | [docs/14-acceptance-criteria.md](docs/14-acceptance-criteria.md)             |
+| 22  | Ambiguities                        | [docs/15-ambiguities-and-risks.md](docs/15-ambiguities-and-risks.md)         |
+| 23  | Risk Register                      | [docs/15-ambiguities-and-risks.md](docs/15-ambiguities-and-risks.md)         |
+| 24  | Sonnet Execution Protocol          | [docs/16-execution-protocol.md](docs/16-execution-protocol.md)               |
+| 25  | Definition of Done                 | [docs/16-execution-protocol.md](docs/16-execution-protocol.md)               |
 
 ---
 
@@ -61,18 +61,18 @@ Direct-Order gives each restaurant a **branded ordering link** (`/r/<slug>`) car
 
 These hold everywhere in the codebase. A change that violates one of these is a defect regardless of what else it accomplishes.
 
-| # | Invariant |
-|---|---|
-| INV-1 | Money is stored and computed as **BIGINT minor units (paise)**. Floating-point arithmetic on money is forbidden. |
-| INV-2 | The **payable amount is computed server-side** from database state. A client-supplied price, discount, or total is never authoritative. |
-| INV-3 | An order is **PAID only after provider-verified confirmation** (webhook signature verification or server-to-server fetch). |
-| INV-4 | Every retryable financial operation is **idempotent**, enforced by a database constraint — not by an application-level existence check. |
-| INV-5 | Authorization is derived from the **authenticated principal and server-side relationships**, never from a client-supplied `restaurantId`, `userId`, or `role`. |
-| INV-6 | `refunded_total <= captured_total` for every payment, enforced in the database. |
-| INV-7 | `discount_total <= eligible_subtotal` and `payable_total >= 0` for every order. |
-| INV-8 | **Order line items are immutable snapshots.** Historical orders never change when a menu, price, or promotion changes later. |
-| INV-9 | Every state transition of an order, payment, refund, or delivery writes an **audit record**. Audit records are append-only. |
-| INV-10 | Notification, analytics, and loyalty failures **never roll back** a committed order or payment. |
+| #      | Invariant                                                                                                                                                      |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| INV-1  | Money is stored and computed as **BIGINT minor units (paise)**. Floating-point arithmetic on money is forbidden.                                               |
+| INV-2  | The **payable amount is computed server-side** from database state. A client-supplied price, discount, or total is never authoritative.                        |
+| INV-3  | An order is **PAID only after provider-verified confirmation** (webhook signature verification or server-to-server fetch).                                     |
+| INV-4  | Every retryable financial operation is **idempotent**, enforced by a database constraint — not by an application-level existence check.                        |
+| INV-5  | Authorization is derived from the **authenticated principal and server-side relationships**, never from a client-supplied `restaurantId`, `userId`, or `role`. |
+| INV-6  | `refunded_total <= captured_total` for every payment, enforced in the database.                                                                                |
+| INV-7  | `discount_total <= eligible_subtotal` and `payable_total >= 0` for every order.                                                                                |
+| INV-8  | **Order line items are immutable snapshots.** Historical orders never change when a menu, price, or promotion changes later.                                   |
+| INV-9  | Every state transition of an order, payment, refund, or delivery writes an **audit record**. Audit records are append-only.                                    |
+| INV-10 | Notification, analytics, and loyalty failures **never roll back** a committed order or payment.                                                                |
 
 ---
 
@@ -84,7 +84,7 @@ Customer ordering (guest-first), restaurant onboarding and dashboard, menu manag
 
 ### Out of scope
 
-- **Layer 2 consumer discovery marketplace** as a launched product. Cross-restaurant search is *implemented but feature-flagged off* — see AMB-1.
+- **Layer 2 consumer discovery marketplace** as a launched product. Cross-restaurant search is _implemented but feature-flagged off_ — see AMB-1.
 - Native mobile apps. Web only, mobile-first.
 - Own rider fleet. Delivery is always third-party.
 - ONDC seller-side integration.
@@ -181,17 +181,17 @@ flowchart TB
 
 ### 3.3 Component responsibilities
 
-| Component | Responsibility | Sync/Async |
-|---|---|---|
-| **Public ordering app** | Server-rendered restaurant page and menu for SEO and fast first paint; client-side cart; checkout flow | Sync |
-| **Restaurant dashboard** | Authenticated SPA: live order queue, menu management, settings, staff, reviews, analytics | Sync + SSE |
-| **Admin console** | Platform operations, moderation, reconciliation, audit | Sync |
-| **HTTP API** | All business operations. Single authorization boundary. Owns all writes to transactional tables | Sync |
-| **Webhook receivers** | Verify signature, persist raw event, enqueue, return 2xx fast. Never do slow work inline | Sync ingest, async process |
-| **Worker** | Notifications, delivery dispatch, loyalty grants, referral qualification, analytics rollups, reconciliation, expiry sweeps | Async |
-| **PostgreSQL** | Single source of truth for every transactional and financial record | — |
-| **Redis** | Job queues, distributed rate limiting, short-TTL read cache. **Never authoritative for money or state** | — |
-| **Object storage + CDN** | Restaurant/menu images, support attachments. Presigned uploads. Private objects stay private | — |
+| Component                | Responsibility                                                                                                             | Sync/Async                 |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| **Public ordering app**  | Server-rendered restaurant page and menu for SEO and fast first paint; client-side cart; checkout flow                     | Sync                       |
+| **Restaurant dashboard** | Authenticated SPA: live order queue, menu management, settings, staff, reviews, analytics                                  | Sync + SSE                 |
+| **Admin console**        | Platform operations, moderation, reconciliation, audit                                                                     | Sync                       |
+| **HTTP API**             | All business operations. Single authorization boundary. Owns all writes to transactional tables                            | Sync                       |
+| **Webhook receivers**    | Verify signature, persist raw event, enqueue, return 2xx fast. Never do slow work inline                                   | Sync ingest, async process |
+| **Worker**               | Notifications, delivery dispatch, loyalty grants, referral qualification, analytics rollups, reconciliation, expiry sweeps | Async                      |
+| **PostgreSQL**           | Single source of truth for every transactional and financial record                                                        | —                          |
+| **Redis**                | Job queues, distributed rate limiting, short-TTL read cache. **Never authoritative for money or state**                    | —                          |
+| **Object storage + CDN** | Restaurant/menu images, support attachments. Presigned uploads. Private objects stay private                               | —                          |
 
 ### 3.4 Module map (backend)
 
@@ -303,33 +303,33 @@ Structured JSON logs with correlation IDs, Sentry for exceptions, platform metri
 
 ### 4.14 Hosting and CI
 
-| Concern | Choice |
-|---|---|
-| Frontend | Vercel |
+| Concern      | Choice                                            |
+| ------------ | ------------------------------------------------- |
+| Frontend     | Vercel                                            |
 | API + worker | Railway or Render (separate services, same image) |
-| Database | Managed Postgres with PITR |
-| Redis | Managed (Upstash / Railway) |
-| CI/CD | GitHub Actions |
-| Secrets | Platform secret store; never in the repo |
+| Database     | Managed Postgres with PITR                        |
+| Redis        | Managed (Upstash / Railway)                       |
+| CI/CD        | GitHub Actions                                    |
+| Secrets      | Platform secret store; never in the repo          |
 
 ### 4.15 Stack summary
 
-| Layer | Technology |
-|---|---|
-| Language | TypeScript (Node 22 LTS) |
-| Frontend | Next.js 15 App Router, Tailwind, TanStack Query, Radix, Zod |
-| Backend | NestJS on Fastify, Zod validation |
-| Database | PostgreSQL 16 + Prisma |
-| Cache/Queue | Redis + BullMQ |
-| Storage | S3-compatible (R2) + CDN |
-| Auth | argon2id, JWT access + rotating refresh, HttpOnly cookies, TOTP for admin |
-| Payments | Razorpay (adapter) |
-| Delivery | Provider interface: Mock, Uber Direct |
-| Notifications | MSG91 / Gupshup / Resend (adapters) |
-| Search | Postgres FTS + pg_trgm |
-| Testing | Vitest, Supertest, Testcontainers, Playwright |
-| Observability | pino, Sentry, platform metrics |
-| CI/CD | GitHub Actions |
+| Layer         | Technology                                                                |
+| ------------- | ------------------------------------------------------------------------- |
+| Language      | TypeScript (Node 22 LTS)                                                  |
+| Frontend      | Next.js 15 App Router, Tailwind, TanStack Query, Radix, Zod               |
+| Backend       | NestJS on Fastify, Zod validation                                         |
+| Database      | PostgreSQL 16 + Prisma                                                    |
+| Cache/Queue   | Redis + BullMQ                                                            |
+| Storage       | S3-compatible (R2) + CDN                                                  |
+| Auth          | argon2id, JWT access + rotating refresh, HttpOnly cookies, TOTP for admin |
+| Payments      | Razorpay (adapter)                                                        |
+| Delivery      | Provider interface: Mock, Uber Direct                                     |
+| Notifications | MSG91 / Gupshup / Resend (adapters)                                       |
+| Search        | Postgres FTS + pg_trgm                                                    |
+| Testing       | Vitest, Supertest, Testcontainers, Playwright                             |
+| Observability | pino, Sentry, platform metrics                                            |
+| CI/CD         | GitHub Actions                                                            |
 
 ---
 
@@ -337,6 +337,6 @@ Structured JSON logs with correlation IDs, Sentry for exceptions, platform metri
 
 1. This file, completely.
 2. [docs/16-execution-protocol.md](docs/16-execution-protocol.md) — how you are expected to work.
-3. [docs/15-ambiguities-and-risks.md](docs/15-ambiguities-and-risks.md) — what is *not* decided, so you do not invent business rules.
+3. [docs/15-ambiguities-and-risks.md](docs/15-ambiguities-and-risks.md) — what is _not_ decided, so you do not invent business rules.
 4. [docs/13-implementation-phases.md](docs/13-implementation-phases.md) — your build sequence.
 5. Then per phase: domain model, schema, state machines, API, authorization, business rules.

@@ -1,0 +1,76 @@
+import { z } from 'zod';
+
+/**
+ * Environment variables the codebase actually reads today. Extend this
+ * schema in the same commit that adds the code which reads a new
+ * variable — never add a variable here "for later" (see
+ * PRODUCT/docs/16-execution-protocol.md §24.6, scope discipline).
+ *
+ * `APP_ENV=production` triggers strict validation: every field below is
+ * required regardless of environment, so a production deploy with a
+ * missing DATABASE_URL fails at startup with a named variable rather
+ * than surfacing as a confusing runtime error later
+ * (PRODUCT/docs/14-acceptance-criteria.md, Phase 1).
+ */
+export const EnvSchema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  APP_ENV: z.enum(['local', 'test', 'staging', 'production']).default('local'),
+  PORT: z.coerce.number().int().positive().default(4000),
+  API_BASE_URL: z.string().url(),
+  WEB_BASE_URL: z.string().url(),
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
+
+  REDIS_URL: z.string().min(1).optional(),
+});
+
+export type Env = z.infer<typeof EnvSchema>;
+
+/**
+ * Fields that MUST be present (non-empty, non-placeholder) when
+ * APP_ENV=production, even though EnvSchema itself treats them as
+ * having safe local defaults or being merely present-if-provided.
+ * PORT/LOG_LEVEL have safe defaults everywhere and are excluded.
+ */
+const PRODUCTION_REQUIRED_KEYS = ['DATABASE_URL', 'API_BASE_URL', 'WEB_BASE_URL'] as const;
+
+export class EnvValidationError extends Error {
+  constructor(public readonly issues: string[]) {
+    super(`Invalid environment configuration:\n${issues.map((i) => `  - ${i}`).join('\n')}`);
+    this.name = 'EnvValidationError';
+  }
+}
+
+/**
+ * Parses and validates `process.env`. Throws a single, clearly-worded
+ * EnvValidationError naming every missing/invalid variable rather than
+ * failing on the first one — a developer fixing configuration should
+ * not have to run the app repeatedly to discover each missing value
+ * one at a time.
+ */
+export function validateEnv(raw: NodeJS.ProcessEnv): Env {
+  const result = EnvSchema.safeParse(raw);
+
+  if (!result.success) {
+    const issues = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
+    throw new EnvValidationError(issues);
+  }
+
+  const env = result.data;
+
+  if (env.APP_ENV === 'production') {
+    const missing = PRODUCTION_REQUIRED_KEYS.filter((key) => {
+      const value = raw[key];
+      return value === undefined || value.trim() === '';
+    });
+    if (missing.length > 0) {
+      throw new EnvValidationError(
+        missing.map((key) => `${key} is required when APP_ENV=production`),
+      );
+    }
+  }
+
+  return env;
+}

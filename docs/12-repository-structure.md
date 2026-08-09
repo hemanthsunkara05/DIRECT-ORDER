@@ -66,18 +66,18 @@ modules/ordering/
 
 ## 19.2 Naming
 
-| Thing | Convention | Example |
-|---|---|---|
-| Files | kebab-case | `order-state.service.ts` |
-| Classes | PascalCase | `OrderStateService` |
-| Functions, variables | camelCase | `calculateOrderTotal` |
-| Constants | SCREAMING_SNAKE | `MAX_ITEM_QUANTITY` |
-| Database | snake_case | `order_items` |
-| Money fields | `*_minor` / `*Minor` | `payableTotalMinor` |
-| Booleans | `is` / `has` / `can` | `isAvailable` |
-| Enums | SCREAMING_SNAKE values | `PENDING_PAYMENT` |
-| React components | PascalCase | `MenuItemCard.tsx` |
-| Event types | SCREAMING_SNAKE past tense | `ORDER_DELIVERED` |
+| Thing                | Convention                 | Example                  |
+| -------------------- | -------------------------- | ------------------------ |
+| Files                | kebab-case                 | `order-state.service.ts` |
+| Classes              | PascalCase                 | `OrderStateService`      |
+| Functions, variables | camelCase                  | `calculateOrderTotal`    |
+| Constants            | SCREAMING_SNAKE            | `MAX_ITEM_QUANTITY`      |
+| Database             | snake_case                 | `order_items`            |
+| Money fields         | `*_minor` / `*Minor`       | `payableTotalMinor`      |
+| Booleans             | `is` / `has` / `can`       | `isAvailable`            |
+| Enums                | SCREAMING_SNAKE values     | `PENDING_PAYMENT`        |
+| React components     | PascalCase                 | `MenuItemCard.tsx`       |
+| Event types          | SCREAMING_SNAKE past tense | `ORDER_DELIVERED`        |
 
 ## 19.3 Money handling
 
@@ -85,9 +85,9 @@ modules/ordering/
 // packages/money — the only place money arithmetic lives
 export type Minor = bigint;
 
-export function toMinor(rupees: string): Minor;   // "250.50" -> 25050n
-export function formatINR(m: Minor): string;      // 25050n -> "₹250.50"
-export function percentageOf(m: Minor, pct: number): Minor;  // half-up, once
+export function toMinor(rupees: string): Minor; // "250.50" -> 25050n
+export function formatINR(m: Minor): string; // 25050n -> "₹250.50"
+export function percentageOf(m: Minor, pct: number): Minor; // half-up, once
 export function sum(...values: Minor[]): Minor;
 ```
 
@@ -98,18 +98,30 @@ Rules: `bigint` end to end; JSON transports money as a **number of minor units**
 ```ts
 export class AppError extends Error {
   constructor(
-    readonly code: string,         // stable, client-branchable
+    readonly code: string, // stable, client-branchable
     readonly httpStatus: number,
-    message: string,               // safe for display
-    readonly details?: unknown,    // structured
-  ) { super(message); }
+    message: string, // safe for display
+    readonly details?: unknown, // structured
+  ) {
+    super(message);
+  }
 }
 
-export class ConflictError extends AppError { /* 409 */ }
-export class ForbiddenError extends AppError { /* 403 */ }
-export class NotFoundError extends AppError { /* 404 */ }
-export class ValidationError extends AppError { /* 422 */ }
-export class ProviderError extends AppError { /* 502/503 */ }
+export class ConflictError extends AppError {
+  /* 409 */
+}
+export class ForbiddenError extends AppError {
+  /* 403 */
+}
+export class NotFoundError extends AppError {
+  /* 404 */
+}
+export class ValidationError extends AppError {
+  /* 422 */
+}
+export class ProviderError extends AppError {
+  /* 502/503 */
+}
 ```
 
 A global exception filter maps these to the standard envelope, attaches the request ID, logs with correlation, and returns an opaque message for unexpected errors in production. Never `throw new Error('something went wrong')` on a path a user can reach.
@@ -121,6 +133,16 @@ A global exception filter maps these to the standard envelope, attaches the requ
 - Side effects are emitted as events **after commit** via the outbox — never fired inside a transaction.
 - Services never read `req`/`res`. The authenticated principal is passed as a typed argument.
 - Every money-touching method re-reads state; it never trusts a passed-in amount.
+- **Every constructor-injected dependency uses explicit `@Inject(Token)`, including class tokens** —
+  `constructor(@Inject(PrismaService) private readonly prisma: PrismaService)`, not
+  `constructor(private readonly prisma: PrismaService)`. NestJS's implicit
+  constructor-parameter-type DI depends on TypeScript's `emitDecoratorMetadata`
+  output, which `esbuild` — used by both `tsx` (the `dev` script) and Vitest — does
+  not reliably emit. A service that relies on implicit DI can typecheck, build
+  correctly under `tsc`, and pass code review, while silently receiving `undefined`
+  for that dependency under `pnpm dev` or in every test, because those run through
+  esbuild instead. This was found and fixed in Phase 1
+  (`HealthController`/`PrismaService`) — do not reintroduce it in a later phase.
 
 ## 19.6 API client (frontend)
 
@@ -129,7 +151,10 @@ All HTTP goes through `src/lib/api-client`. Components never call `fetch` direct
 ## 19.7 Logging
 
 ```ts
-logger.info({ correlationId, orderId, restaurantId, event: 'order.accepted', durationMs }, 'Order accepted');
+logger.info(
+  { correlationId, orderId, restaurantId, event: 'order.accepted', durationMs },
+  'Order accepted',
+);
 ```
 
 Structured objects, never string interpolation of data. Redaction is configured at the logger, not at call sites. Levels: `error` (needs attention), `warn` (unexpected but handled), `info` (business events), `debug` (development only).
