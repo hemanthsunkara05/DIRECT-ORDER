@@ -39,6 +39,9 @@ const TEST_ENV: Env = {
   STORAGE_REGION: 'us-east-1',
   CDN_BASE_URL: 'http://localhost:9000/direct-order-test',
   PLATFORM_FEE_BPS: 0,
+  PAYMENT_PROVIDER: 'mock',
+  ORDER_PAYMENT_TTL_MINUTES: 30,
+  CART_TTL_HOURS: 24,
 };
 
 class ControllablePrismaStub {

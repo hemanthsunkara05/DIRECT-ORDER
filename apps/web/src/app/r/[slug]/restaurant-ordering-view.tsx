@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { formatINR } from '@direct-order/money';
 import { ApiError, checkoutApi, type CartIssue, type QuoteResult } from '@/lib/api-client';
 import type { PublicMenu, PublicMenuItem, PublicRestaurant } from '@/lib/public-api';
@@ -83,6 +84,7 @@ export function RestaurantOrderingView({
   const [quote, setQuote] = useState<QuoteResult | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [quoting, setQuoting] = useState(false);
+  const router = useRouter();
 
   // Cart hydration is client-only (localStorage doesn't exist during
   // SSR) — loaded once per slug on mount, then every change is
@@ -319,6 +321,7 @@ export function RestaurantOrderingView({
                 <button
                   type="button"
                   disabled={!quote?.valid}
+                  onClick={() => router.push(`/r/${restaurant.slug}/checkout`)}
                   className="btn-primary mt-2 w-full disabled:cursor-not-allowed"
                 >
                   {canOrder ? 'Proceed to checkout' : 'Restaurant unavailable'}

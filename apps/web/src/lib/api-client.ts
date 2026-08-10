@@ -579,3 +579,96 @@ export const checkoutApi = {
   }) =>
     request<QuoteResult>('/public/checkout/quote', { method: 'POST', body: JSON.stringify(input) }),
 };
+
+// ── Carts, checkout, payment, order tracking (Phase 9) ────────────────
+
+export interface CartLine {
+  itemId: string;
+  quantity: number;
+  unitPriceMinorAtAdd: string;
+}
+
+export const cartApi = {
+  create: (input: { restaurantSlug: string; items: CartLine[] }) =>
+    post<{ cartId: string; guestToken: string; expiresAt: string }>('/public/carts', input),
+
+  validate: (cartId: string, guestToken: string) =>
+    post<QuoteResult>(`/public/carts/${cartId}/validate`, { guestToken }),
+};
+
+export interface DeliveryAddressInput {
+  line1: string;
+  locality?: string;
+  city: string;
+  postalCode: string;
+  latitude?: number;
+  longitude?: number;
+}
+
+export interface CheckoutResponse {
+  orderNumber: string;
+  accessToken: string | null;
+  status: string;
+  payableTotalMinor: string;
+  breakdown: QuoteBreakdown;
+  provider: { name: string; providerOrderId: string; providerPublicKey: string } | null;
+}
+
+export interface OrderTrackingView {
+  orderNumber: string;
+  status: string;
+  customerName: string;
+  deliveryAddress: unknown;
+  breakdown: QuoteBreakdown;
+  payableTotalMinor: string;
+  items: {
+    name: string;
+    description: string | null;
+    unitPriceMinor: string;
+    quantity: number;
+    lineTotalMinor: string;
+  }[];
+  history: { toStatus: string; createdAt: string }[];
+  paymentStatus: string | null;
+  createdAt: string;
+}
+
+/**
+ * `Idempotency-Key` (docs/04-api-specification.md §8.2, "client-
+ * generated UUID") is generated once per checkout ATTEMPT and reused
+ * across retries within that attempt — `crypto.randomUUID()` is
+ * available in every browser this app targets, no polyfill needed.
+ */
+export const orderApi = {
+  checkout: (
+    input: {
+      cartId: string;
+      guestToken: string;
+      customer: { name: string; phone: string; email?: string };
+      deliveryAddress: DeliveryAddressInput;
+      expectedTotalMinor?: string;
+    },
+    idempotencyKey: string,
+  ) =>
+    request<CheckoutResponse>('/public/checkout', {
+      method: 'POST',
+      body: JSON.stringify(input),
+      headers: { 'Idempotency-Key': idempotencyKey },
+    }),
+
+  track: (orderNumber: string, token: string) =>
+    get<OrderTrackingView>(`/public/orders/${orderNumber}?token=${encodeURIComponent(token)}`),
+
+  verifyPayment: (orderNumber: string, token: string, providerPaymentId?: string) =>
+    post<{ paymentStatus: string; orderStatus: string }>(
+      `/public/orders/${orderNumber}/verify-payment`,
+      { token, providerPaymentId },
+    ),
+
+  /** Dev/test-mode only (`PAYMENT_PROVIDER=mock`) — 404s otherwise. Stands in for completing Razorpay Checkout. */
+  simulatePayment: (orderNumber: string, token: string, outcome: 'CAPTURED' | 'FAILED') =>
+    post<{ providerPaymentId: string | null }>(`/public/orders/${orderNumber}/simulate-payment`, {
+      token,
+      outcome,
+    }),
+};

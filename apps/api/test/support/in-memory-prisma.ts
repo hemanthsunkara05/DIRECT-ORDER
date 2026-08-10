@@ -246,6 +246,187 @@ export interface ClosurePeriodRow {
   createdAt: Date;
 }
 
+export interface CustomerRow {
+  id: string;
+  userId: string | null;
+  fullName: string;
+  phone: string;
+  email: string | null;
+  status: 'ACTIVE' | 'DISABLED';
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CartRow {
+  id: string;
+  restaurantId: string;
+  customerId: string | null;
+  guestTokenHash: string;
+  status: 'OPEN' | 'CONVERTED' | 'ABANDONED';
+  expiresAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CartItemRow {
+  id: string;
+  cartId: string;
+  menuItemId: string;
+  quantity: number;
+  unitPriceMinorAtAdd: bigint;
+  createdAt: Date;
+}
+
+export interface OrderRow {
+  id: string;
+  orderNumber: string;
+  restaurantId: string;
+  customerId: string;
+  status: string;
+  customerName: string;
+  customerPhone: string;
+  deliveryAddress: unknown;
+  itemsSubtotalMinor: bigint;
+  packagingFeeMinor: bigint;
+  deliveryFeeMinor: bigint;
+  platformFeeMinor: bigint;
+  taxMinor: bigint;
+  discountMinor: bigint;
+  loyaltyDiscountMinor: bigint;
+  payableTotalMinor: bigint;
+  currency: string;
+  pricingBreakdown: unknown;
+  promotionId: string | null;
+  couponCode: string | null;
+  appliedLoyaltyPoints: number;
+  idempotencyKey: string;
+  accessTokenHash: string;
+  placedAt: Date | null;
+  acceptedAt: Date | null;
+  readyAt: Date | null;
+  deliveredAt: Date | null;
+  cancelledAt: Date | null;
+  rejectionReason: string | null;
+  cancellationReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface OrderItemRow {
+  id: string;
+  orderId: string;
+  menuItemId: string;
+  nameSnapshot: string;
+  descriptionSnapshot: string | null;
+  unitPriceMinorSnapshot: bigint;
+  quantity: number;
+  lineTotalMinor: bigint;
+  createdAt: Date;
+}
+
+export interface OrderStatusHistoryRow {
+  id: string;
+  orderId: string;
+  fromStatus: string | null;
+  toStatus: string;
+  actorType: string;
+  actorId: string | null;
+  reason: string | null;
+  metadata: unknown;
+  createdAt: Date;
+}
+
+export interface PaymentRow {
+  id: string;
+  orderId: string;
+  provider: string;
+  providerOrderId: string | null;
+  providerPaymentId: string | null;
+  status: string;
+  amountMinor: bigint;
+  capturedMinor: bigint;
+  refundedMinor: bigint;
+  currency: string;
+  method: string | null;
+  failureCode: string | null;
+  failureMessage: string | null;
+  idempotencyKey: string;
+  reconciliationStatus: string;
+  authorizedAt: Date | null;
+  capturedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface RefundRow {
+  id: string;
+  paymentId: string;
+  orderId: string;
+  amountMinor: bigint;
+  reason: string;
+  status: string;
+  providerRefundId: string | null;
+  initiatedByActorType: string;
+  initiatedByActorId: string | null;
+  idempotencyKey: string;
+  completedAt: Date | null;
+  failureReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface WebhookEventRow {
+  id: string;
+  provider: string;
+  providerEventId: string;
+  eventType: string;
+  signatureValid: boolean;
+  payload: unknown;
+  status: string;
+  attempts: number;
+  lastError: string | null;
+  receivedAt: Date;
+  processedAt: Date | null;
+}
+
+export interface ReconciliationIssueRow {
+  id: string;
+  entityType: string;
+  entityId: string;
+  issueType: string;
+  expected: string | null;
+  actual: string | null;
+  severity: string;
+  status: string;
+  resolutionNote: string | null;
+  resolvedBy: string | null;
+  detectedAt: Date;
+}
+
+export interface OutboxEventRow {
+  id: string;
+  eventType: string;
+  payload: unknown;
+  status: string;
+  attempts: number;
+  lastError: string | null;
+  createdAt: Date;
+  processedAt: Date | null;
+}
+
+/** Simulates a Prisma P2002 unique-constraint-violation error — the shape `isUniqueConstraintViolation` (platform/database/prisma-errors.ts) checks for. */
+function prismaUniqueError(target: string[]): Error {
+  const error = new Error(
+    `Unique constraint failed on the fields: (${target.join(', ')})`,
+  ) as Error & {
+    code: string;
+    meta: { target: string[] };
+  };
+  error.code = 'P2002';
+  error.meta = { target };
+  return error;
+}
+
 export interface InMemoryPrisma {
   users: UserRow[];
   sessions: SessionRow[];
@@ -262,6 +443,17 @@ export interface InMemoryPrisma {
   operatingHours: OperatingHoursRow[];
   specialHours: SpecialHoursRow[];
   closurePeriods: ClosurePeriodRow[];
+  customers: CustomerRow[];
+  carts: CartRow[];
+  cartItems: CartItemRow[];
+  orders: OrderRow[];
+  orderItems: OrderItemRow[];
+  orderStatusHistory: OrderStatusHistoryRow[];
+  payments: PaymentRow[];
+  refunds: RefundRow[];
+  webhookEvents: WebhookEventRow[];
+  reconciliationIssues: ReconciliationIssueRow[];
+  outboxEvents: OutboxEventRow[];
   prisma: PrismaService;
 }
 
@@ -281,6 +473,17 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   const operatingHours: OperatingHoursRow[] = [];
   const specialHours: SpecialHoursRow[] = [];
   const closurePeriods: ClosurePeriodRow[] = [];
+  const customers: CustomerRow[] = [];
+  const carts: CartRow[] = [];
+  const cartItems: CartItemRow[] = [];
+  const orders: OrderRow[] = [];
+  const orderItems: OrderItemRow[] = [];
+  const orderStatusHistory: OrderStatusHistoryRow[] = [];
+  const payments: PaymentRow[] = [];
+  const refunds: RefundRow[] = [];
+  const webhookEvents: WebhookEventRow[] = [];
+  const reconciliationIssues: ReconciliationIssueRow[] = [];
+  const outboxEvents: OutboxEventRow[] = [];
 
   const user = {
     create: ({ data }: { data: Partial<UserRow> }) => {
@@ -1001,6 +1204,633 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     },
   };
 
+  const customerTable = {
+    create: ({ data }: { data: Partial<CustomerRow> }) => {
+      const row: CustomerRow = {
+        id: randomUUID(),
+        userId: null,
+        email: null,
+        status: 'ACTIVE',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...omitUndefined(data),
+      } as CustomerRow;
+      customers.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { id: string } }) => {
+      return Promise.resolve(customers.find((c) => c.id === where.id) ?? null);
+    },
+  };
+
+  interface CartCreateData {
+    restaurantId: string;
+    guestTokenHash: string;
+    status?: string;
+    expiresAt: Date;
+    items?: { create: { menuItemId: string; quantity: number; unitPriceMinorAtAdd: bigint }[] };
+  }
+
+  const cartTable = {
+    create: ({ data }: { data: CartCreateData }) => {
+      const row: CartRow = {
+        id: randomUUID(),
+        restaurantId: data.restaurantId,
+        customerId: null,
+        guestTokenHash: data.guestTokenHash,
+        status: (data.status as CartRow['status']) ?? 'OPEN',
+        expiresAt: data.expiresAt,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      carts.push(row);
+      const createdItems: CartItemRow[] = (data.items?.create ?? []).map((item) => {
+        const itemRow: CartItemRow = {
+          id: randomUUID(),
+          cartId: row.id,
+          menuItemId: item.menuItemId,
+          quantity: item.quantity,
+          unitPriceMinorAtAdd: item.unitPriceMinorAtAdd,
+          createdAt: new Date(),
+        };
+        cartItems.push(itemRow);
+        return itemRow;
+      });
+      return Promise.resolve({ ...row, items: createdItems });
+    },
+    findUnique: ({ where, include }: { where: { id: string }; include?: { items?: boolean } }) => {
+      const row = carts.find((c) => c.id === where.id) ?? null;
+      if (!row) return Promise.resolve(null);
+      if (!include?.items) return Promise.resolve(row);
+      return Promise.resolve({ ...row, items: cartItems.filter((i) => i.cartId === row.id) });
+    },
+    update: ({ where, data }: { where: { id: string }; data: Partial<CartRow> }) => {
+      const row = carts.find((c) => c.id === where.id);
+      if (!row) throw new Error(`cart ${where.id} not found`);
+      Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
+      return Promise.resolve(row);
+    },
+  };
+
+  interface OrderNestedItemCreate {
+    menuItemId: string;
+    nameSnapshot: string;
+    descriptionSnapshot?: string;
+    unitPriceMinorSnapshot: bigint;
+    quantity: number;
+    lineTotalMinor: bigint;
+  }
+  interface OrderNestedHistoryCreate {
+    fromStatus?: string | null;
+    toStatus: string;
+    actorType: string;
+    actorId?: string;
+    reason?: string;
+  }
+  interface OrderNestedPaymentCreate {
+    provider: string;
+    status: string;
+    amountMinor: bigint;
+    currency: string;
+    idempotencyKey: string;
+  }
+  interface OrderCreateData {
+    orderNumber: string;
+    restaurantId: string;
+    customerId: string;
+    status: string;
+    customerName: string;
+    customerPhone: string;
+    deliveryAddress: unknown;
+    itemsSubtotalMinor: bigint;
+    packagingFeeMinor: bigint;
+    deliveryFeeMinor: bigint;
+    platformFeeMinor: bigint;
+    taxMinor: bigint;
+    discountMinor: bigint;
+    loyaltyDiscountMinor: bigint;
+    payableTotalMinor: bigint;
+    pricingBreakdown: unknown;
+    idempotencyKey: string;
+    accessTokenHash: string;
+    items?: { create: OrderNestedItemCreate[] };
+    history?: { create: OrderNestedHistoryCreate[] };
+    payments?: { create: OrderNestedPaymentCreate[] };
+  }
+  type OrderWhere =
+    | { id: string }
+    | { orderNumber: string }
+    | { restaurantId_idempotencyKey: { restaurantId: string; idempotencyKey: string } };
+
+  function findOrder(where: OrderWhere): OrderRow | undefined {
+    if ('id' in where) return orders.find((o) => o.id === where.id);
+    if ('orderNumber' in where) return orders.find((o) => o.orderNumber === where.orderNumber);
+    const { restaurantId, idempotencyKey } = where.restaurantId_idempotencyKey;
+    return orders.find(
+      (o) => o.restaurantId === restaurantId && o.idempotencyKey === idempotencyKey,
+    );
+  }
+
+  const orderTable = {
+    create: ({ data, include }: { data: OrderCreateData; include?: { payments?: boolean } }) => {
+      if (orders.some((o) => o.orderNumber === data.orderNumber)) {
+        throw prismaUniqueError(['orderNumber']);
+      }
+      if (
+        orders.some(
+          (o) => o.restaurantId === data.restaurantId && o.idempotencyKey === data.idempotencyKey,
+        )
+      ) {
+        throw prismaUniqueError(['restaurantId', 'idempotencyKey']);
+      }
+
+      const row: OrderRow = {
+        id: randomUUID(),
+        orderNumber: data.orderNumber,
+        restaurantId: data.restaurantId,
+        customerId: data.customerId,
+        status: data.status,
+        customerName: data.customerName,
+        customerPhone: data.customerPhone,
+        deliveryAddress: data.deliveryAddress,
+        itemsSubtotalMinor: data.itemsSubtotalMinor,
+        packagingFeeMinor: data.packagingFeeMinor,
+        deliveryFeeMinor: data.deliveryFeeMinor,
+        platformFeeMinor: data.platformFeeMinor,
+        taxMinor: data.taxMinor,
+        discountMinor: data.discountMinor,
+        loyaltyDiscountMinor: data.loyaltyDiscountMinor,
+        payableTotalMinor: data.payableTotalMinor,
+        currency: 'INR',
+        pricingBreakdown: data.pricingBreakdown,
+        promotionId: null,
+        couponCode: null,
+        appliedLoyaltyPoints: 0,
+        idempotencyKey: data.idempotencyKey,
+        accessTokenHash: data.accessTokenHash,
+        placedAt: null,
+        acceptedAt: null,
+        readyAt: null,
+        deliveredAt: null,
+        cancelledAt: null,
+        rejectionReason: null,
+        cancellationReason: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      orders.push(row);
+
+      for (const item of data.items?.create ?? []) {
+        orderItems.push({
+          id: randomUUID(),
+          orderId: row.id,
+          menuItemId: item.menuItemId,
+          nameSnapshot: item.nameSnapshot,
+          descriptionSnapshot: item.descriptionSnapshot ?? null,
+          unitPriceMinorSnapshot: item.unitPriceMinorSnapshot,
+          quantity: item.quantity,
+          lineTotalMinor: item.lineTotalMinor,
+          createdAt: new Date(),
+        });
+      }
+      for (const entry of data.history?.create ?? []) {
+        orderStatusHistory.push({
+          id: randomUUID(),
+          orderId: row.id,
+          fromStatus: entry.fromStatus ?? null,
+          toStatus: entry.toStatus,
+          actorType: entry.actorType,
+          actorId: entry.actorId ?? null,
+          reason: entry.reason ?? null,
+          metadata: null,
+          createdAt: new Date(),
+        });
+      }
+      const createdPayments: PaymentRow[] = (data.payments?.create ?? []).map((p) => {
+        const paymentRow: PaymentRow = {
+          id: randomUUID(),
+          orderId: row.id,
+          provider: p.provider,
+          providerOrderId: null,
+          providerPaymentId: null,
+          status: p.status,
+          amountMinor: p.amountMinor,
+          capturedMinor: 0n,
+          refundedMinor: 0n,
+          currency: p.currency,
+          method: null,
+          failureCode: null,
+          failureMessage: null,
+          idempotencyKey: p.idempotencyKey,
+          reconciliationStatus: 'OK',
+          authorizedAt: null,
+          capturedAt: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        payments.push(paymentRow);
+        return paymentRow;
+      });
+
+      const result: OrderRow & { payments?: PaymentRow[] } = { ...row };
+      if (include?.payments) result.payments = createdPayments;
+      return Promise.resolve(result);
+    },
+    findUnique: ({
+      where,
+      include,
+    }: {
+      where: OrderWhere;
+      include?: { items?: boolean; history?: unknown; payments?: unknown };
+    }) => {
+      const row = findOrder(where);
+      if (!row) return Promise.resolve(null);
+      if (!include) return Promise.resolve(row);
+
+      const result: OrderRow & {
+        items?: OrderItemRow[];
+        history?: OrderStatusHistoryRow[];
+        payments?: PaymentRow[];
+      } = { ...row };
+      if (include.items) {
+        result.items = orderItems.filter((i) => i.orderId === row.id);
+      }
+      if (include.history) {
+        result.history = orderStatusHistory
+          .filter((h) => h.orderId === row.id)
+          .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      if (include.payments) {
+        result.payments = payments
+          .filter((p) => p.orderId === row.id)
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      }
+      return Promise.resolve(result);
+    },
+    update: ({ where, data }: { where: { id: string }; data: Partial<OrderRow> }) => {
+      const row = orders.find((o) => o.id === where.id);
+      if (!row) throw new Error(`order ${where.id} not found`);
+      Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
+      return Promise.resolve(row);
+    },
+    findMany: ({ where }: { where: { status?: string; createdAt?: { lt: Date } } }) => {
+      return Promise.resolve(
+        orders.filter((o) => {
+          if (where.status !== undefined && o.status !== where.status) return false;
+          if (where.createdAt?.lt && o.createdAt.getTime() >= where.createdAt.lt.getTime())
+            return false;
+          return true;
+        }),
+      );
+    },
+  };
+
+  const orderStatusHistoryTable = {
+    create: ({ data }: { data: OrderNestedHistoryCreate & { orderId: string } }) => {
+      const row: OrderStatusHistoryRow = {
+        id: randomUUID(),
+        orderId: data.orderId,
+        fromStatus: data.fromStatus ?? null,
+        toStatus: data.toStatus,
+        actorType: data.actorType,
+        actorId: data.actorId ?? null,
+        reason: data.reason ?? null,
+        metadata: null,
+        createdAt: new Date(),
+      };
+      orderStatusHistory.push(row);
+      return Promise.resolve(row);
+    },
+  };
+
+  type PaymentWhere = {
+    id?: string;
+    orderId?: string;
+    provider?: string;
+    providerPaymentId?: string;
+    providerOrderId?: string;
+    idempotencyKey?: string;
+  };
+  const matchPayment = (where: PaymentWhere) => (p: PaymentRow) => {
+    if (where.id !== undefined && p.id !== where.id) return false;
+    if (where.orderId !== undefined && p.orderId !== where.orderId) return false;
+    if (where.provider !== undefined && p.provider !== where.provider) return false;
+    if (where.providerPaymentId !== undefined && p.providerPaymentId !== where.providerPaymentId)
+      return false;
+    if (where.providerOrderId !== undefined && p.providerOrderId !== where.providerOrderId)
+      return false;
+    if (where.idempotencyKey !== undefined && p.idempotencyKey !== where.idempotencyKey)
+      return false;
+    return true;
+  };
+
+  const paymentTable = {
+    create: ({
+      data,
+    }: {
+      data: {
+        orderId: string;
+        provider: string;
+        providerOrderId?: string;
+        status: string;
+        amountMinor: bigint;
+        currency: string;
+        idempotencyKey: string;
+      };
+    }) => {
+      if (payments.some((p) => p.idempotencyKey === data.idempotencyKey)) {
+        throw prismaUniqueError(['idempotencyKey']);
+      }
+      const row: PaymentRow = {
+        id: randomUUID(),
+        orderId: data.orderId,
+        provider: data.provider,
+        providerOrderId: data.providerOrderId ?? null,
+        providerPaymentId: null,
+        status: data.status,
+        amountMinor: data.amountMinor,
+        capturedMinor: 0n,
+        refundedMinor: 0n,
+        currency: data.currency,
+        method: null,
+        failureCode: null,
+        failureMessage: null,
+        idempotencyKey: data.idempotencyKey,
+        reconciliationStatus: 'OK',
+        authorizedAt: null,
+        capturedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      payments.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { id: string } }) => {
+      return Promise.resolve(payments.find((p) => p.id === where.id) ?? null);
+    },
+    findFirst: ({
+      where,
+      orderBy,
+    }: {
+      where: PaymentWhere;
+      orderBy?: { createdAt: 'asc' | 'desc' };
+    }) => {
+      let matches = payments.filter(matchPayment(where));
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      }
+      return Promise.resolve(matches[0] ?? null);
+    },
+    findMany: ({
+      where,
+      orderBy,
+      take,
+    }: {
+      where: PaymentWhere;
+      orderBy?: { createdAt: 'asc' | 'desc' };
+      take?: number;
+    }) => {
+      let matches = payments.filter(matchPayment(where));
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      }
+      if (take !== undefined) matches = matches.slice(0, take);
+      return Promise.resolve(matches);
+    },
+    update: ({ where, data }: { where: { id: string }; data: Partial<PaymentRow> }) => {
+      const row = payments.find((p) => p.id === where.id);
+      if (!row) throw new Error(`payment ${where.id} not found`);
+      Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
+      return Promise.resolve(row);
+    },
+  };
+
+  type RefundWhere = { paymentId?: string; idempotencyKey?: string; status?: { not: string } };
+  const matchRefund = (where: RefundWhere) => (r: RefundRow) => {
+    if (where.paymentId !== undefined && r.paymentId !== where.paymentId) return false;
+    if (where.idempotencyKey !== undefined && r.idempotencyKey !== where.idempotencyKey)
+      return false;
+    if (where.status?.not !== undefined && r.status === where.status.not) return false;
+    return true;
+  };
+
+  const refundTable = {
+    create: ({
+      data,
+    }: {
+      data: {
+        paymentId: string;
+        orderId: string;
+        amountMinor: bigint;
+        reason: string;
+        status?: string;
+        initiatedByActorType: string;
+        initiatedByActorId?: string;
+        idempotencyKey: string;
+      };
+    }) => {
+      if (
+        refunds.some(
+          (r) => r.paymentId === data.paymentId && r.idempotencyKey === data.idempotencyKey,
+        )
+      ) {
+        throw prismaUniqueError(['paymentId', 'idempotencyKey']);
+      }
+      const row: RefundRow = {
+        id: randomUUID(),
+        paymentId: data.paymentId,
+        orderId: data.orderId,
+        amountMinor: data.amountMinor,
+        reason: data.reason,
+        status: data.status ?? 'REQUESTED',
+        providerRefundId: null,
+        initiatedByActorType: data.initiatedByActorType,
+        initiatedByActorId: data.initiatedByActorId ?? null,
+        idempotencyKey: data.idempotencyKey,
+        completedAt: null,
+        failureReason: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      refunds.push(row);
+      return Promise.resolve(row);
+    },
+    findFirst: ({ where }: { where: RefundWhere }) => {
+      return Promise.resolve(refunds.find(matchRefund(where)) ?? null);
+    },
+    findMany: ({ where }: { where: RefundWhere }) => {
+      return Promise.resolve(refunds.filter(matchRefund(where)));
+    },
+    update: ({ where, data }: { where: { id: string }; data: Partial<RefundRow> }) => {
+      const row = refunds.find((r) => r.id === where.id);
+      if (!row) throw new Error(`refund ${where.id} not found`);
+      Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
+      return Promise.resolve(row);
+    },
+  };
+
+  const webhookEventTable = {
+    create: ({
+      data,
+    }: {
+      data: {
+        provider: string;
+        providerEventId: string;
+        eventType: string;
+        signatureValid: boolean;
+        payload: unknown;
+      };
+    }) => {
+      if (
+        webhookEvents.some(
+          (w) => w.provider === data.provider && w.providerEventId === data.providerEventId,
+        )
+      ) {
+        throw prismaUniqueError(['provider', 'providerEventId']);
+      }
+      const row: WebhookEventRow = {
+        id: randomUUID(),
+        provider: data.provider,
+        providerEventId: data.providerEventId,
+        eventType: data.eventType,
+        signatureValid: data.signatureValid,
+        payload: data.payload,
+        status: 'RECEIVED',
+        attempts: 0,
+        lastError: null,
+        receivedAt: new Date(),
+        processedAt: null,
+      };
+      webhookEvents.push(row);
+      return Promise.resolve(row);
+    },
+    findMany: ({
+      where,
+      orderBy,
+      take,
+    }: {
+      where: { status: string };
+      orderBy?: { receivedAt: 'asc' | 'desc' };
+      take?: number;
+    }) => {
+      let matches = webhookEvents.filter((w) => w.status === where.status);
+      if (orderBy?.receivedAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.receivedAt.getTime() - b.receivedAt.getTime());
+      }
+      if (take !== undefined) matches = matches.slice(0, take);
+      return Promise.resolve(matches);
+    },
+    update: ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: Omit<Partial<WebhookEventRow>, 'attempts'> & { attempts?: { increment: number } };
+    }) => {
+      const row = webhookEvents.find((w) => w.id === where.id);
+      if (!row) throw new Error(`webhookEvent ${where.id} not found`);
+      if (data.attempts) {
+        row.attempts += data.attempts.increment;
+      }
+      const { attempts: _attempts, ...rest } = data;
+      Object.assign(row, omitUndefined(rest));
+      return Promise.resolve(row);
+    },
+  };
+
+  const reconciliationIssueTable = {
+    create: ({
+      data,
+    }: {
+      data: {
+        entityType: string;
+        entityId: string;
+        issueType: string;
+        expected?: string;
+        actual?: string;
+        severity: string;
+      };
+    }) => {
+      const row: ReconciliationIssueRow = {
+        id: randomUUID(),
+        entityType: data.entityType,
+        entityId: data.entityId,
+        issueType: data.issueType,
+        expected: data.expected ?? null,
+        actual: data.actual ?? null,
+        severity: data.severity,
+        status: 'OPEN',
+        resolutionNote: null,
+        resolvedBy: null,
+        detectedAt: new Date(),
+      };
+      reconciliationIssues.push(row);
+      return Promise.resolve(row);
+    },
+    findMany: ({
+      where,
+      orderBy,
+    }: {
+      where: { status: string };
+      orderBy?: { detectedAt: 'asc' | 'desc' };
+    }) => {
+      let matches = reconciliationIssues.filter((r) => r.status === where.status);
+      if (orderBy?.detectedAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.detectedAt.getTime() - a.detectedAt.getTime());
+      }
+      return Promise.resolve(matches);
+    },
+  };
+
+  const outboxEventTable = {
+    create: ({ data }: { data: { eventType: string; payload: unknown } }) => {
+      const row: OutboxEventRow = {
+        id: randomUUID(),
+        eventType: data.eventType,
+        payload: data.payload,
+        status: 'PENDING',
+        attempts: 0,
+        lastError: null,
+        createdAt: new Date(),
+        processedAt: null,
+      };
+      outboxEvents.push(row);
+      return Promise.resolve(row);
+    },
+    findMany: ({
+      where,
+      orderBy,
+      take,
+    }: {
+      where: { status: string };
+      orderBy?: { createdAt: 'asc' | 'desc' };
+      take?: number;
+    }) => {
+      let matches = outboxEvents.filter((o) => o.status === where.status);
+      if (orderBy?.createdAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      if (take !== undefined) matches = matches.slice(0, take);
+      return Promise.resolve(matches);
+    },
+    update: ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: Omit<Partial<OutboxEventRow>, 'attempts'> & { attempts?: { increment: number } };
+    }) => {
+      const row = outboxEvents.find((o) => o.id === where.id);
+      if (!row) throw new Error(`outboxEvent ${where.id} not found`);
+      if (data.attempts) {
+        row.attempts += data.attempts.increment;
+      }
+      const { attempts: _attempts, ...rest } = data;
+      Object.assign(row, omitUndefined(rest));
+      return Promise.resolve(row);
+    },
+  };
+
   const prisma = {
     user,
     session,
@@ -1017,6 +1847,15 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     operatingHours: operatingHoursTable,
     specialHours: specialHoursTable,
     closurePeriod: closurePeriodTable,
+    customer: customerTable,
+    cart: cartTable,
+    order: orderTable,
+    orderStatusHistory: orderStatusHistoryTable,
+    payment: paymentTable,
+    refund: refundTable,
+    webhookEvent: webhookEventTable,
+    reconciliationIssue: reconciliationIssueTable,
+    outboxEvent: outboxEventTable,
     // Supports both Prisma `$transaction` forms this codebase uses: the
     // array form (a list of already-constructed operations, awaited
     // together — see session.repository.ts) and the interactive
@@ -1051,6 +1890,17 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     operatingHours,
     specialHours,
     closurePeriods,
+    customers,
+    carts,
+    cartItems,
+    orders,
+    orderItems,
+    orderStatusHistory,
+    payments,
+    refunds,
+    webhookEvents,
+    reconciliationIssues,
+    outboxEvents,
     prisma,
   };
 }

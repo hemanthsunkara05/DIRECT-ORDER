@@ -34,7 +34,11 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.forRoot(env),
     new FastifyAdapter({ trustProxy: true }),
-    { bufferLogs: true },
+    // rawBody: true populates `request.rawBody` (a Buffer) alongside
+    // the parsed body on every request — the webhook receiver needs the
+    // exact, unparsed bytes to verify Razorpay's HMAC signature over
+    // (BR-38); see WebhookController's doc comment.
+    { bufferLogs: true, rawBody: true },
   );
 
   app.useLogger(app.get(AppLoggerService));

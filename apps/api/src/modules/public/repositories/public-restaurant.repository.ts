@@ -30,4 +30,12 @@ export class PublicRestaurantRepository {
       include: { address: true, branding: true, settings: true },
     });
   }
+
+  /** Phase 9: CartService/CheckoutService already have a `restaurantId` (from a persisted Cart), not a slug. */
+  async findById(id: string): Promise<RestaurantWithPublicRelations | null> {
+    return this.prisma.restaurant.findUnique({
+      where: { id },
+      include: { address: true, branding: true, settings: true },
+    });
+  }
 }

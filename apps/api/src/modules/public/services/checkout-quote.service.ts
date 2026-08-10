@@ -8,7 +8,10 @@ import {
   AvailabilityService,
   type AvailabilityReason,
 } from '../../availability/availability.service.js';
-import { PublicRestaurantRepository } from '../repositories/public-restaurant.repository.js';
+import {
+  PublicRestaurantRepository,
+  type RestaurantWithPublicRelations,
+} from '../repositories/public-restaurant.repository.js';
 import { PublicMenuRepository } from '../repositories/public-menu.repository.js';
 import type { QuoteCartInput } from '../dto/quote-cart.dto.js';
 
@@ -60,7 +63,32 @@ export class CheckoutQuoteService {
     if (!restaurant || restaurant.status === 'DRAFT' || restaurant.status === 'PENDING_APPROVAL') {
       throw new NotFoundError('Restaurant not found.');
     }
+    return this.runQuote(restaurant, input.items);
+  }
 
+  /**
+   * CartService.validate() and CheckoutService's entry point — both
+   * already have a `restaurantId` (from a persisted Cart row) rather
+   * than a slug. Same validation, same pricing call, same result shape
+   * as `quote()` — "one function", not two independently-maintained
+   * copies, extended to a second caller shape instead of duplicated
+   * for it.
+   */
+  async quoteByRestaurantId(
+    restaurantId: string,
+    items: QuoteCartInput['items'],
+  ): Promise<QuoteResult> {
+    const restaurant = await this.restaurants.findById(restaurantId);
+    if (!restaurant || restaurant.status === 'DRAFT' || restaurant.status === 'PENDING_APPROVAL') {
+      throw new NotFoundError('Restaurant not found.');
+    }
+    return this.runQuote(restaurant, items);
+  }
+
+  private async runQuote(
+    restaurant: RestaurantWithPublicRelations,
+    items: QuoteCartInput['items'],
+  ): Promise<QuoteResult> {
     const issues: CartIssue[] = [];
 
     const decision = await this.availability.isAcceptingOrders(restaurant.id);
@@ -70,14 +98,14 @@ export class CheckoutQuoteService {
 
     const liveItems = await this.menu.findByIds(
       restaurant.id,
-      input.items.map((line) => line.itemId),
+      items.map((line) => line.itemId),
     );
     const liveById = new Map(liveItems.map((item) => [item.id, item]));
 
     const validLines: { itemId: string; name: string; unitPriceMinor: bigint; quantity: number }[] =
       [];
 
-    for (const cartLine of input.items) {
+    for (const cartLine of items) {
       const live = liveById.get(cartLine.itemId);
       // Missing entirely, archived, taken off the menu, or 86'd — all
       // the same customer-facing "you can't have this" outcome

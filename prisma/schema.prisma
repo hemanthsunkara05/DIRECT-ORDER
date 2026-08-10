@@ -81,6 +81,95 @@ enum DietaryTag {
   UNKNOWN
 }
 
+enum CustomerStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum CartStatus {
+  OPEN
+  CONVERTED
+  ABANDONED
+}
+
+/// The full graph from docs/03-state-machines.md §7.1. Phase 9 only
+/// ever drives PENDING_PAYMENT → PLACED/PAYMENT_FAILED/EXPIRED through
+/// real endpoints — every other edge, including PAYMENT_FAILED →
+/// PENDING_PAYMENT retry, ACCEPTED/PREPARING/READY_FOR_PICKUP/
+/// REJECTED/CANCELLED, and the delivery states, is reachable in the
+/// state machine service (one service per aggregate, built complete
+/// now) but has no HTTP path yet. The retry edge was originally
+/// planned as a Phase 9 endpoint; it was deferred on review because it
+/// is not in docs/04-api-specification.md §8.3's endpoint table, none
+/// of the ten named failure scenarios in §18.3 require it, and doing
+/// it correctly needs the same "re-validate and re-price" machinery as
+/// checkout itself (docs/03 §7.1's transition table: "re-validate and
+/// re-price" is the PAYMENT_FAILED → PENDING_PAYMENT precondition) —
+/// better bundled with Phase 10's order-management work than rushed
+/// here. Restaurant-driven transitions arrive with Phase 10; delivery
+/// states with Phase 11.
+enum OrderStatus {
+  PENDING_PAYMENT
+  PLACED
+  PAYMENT_FAILED
+  EXPIRED
+  ACCEPTED
+  PREPARING
+  READY_FOR_PICKUP
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DELIVERY_FAILED
+  REJECTED
+  CANCELLED
+}
+
+/// docs/03-state-machines.md §7.2. A payment's status is a field
+/// separate from the order's — never merged (domain model note).
+enum PaymentStatus {
+  CREATED
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  CANCELLED
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+
+/// docs/03-state-machines.md §7.3.
+enum RefundStatus {
+  REQUESTED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+enum ReconciliationSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ReconciliationIssueStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Identity
 // ─────────────────────────────────────────────────────────────────
@@ -220,6 +309,8 @@ model Restaurant {
   operatingHours OperatingHours[]
   specialHours   SpecialHours[]
   closurePeriods ClosurePeriod[]
+  carts          Cart[]
+  orders         Order[]
 
   @@index([status])
   @@map("restaurants")
@@ -398,6 +489,8 @@ model MenuItem {
 
   restaurant Restaurant   @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   category   MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  cartItems  CartItem[]
+  orderItems OrderItem[]
 
   @@index([restaurantId, categoryId, displayOrder])
   @@map("menu_items")
@@ -479,6 +572,319 @@ model ClosurePeriod {
 
   @@index([restaurantId, startsAt])
   @@map("closure_periods")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Ordering, payments, refunds (Phase 9) — docs/01-domain-model.md
+// §5.4–5.6, docs/02-database-schema.md §6.3 (the DDL this schema
+// reproduces), docs/03-state-machines.md §7.1–7.3.
+// ─────────────────────────────────────────────────────────────────
+
+/// The ordering party — may exist without a User (guest checkout,
+/// docs/01 §5.4). Phase 9 only ever creates guest rows (`userId`
+/// always null): a registered customer account (AMB-2's "lightweight
+/// optional account", phone-OTP, no password) is explicitly deferred
+/// past the pilot — see this phase's report. `userId` is a plain
+/// nullable field with no `@relation` for the same reason: there is no
+/// code path that ever sets it yet, so a real FK/back-relation to User
+/// would be unused scaffolding, not a working feature.
+model Customer {
+  id        String         @id @default(uuid(7)) @db.Uuid
+  userId    String?        @map("user_id") @db.Uuid
+  fullName  String         @map("full_name")
+  phone     String
+  email     String?
+  status    CustomerStatus @default(ACTIVE)
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  carts  Cart[]
+  orders Order[]
+
+  @@index([phone])
+  @@map("customers")
+}
+
+/// Server-side cart — the browser's local copy (Phase 7/8) is for UX
+/// only; this row is authoritative at checkout (docs/01 §5.5). Belongs
+/// to exactly one restaurant (BR-16); a guest is identified by
+/// `guestTokenHash` (same hash-stored/raw-token-returned-once pattern
+/// as staff invitations and order access tokens below), a registered
+/// customer by `customerId`.
+model Cart {
+  id             String     @id @default(uuid(7)) @db.Uuid
+  restaurantId   String     @map("restaurant_id") @db.Uuid
+  customerId     String?    @map("customer_id") @db.Uuid
+  guestTokenHash String     @map("guest_token_hash")
+  status         CartStatus @default(OPEN)
+  expiresAt      DateTime   @map("expires_at") @db.Timestamptz
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  customer   Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items      CartItem[]
+
+  @@index([guestTokenHash])
+  @@index([restaurantId, status])
+  @@map("carts")
+}
+
+/// `unitPriceMinorAtAdd` exists for price-drift detection only — never
+/// authoritative for payment (BR-2, BR-20). A cart item is meaningless
+/// without its cart and carries no financial/audit value of its own, so
+/// this is the one place in the schema `onDelete: Cascade` is used for
+/// a child that isn't purely denormalized data (docs/02 §6.1's deletion
+/// policy explicitly allows this exception).
+model CartItem {
+  id                  String   @id @default(uuid(7)) @db.Uuid
+  cartId              String   @map("cart_id") @db.Uuid
+  menuItemId          String   @map("menu_item_id") @db.Uuid
+  quantity            Int
+  unitPriceMinorAtAdd BigInt   @map("unit_price_minor_at_add")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  cart     Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+
+  @@index([cartId])
+  @@map("cart_items")
+}
+
+/// The central financial and operational record — never deleted, no
+/// snapshot field ever mutated after creation (docs/02 §6.3: "All
+/// snapshot fields are immutable after creation"). `accessTokenHash`
+/// backs guest order tracking (BR-35: "the order number alone is
+/// insufficient") — the raw token is returned once, at checkout, and
+/// never persisted in plaintext, same as every other token in this
+/// codebase. The `order_total_consistent`/`order_discount_bounded`
+/// CHECK constraints from docs/02 §6.3 are enforced at the service
+/// layer (OrderStateService/CheckoutService), not the database — Prisma's
+/// schema DSL cannot express multi-column CHECK constraints, the same
+/// limitation already documented on several earlier models in this file.
+model Order {
+  id           String      @id @default(uuid(7)) @db.Uuid
+  orderNumber  String      @map("order_number")
+  restaurantId String      @map("restaurant_id") @db.Uuid
+  customerId   String      @map("customer_id") @db.Uuid
+  status       OrderStatus
+
+  customerName    String @map("customer_name")
+  customerPhone   String @map("customer_phone")
+  deliveryAddress Json   @map("delivery_address")
+
+  itemsSubtotalMinor   BigInt @map("items_subtotal_minor")
+  packagingFeeMinor    BigInt @default(0) @map("packaging_fee_minor")
+  deliveryFeeMinor     BigInt @default(0) @map("delivery_fee_minor")
+  platformFeeMinor     BigInt @default(0) @map("platform_fee_minor")
+  taxMinor             BigInt @default(0) @map("tax_minor")
+  discountMinor        BigInt @default(0) @map("discount_minor")
+  loyaltyDiscountMinor BigInt @default(0) @map("loyalty_discount_minor")
+  payableTotalMinor    BigInt @map("payable_total_minor")
+  currency             String @default("INR")
+  pricingBreakdown     Json   @map("pricing_breakdown")
+
+  promotionId          String? @map("promotion_id") @db.Uuid
+  couponCode           String? @map("coupon_code")
+  appliedLoyaltyPoints Int     @default(0) @map("applied_loyalty_points")
+
+  idempotencyKey     String    @map("idempotency_key")
+  accessTokenHash    String    @map("access_token_hash")
+  placedAt           DateTime? @map("placed_at") @db.Timestamptz
+  acceptedAt         DateTime? @map("accepted_at") @db.Timestamptz
+  readyAt            DateTime? @map("ready_at") @db.Timestamptz
+  deliveredAt        DateTime? @map("delivered_at") @db.Timestamptz
+  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz
+  rejectionReason    String?   @map("rejection_reason")
+  cancellationReason String?   @map("cancellation_reason")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  restaurant Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  customer   Customer             @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  items      OrderItem[]
+  history    OrderStatusHistory[]
+  payments   Payment[]
+
+  @@unique([orderNumber])
+  @@unique([restaurantId, idempotencyKey])
+  @@index([restaurantId, status, createdAt(sort: Desc)])
+  @@index([customerId, createdAt(sort: Desc)])
+  @@map("orders")
+}
+
+/// Immutable line-item snapshot — `menuItemId` is kept only as a
+/// reference for analytics; every field that actually mattered at order
+/// time (name, price) is snapshotted directly, so a later menu edit or
+/// archive never changes what a historical order displays (docs/01 §5.5).
+model OrderItem {
+  id                     String   @id @default(uuid(7)) @db.Uuid
+  orderId                String   @map("order_id") @db.Uuid
+  menuItemId             String   @map("menu_item_id") @db.Uuid
+  nameSnapshot           String   @map("name_snapshot")
+  descriptionSnapshot    String?  @map("description_snapshot")
+  unitPriceMinorSnapshot BigInt   @map("unit_price_minor_snapshot")
+  quantity               Int
+  lineTotalMinor         BigInt   @map("line_total_minor")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  order    Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+/// Append-only — never updated or deleted through any API (BR-52).
+/// `fromStatus` is null for the very first row (order creation has no
+/// "from").
+model OrderStatusHistory {
+  id         String       @id @default(uuid(7)) @db.Uuid
+  orderId    String       @map("order_id") @db.Uuid
+  fromStatus OrderStatus? @map("from_status")
+  toStatus   OrderStatus  @map("to_status")
+  actorType  String       @map("actor_type")
+  actorId    String?      @map("actor_id") @db.Uuid
+  reason     String?
+  metadata   Json?
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, createdAt])
+  @@map("order_status_history")
+}
+
+/// `unique(provider, providerPaymentId)` is the primary defence against
+/// duplicate webhook processing (docs/01 §5.6) — Postgres unique
+/// constraints already treat NULL as distinct from every other NULL, so
+/// this behaves exactly like the DDL's `WHERE provider_payment_id IS
+/// NOT NULL` partial index without needing a raw-SQL migration for it.
+/// Payment status is a field separate from Order.status — never merged.
+model Payment {
+  id                   String        @id @default(uuid(7)) @db.Uuid
+  orderId              String        @map("order_id") @db.Uuid
+  provider             String
+  providerOrderId      String?       @map("provider_order_id")
+  providerPaymentId    String?       @map("provider_payment_id")
+  status               PaymentStatus
+  amountMinor          BigInt        @map("amount_minor")
+  capturedMinor        BigInt        @default(0) @map("captured_minor")
+  refundedMinor        BigInt        @default(0) @map("refunded_minor")
+  currency             String        @default("INR")
+  method               String?
+  failureCode          String?       @map("failure_code")
+  failureMessage       String?       @map("failure_message")
+  idempotencyKey       String        @map("idempotency_key")
+  reconciliationStatus String        @default("OK") @map("reconciliation_status")
+  authorizedAt         DateTime?     @map("authorized_at") @db.Timestamptz
+  capturedAt           DateTime?     @map("captured_at") @db.Timestamptz
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  refunds Refund[]
+
+  @@unique([idempotencyKey])
+  @@unique([provider, providerPaymentId])
+  @@index([orderId])
+  @@index([reconciliationStatus])
+  @@map("payments")
+}
+
+/// Sum of non-FAILED refunds must never exceed `payment.capturedMinor`
+/// (INV-6, BR-49) — enforced at the service layer by locking the
+/// Payment row before creating a Refund (RefundService), the same
+/// pattern the DDL's CHECK + row-lock combination describes.
+model Refund {
+  id                   String       @id @default(uuid(7)) @db.Uuid
+  paymentId            String       @map("payment_id") @db.Uuid
+  orderId              String       @map("order_id") @db.Uuid
+  amountMinor          BigInt       @map("amount_minor")
+  reason               String
+  status               RefundStatus @default(REQUESTED)
+  providerRefundId     String?      @map("provider_refund_id")
+  initiatedByActorType String       @map("initiated_by_actor_type")
+  initiatedByActorId   String?      @map("initiated_by_actor_id") @db.Uuid
+  idempotencyKey       String       @map("idempotency_key")
+  completedAt          DateTime?    @map("completed_at") @db.Timestamptz
+  failureReason        String?      @map("failure_reason")
+  createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@unique([paymentId, idempotencyKey])
+  @@unique([providerRefundId])
+  @@index([orderId])
+  @@map("refunds")
+}
+
+/// The idempotency anchor for every provider callback (docs/01 §5.6).
+/// Processing contract (docs/02 §6.3): verify signature → insert this
+/// row → zero rows inserted (conflict) means duplicate, return 200
+/// immediately and stop → otherwise process → return 200. A processing
+/// failure must never produce a non-2xx response, or the provider
+/// retries a webhook already stored here (BR-39, BR-40).
+model WebhookEvent {
+  id              String             @id @default(uuid(7)) @db.Uuid
+  provider        String
+  providerEventId String             @map("provider_event_id")
+  eventType       String             @map("event_type")
+  signatureValid  Boolean            @map("signature_valid")
+  payload         Json
+  status          WebhookEventStatus @default(RECEIVED)
+  attempts        Int                @default(0)
+  lastError       String?            @map("last_error")
+  receivedAt      DateTime           @default(now()) @map("received_at") @db.Timestamptz
+  processedAt     DateTime?          @map("processed_at") @db.Timestamptz
+
+  @@unique([provider, providerEventId])
+  @@index([provider, receivedAt])
+  @@map("webhook_events")
+}
+
+/// Records mismatches; never silently corrects financial data (docs/01
+/// §5.6). `expected`/`actual` are strings (not typed money) since this
+/// table records mismatches across several different entity types, not
+/// just payments.
+model ReconciliationIssue {
+  id             String                    @id @default(uuid(7)) @db.Uuid
+  entityType     String                    @map("entity_type")
+  entityId       String                    @map("entity_id") @db.Uuid
+  issueType      String                    @map("issue_type")
+  expected       String?
+  actual         String?
+  severity       ReconciliationSeverity
+  status         ReconciliationIssueStatus @default(OPEN)
+  resolutionNote String?                   @map("resolution_note")
+  resolvedBy     String?                   @map("resolved_by") @db.Uuid
+  detectedAt     DateTime                  @default(now()) @map("detected_at") @db.Timestamptz
+
+  @@index([status, severity])
+  @@index([entityType, entityId])
+  @@map("reconciliation_issues")
+}
+
+/// Side effects (notifications, downstream events) are emitted here
+/// AFTER the triggering transaction commits, never inside it
+/// (docs/03-state-machines.md universal rule 4). Processed by a
+/// lightweight in-process poller for now, not a real queue — see this
+/// phase's report for why full job/queue infrastructure stays Phase 12
+/// (apps/worker's own Phase 1 doc comment: "Real consumers ... attach
+/// here starting Phase 12").
+model OutboxEvent {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  eventType   String       @map("event_type")
+  payload     Json
+  status      OutboxStatus @default(PENDING)
+  attempts    Int          @default(0)
+  lastError   String?      @map("last_error")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  processedAt DateTime?    @map("processed_at") @db.Timestamptz
+
+  @@index([status, createdAt])
+  @@map("outbox_events")
 }
 
 // ─────────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { Body, Controller, HttpCode, Inject, Post } from '@nestjs/common';
 import { ok } from '../../../platform/http/response-envelope.js';
+import { serializeBreakdown } from '../../orders/serialize-breakdown.js';
 import { QuoteCartDto } from '../dto/quote-cart.dto.js';
 import { CheckoutQuoteService } from '../services/checkout-quote.service.js';
 
@@ -25,28 +26,9 @@ export class PublicCheckoutController {
 }
 
 function toPublicQuote(result: Awaited<ReturnType<CheckoutQuoteService['quote']>>) {
-  const { breakdown } = result;
   return {
     valid: result.valid,
     issues: result.issues,
-    breakdown: {
-      items: breakdown.items.map((item) => ({
-        itemId: item.itemId,
-        name: item.name,
-        unitPriceMinor: item.unitPriceMinor.toString(),
-        quantity: item.quantity,
-        lineTotalMinor: item.lineTotalMinor.toString(),
-      })),
-      itemsSubtotalMinor: breakdown.itemsSubtotalMinor.toString(),
-      packagingFeeMinor: breakdown.packagingFeeMinor.toString(),
-      deliveryFeeMinor: breakdown.deliveryFeeMinor.toString(),
-      platformFeeMinor: breakdown.platformFeeMinor.toString(),
-      taxMinor: breakdown.taxMinor.toString(),
-      discountableBaseMinor: breakdown.discountableBaseMinor.toString(),
-      promotionDiscountMinor: breakdown.promotionDiscountMinor.toString(),
-      loyaltyDiscountMinor: breakdown.loyaltyDiscountMinor.toString(),
-      discountMinor: breakdown.discountMinor.toString(),
-      payableTotalMinor: breakdown.payableTotalMinor.toString(),
-    },
+    breakdown: serializeBreakdown(result.breakdown),
   };
 }

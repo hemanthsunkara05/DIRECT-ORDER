@@ -22,5 +22,9 @@ import { PublicCheckoutController } from './controllers/public-checkout.controll
     PublicRestaurantService,
     CheckoutQuoteService,
   ],
+  // Phase 9: OrdersModule imports this module to reuse cart/checkout
+  // validation and pricing (CartService, CheckoutService) rather than
+  // re-deriving it — see CheckoutQuoteService's own doc comment.
+  exports: [PublicRestaurantRepository, PublicMenuRepository, CheckoutQuoteService],
 })
 export class PublicModule {}

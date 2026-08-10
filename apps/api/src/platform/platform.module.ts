@@ -10,6 +10,7 @@ import { HealthModule } from './health/health.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { AuthorizationModule } from './authorization/authorization.module.js';
 import { SecurityModule } from './security/security.module.js';
+import { OutboxModule } from './outbox/outbox.module.js';
 
 /**
  * Aggregates every foundation-layer concern (config, logging, error
@@ -43,6 +44,7 @@ export class PlatformModule implements NestModule {
         RedisModule,
         AuthorizationModule,
         SecurityModule,
+        OutboxModule,
       ],
     };
   }

@@ -59,6 +59,24 @@ export const EnvSchema = z.object({
   // an individual restaurant configures. Already scaffolded in
   // .env.example ahead of this phase.
   PLATFORM_FEE_BPS: z.coerce.number().int().nonnegative().default(0),
+
+  // Phase 9: payments. `mock` (default) is a fully-working in-memory
+  // simulator used for local dev and every automated test in this
+  // sandbox — there is no live network access to Razorpay's API here,
+  // and AMB-3 (payment settlement structure) is explicitly BLOCKING /
+  // REQUIRES PRODUCT DECISION, so real money must never move on an
+  // assumption. `razorpay` is the real adapter, wired and unit-tested
+  // (HMAC signature scheme, request/response shapes) but genuinely
+  // unverified end-to-end without real credentials and network access.
+  PAYMENT_PROVIDER: z.enum(['razorpay', 'mock']).default('mock'),
+  RAZORPAY_KEY_ID: z.string().optional(),
+  RAZORPAY_KEY_SECRET: z.string().optional(),
+  RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+  // BR-33: an unpaid order expires after this many minutes, releasing
+  // reservations. Records are retained (PENDING_PAYMENT -> EXPIRED, not deleted).
+  ORDER_PAYMENT_TTL_MINUTES: z.coerce.number().int().positive().default(30),
+  // BR-31: a cart expires after this many hours of inactivity.
+  CART_TTL_HOURS: z.coerce.number().int().positive().default(24),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
