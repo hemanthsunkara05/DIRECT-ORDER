@@ -88,16 +88,22 @@ describe('Authorization (Phase 4, e2e)', () => {
     password: 'correct-horse-battery-staple',
   };
 
+  /** Every mutating request needs the CSRF cookie + matching header (docs/09-security.md §15.7). */
+  function mutate(method: 'post' | 'patch' | 'delete', path: string): request.Test {
+    return request(ctx.app.getHttpServer())
+      [method](path)
+      .set('Cookie', ctx.csrfCookie)
+      .set('X-CSRF-Token', ctx.csrfToken);
+  }
+
   async function registerVerifyLogin(overrides: Partial<typeof OWNER> = {}) {
     const input = { ...OWNER, ...overrides };
-    await request(ctx.app.getHttpServer()).post('/api/v1/auth/register').send(input).expect(200);
+    await mutate('post', '/api/v1/auth/register').send(input).expect(200);
     const code = ctx.notifier.emailVerificationCodes.get(input.email)!;
-    await request(ctx.app.getHttpServer())
-      .post('/api/v1/auth/otp/verify')
+    await mutate('post', '/api/v1/auth/otp/verify')
       .send({ identifier: input.email, purpose: 'EMAIL_VERIFICATION', code })
       .expect(200);
-    const loginRes = await request(ctx.app.getHttpServer())
-      .post('/api/v1/auth/login')
+    const loginRes = await mutate('post', '/api/v1/auth/login')
       .send({ email: input.email, password: input.password })
       .expect(200);
 
@@ -115,6 +121,10 @@ describe('Authorization (Phase 4, e2e)', () => {
       id,
       slug: `restaurant-${id.slice(0, 8)}`,
       name: 'Spice Route',
+      description: null,
+      phone: null,
+      email: null,
+      timezone: 'Asia/Kolkata',
       status: 'ACTIVE',
       onboardingStatus: 'COMPLETED',
       orderingEnabled: true,
@@ -137,7 +147,9 @@ describe('Authorization (Phase 4, e2e)', () => {
       restaurantId,
       role,
       status,
+      invitedByUserId: null,
       joinedAt: new Date(),
+      disabledAt: status === 'DISABLED' ? new Date() : null,
       createdAt: new Date(),
       updatedAt: new Date(),
     });

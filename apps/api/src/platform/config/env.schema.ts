@@ -40,6 +40,17 @@ export const EnvSchema = z.object({
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
   COOKIE_DOMAIN: z.string().min(1).optional(),
   ARGON2_MEMORY_KB: z.coerce.number().int().positive().default(65536),
+
+  // Phase 5: presigned image uploads (docs/09-security.md §15.6).
+  // S3-compatible — MinIO locally (docker-compose.yml), a real bucket
+  // in production. STORAGE_REGION defaults to a placeholder MinIO
+  // accepts; only a real S3 deployment needs a real AWS region.
+  STORAGE_ENDPOINT: z.string().url(),
+  STORAGE_BUCKET: z.string().min(1),
+  STORAGE_ACCESS_KEY: z.string().min(1),
+  STORAGE_SECRET_KEY: z.string().min(1),
+  STORAGE_REGION: z.string().min(1).default('us-east-1'),
+  CDN_BASE_URL: z.string().url(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

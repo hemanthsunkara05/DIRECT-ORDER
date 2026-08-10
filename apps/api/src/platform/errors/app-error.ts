@@ -50,6 +50,13 @@ export class ConflictError extends AppError {
   }
 }
 
+/** A restaurant's last active OWNER cannot be demoted or disabled (docs/01-domain-model.md §5.2). */
+export class LastOwnerError extends AppError {
+  constructor(message = 'The last active owner cannot be removed or demoted.') {
+    super('LAST_OWNER', 409, message);
+  }
+}
+
 export class RateLimitedError extends AppError {
   constructor(
     message = 'Too many requests. Please try again shortly.',

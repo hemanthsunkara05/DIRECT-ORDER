@@ -75,6 +75,10 @@ export interface RestaurantRow {
   id: string;
   slug: string;
   name: string;
+  description: string | null;
+  phone: string | null;
+  email: string | null;
+  timezone: string;
   status: string;
   onboardingStatus: string;
   orderingEnabled: boolean;
@@ -88,9 +92,68 @@ export interface RestaurantStaffRow {
   restaurantId: string;
   role: 'STAFF' | 'MANAGER' | 'OWNER';
   status: 'ACTIVE' | 'DISABLED';
+  invitedByUserId: string | null;
   joinedAt: Date;
+  disabledAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface RestaurantAddressRow {
+  id: string;
+  restaurantId: string;
+  line1: string;
+  line2: string | null;
+  locality: string | null;
+  city: string;
+  state: string;
+  postalCode: string;
+  latitude: number | null;
+  longitude: number | null;
+  landmark: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface RestaurantBrandingRow {
+  id: string;
+  restaurantId: string;
+  logoUrl: string | null;
+  coverImageUrl: string | null;
+  themePrimaryColor: string | null;
+  themeAccentColor: string | null;
+  tagline: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface RestaurantSettingsRow {
+  id: string;
+  restaurantId: string;
+  minOrderAmountMinor: bigint;
+  packagingFeeMinor: bigint;
+  deliveryFeeMode: string;
+  deliveryFeeFlatMinor: bigint;
+  acceptsOnlinePayment: boolean;
+  autoAcceptOrders: boolean;
+  notificationEmails: string[];
+  notificationPhones: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface StaffInvitationRow {
+  id: string;
+  restaurantId: string;
+  email: string;
+  role: 'STAFF' | 'MANAGER' | 'OWNER';
+  status: 'PENDING' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED';
+  tokenHash: string;
+  invitedByUserId: string;
+  expiresAt: Date;
+  acceptedAt: Date | null;
+  revokedAt: Date | null;
+  createdAt: Date;
 }
 
 export interface InMemoryPrisma {
@@ -100,6 +163,10 @@ export interface InMemoryPrisma {
   auditLogs: AuditLogRow[];
   restaurants: RestaurantRow[];
   restaurantStaff: RestaurantStaffRow[];
+  restaurantAddresses: RestaurantAddressRow[];
+  restaurantBranding: RestaurantBrandingRow[];
+  restaurantSettings: RestaurantSettingsRow[];
+  staffInvitations: StaffInvitationRow[];
   prisma: PrismaService;
 }
 
@@ -110,6 +177,10 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   const auditLogs: AuditLogRow[] = [];
   const restaurants: RestaurantRow[] = [];
   const restaurantStaff: RestaurantStaffRow[] = [];
+  const restaurantAddresses: RestaurantAddressRow[] = [];
+  const restaurantBranding: RestaurantBrandingRow[] = [];
+  const restaurantSettings: RestaurantSettingsRow[] = [];
+  const staffInvitations: StaffInvitationRow[] = [];
 
   const user = {
     create: ({ data }: { data: Partial<UserRow> }) => {
@@ -295,6 +366,20 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   };
 
   const restaurantStaffTable = {
+    create: ({ data }: { data: Partial<RestaurantStaffRow> }) => {
+      const row: RestaurantStaffRow = {
+        id: randomUUID(),
+        status: 'ACTIVE',
+        invitedByUserId: null,
+        joinedAt: new Date(),
+        disabledAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...data,
+      } as RestaurantStaffRow;
+      restaurantStaff.push(row);
+      return Promise.resolve(row);
+    },
     findMany: ({
       where,
       orderBy,
@@ -302,7 +387,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     }: {
       where: RestaurantStaffWhere;
       orderBy?: { joinedAt: 'asc' | 'desc' };
-      include?: { restaurant?: boolean };
+      include?: { restaurant?: boolean; user?: unknown };
     }) => {
       let matches = restaurantStaff.filter(matchRestaurantStaff(where));
       if (orderBy?.joinedAt) {
@@ -310,11 +395,20 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         matches = [...matches].sort((a, b) => dir * (a.joinedAt.getTime() - b.joinedAt.getTime()));
       }
       return Promise.resolve(
-        matches.map((s) =>
-          include?.restaurant
-            ? { ...s, restaurant: restaurants.find((r) => r.id === s.restaurantId) ?? null }
-            : s,
-        ),
+        matches.map((s) => {
+          let row: object = s;
+          if (include?.restaurant) {
+            row = { ...row, restaurant: restaurants.find((r) => r.id === s.restaurantId) ?? null };
+          }
+          if (include?.user) {
+            const u = users.find((u) => u.id === s.userId);
+            row = {
+              ...row,
+              user: u ? { id: u.id, fullName: u.fullName, email: u.email, phone: u.phone } : null,
+            };
+          }
+          return row;
+        }),
       );
     },
     findFirst: ({ where }: { where: RestaurantStaffWhere }) => {
@@ -333,6 +427,195 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         restaurantStaff.find((s) => s.userId === userId && s.restaurantId === restaurantId) ?? null;
       return Promise.resolve(row);
     },
+    updateMany: ({
+      where,
+      data,
+    }: {
+      where: RestaurantStaffWhere;
+      data: Partial<RestaurantStaffRow>;
+    }) => {
+      const matches = restaurantStaff.filter(matchRestaurantStaff(where));
+      for (const row of matches) {
+        Object.assign(row, data, { updatedAt: new Date() });
+      }
+      return Promise.resolve({ count: matches.length });
+    },
+  };
+
+  const restaurantTable = {
+    create: ({ data }: { data: Partial<RestaurantRow> }) => {
+      const row: RestaurantRow = {
+        id: randomUUID(),
+        description: null,
+        phone: null,
+        email: null,
+        timezone: 'Asia/Kolkata',
+        status: 'DRAFT',
+        onboardingStatus: 'NOT_STARTED',
+        orderingEnabled: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...data,
+      } as RestaurantRow;
+      restaurants.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { id?: string; slug?: string } }) => {
+      const row =
+        restaurants.find((r) => {
+          if (where.id !== undefined) return r.id === where.id;
+          if (where.slug !== undefined) return r.slug === where.slug;
+          return false;
+        }) ?? null;
+      return Promise.resolve(row);
+    },
+    update: ({ where, data }: { where: { id: string }; data: Partial<RestaurantRow> }) => {
+      const row = restaurants.find((r) => r.id === where.id);
+      if (!row) throw new Error(`restaurant ${where.id} not found`);
+      Object.assign(row, data, { updatedAt: new Date() });
+      return Promise.resolve(row);
+    },
+    count: ({ where }: { where: { slug?: string } }) => {
+      return Promise.resolve(
+        restaurants.filter((r) => where.slug === undefined || r.slug === where.slug).length,
+      );
+    },
+  };
+
+  function createUpsertTable<Row extends { id: string; restaurantId: string }>(
+    rows: Row[],
+    defaults: Omit<Row, 'id' | 'restaurantId'>,
+  ) {
+    return {
+      findUnique: ({ where }: { where: { restaurantId: string } }) => {
+        return Promise.resolve(rows.find((r) => r.restaurantId === where.restaurantId) ?? null);
+      },
+      create: ({ data }: { data: Partial<Row> & { restaurantId: string } }) => {
+        const row = { id: randomUUID(), ...defaults, ...data } as Row;
+        rows.push(row);
+        return Promise.resolve(row);
+      },
+      upsert: ({
+        where,
+        create,
+        update,
+      }: {
+        where: { restaurantId: string };
+        create: Partial<Row> & { restaurantId: string };
+        update: Partial<Row>;
+      }) => {
+        const existing = rows.find((r) => r.restaurantId === where.restaurantId);
+        if (existing) {
+          Object.assign(existing, update, 'updatedAt' in existing ? { updatedAt: new Date() } : {});
+          return Promise.resolve(existing);
+        }
+        const row = { id: randomUUID(), ...defaults, ...create } as Row;
+        rows.push(row);
+        return Promise.resolve(row);
+      },
+    };
+  }
+
+  const restaurantAddressTable = createUpsertTable<RestaurantAddressRow>(restaurantAddresses, {
+    line2: null,
+    locality: null,
+    latitude: null,
+    longitude: null,
+    landmark: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  } as Omit<RestaurantAddressRow, 'id' | 'restaurantId'>);
+
+  const restaurantBrandingTable = createUpsertTable<RestaurantBrandingRow>(restaurantBranding, {
+    logoUrl: null,
+    coverImageUrl: null,
+    themePrimaryColor: null,
+    themeAccentColor: null,
+    tagline: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  const restaurantSettingsTable = createUpsertTable<RestaurantSettingsRow>(restaurantSettings, {
+    minOrderAmountMinor: 0n,
+    packagingFeeMinor: 0n,
+    deliveryFeeMode: 'FLAT',
+    deliveryFeeFlatMinor: 0n,
+    acceptsOnlinePayment: false,
+    autoAcceptOrders: false,
+    notificationEmails: [],
+    notificationPhones: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  type StaffInvitationWhere = {
+    id?: string;
+    restaurantId?: string;
+    email?: string;
+    status?: string;
+    tokenHash?: string;
+  };
+  const matchInvitation = (where: StaffInvitationWhere) => (i: StaffInvitationRow) => {
+    if (where.id !== undefined && i.id !== where.id) return false;
+    if (where.restaurantId !== undefined && i.restaurantId !== where.restaurantId) return false;
+    if (where.email !== undefined && i.email !== where.email) return false;
+    if (where.status !== undefined && i.status !== where.status) return false;
+    if (where.tokenHash !== undefined && i.tokenHash !== where.tokenHash) return false;
+    return true;
+  };
+
+  const staffInvitationTable = {
+    create: ({ data }: { data: Partial<StaffInvitationRow> }) => {
+      const row: StaffInvitationRow = {
+        id: randomUUID(),
+        status: 'PENDING',
+        acceptedAt: null,
+        revokedAt: null,
+        createdAt: new Date(),
+        ...data,
+      } as StaffInvitationRow;
+      staffInvitations.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { tokenHash: string } }) => {
+      return Promise.resolve(staffInvitations.find((i) => i.tokenHash === where.tokenHash) ?? null);
+    },
+    findFirst: ({ where }: { where: StaffInvitationWhere }) => {
+      return Promise.resolve(staffInvitations.find(matchInvitation(where)) ?? null);
+    },
+    findMany: ({
+      where,
+      orderBy,
+    }: {
+      where: StaffInvitationWhere;
+      orderBy?: { createdAt: 'asc' | 'desc' };
+    }) => {
+      let matches = staffInvitations.filter(matchInvitation(where));
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      }
+      return Promise.resolve(matches);
+    },
+    update: ({ where, data }: { where: { id: string }; data: Partial<StaffInvitationRow> }) => {
+      const row = staffInvitations.find((i) => i.id === where.id);
+      if (!row) throw new Error(`staffInvitation ${where.id} not found`);
+      Object.assign(row, data);
+      return Promise.resolve(row);
+    },
+    updateMany: ({
+      where,
+      data,
+    }: {
+      where: StaffInvitationWhere;
+      data: Partial<StaffInvitationRow>;
+    }) => {
+      const matches = staffInvitations.filter(matchInvitation(where));
+      for (const row of matches) {
+        Object.assign(row, data);
+      }
+      return Promise.resolve({ count: matches.length });
+    },
   };
 
   const prisma = {
@@ -340,10 +623,41 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     session,
     otpChallenge,
     auditLog,
+    restaurant: restaurantTable,
     restaurantStaff: restaurantStaffTable,
-    $transaction: (operations: Promise<unknown>[]) => Promise.all(operations),
+    restaurantAddress: restaurantAddressTable,
+    restaurantBranding: restaurantBrandingTable,
+    restaurantSettings: restaurantSettingsTable,
+    staffInvitation: staffInvitationTable,
+    // Supports both Prisma `$transaction` forms this codebase uses: the
+    // array form (a list of already-constructed operations, awaited
+    // together — see session.repository.ts) and the interactive
+    // callback form (`async (tx) => {...}` — see restaurant.service.ts).
+    // For the callback form, `tx` is just `prisma` itself: this fake has
+    // no real transactional isolation to provide, so there is nothing
+    // extra a distinct `tx` object would add.
+    $transaction: (
+      arg: Promise<unknown>[] | ((tx: PrismaService) => Promise<unknown>),
+    ): Promise<unknown> => {
+      if (typeof arg === 'function') {
+        return arg(prisma);
+      }
+      return Promise.all(arg);
+    },
     ping: () => Promise.resolve(),
   } as unknown as PrismaService;
 
-  return { users, sessions, otpChallenges, auditLogs, restaurants, restaurantStaff, prisma };
+  return {
+    users,
+    sessions,
+    otpChallenges,
+    auditLogs,
+    restaurants,
+    restaurantStaff,
+    restaurantAddresses,
+    restaurantBranding,
+    restaurantSettings,
+    staffInvitations,
+    prisma,
+  };
 }

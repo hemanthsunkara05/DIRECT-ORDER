@@ -32,6 +32,12 @@ const TEST_ENV: Env = {
   JWT_ACCESS_TTL_SECONDS: 900,
   REFRESH_TOKEN_TTL_DAYS: 30,
   ARGON2_MEMORY_KB: 65536,
+  STORAGE_ENDPOINT: 'http://localhost:9000',
+  STORAGE_BUCKET: 'direct-order-test',
+  STORAGE_ACCESS_KEY: 'test-access-key',
+  STORAGE_SECRET_KEY: 'test-secret-key',
+  STORAGE_REGION: 'us-east-1',
+  CDN_BASE_URL: 'http://localhost:9000/direct-order-test',
 };
 
 class ControllablePrismaStub {

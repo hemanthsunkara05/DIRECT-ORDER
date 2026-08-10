@@ -7,6 +7,11 @@ const BASE_VALID_ENV = {
   APP_DATABASE_URL: 'postgresql://direct_order_app:pass@localhost:5432/direct_order',
   REDIS_URL: 'redis://localhost:6379',
   JWT_SECRET: 'test-only-secret-at-least-32-characters-long',
+  STORAGE_ENDPOINT: 'http://localhost:9000',
+  STORAGE_BUCKET: 'direct-order-test',
+  STORAGE_ACCESS_KEY: 'test-access-key',
+  STORAGE_SECRET_KEY: 'test-secret-key',
+  CDN_BASE_URL: 'http://localhost:9000/direct-order-test',
 };
 
 describe('validateEnv', () => {

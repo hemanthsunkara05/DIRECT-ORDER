@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ProtectedRoute } from '@/lib/auth/protected-route';
 import { useSession } from '@/lib/auth/session-context';
@@ -31,6 +32,53 @@ function AccountDetails() {
         <Row label="Email" value={user.email ?? '—'} />
         <Row label="Email verified" value={user.emailVerified ? 'Yes' : 'No'} />
       </dl>
+
+      <div>
+        <h2 className="text-sm font-semibold text-slate-900">Your restaurants</h2>
+        {user.restaurantMemberships.length === 0 ? (
+          <div className="mt-2 flex flex-col gap-2">
+            <p className="text-sm text-slate-500">You don&apos;t manage a restaurant yet.</p>
+            <Link href="/onboarding" className="btn-primary w-fit">
+              Create a restaurant
+            </Link>
+          </div>
+        ) : (
+          <ul className="mt-2 flex flex-col gap-2">
+            {user.restaurantMemberships.map((m) => (
+              <li
+                key={m.restaurantId}
+                className="flex items-center justify-between border-b border-slate-100 py-2 text-sm"
+              >
+                <div>
+                  <p className="font-medium">{m.restaurantName}</p>
+                  <p className="text-xs text-slate-400">
+                    {m.role} ·{' '}
+                    {m.onboardingStatus === 'COMPLETED' ? 'Onboarded' : 'Setup incomplete'}
+                  </p>
+                </div>
+                <div className="flex gap-3 text-xs">
+                  {m.onboardingStatus !== 'COMPLETED' && (
+                    <Link href="/onboarding" className="underline">
+                      Continue setup
+                    </Link>
+                  )}
+                  {(m.role === 'MANAGER' || m.role === 'OWNER') && (
+                    <>
+                      <Link href="/restaurant/profile" className="underline">
+                        Profile
+                      </Link>
+                      <Link href="/restaurant/staff" className="underline">
+                        Staff
+                      </Link>
+                    </>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <button type="button" onClick={() => void handleLogout()} className="btn-primary">
         Log out
       </button>

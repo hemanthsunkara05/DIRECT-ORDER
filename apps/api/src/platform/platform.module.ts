@@ -9,6 +9,7 @@ import { AuditModule } from './audit/audit.module.js';
 import { HealthModule } from './health/health.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { AuthorizationModule } from './authorization/authorization.module.js';
+import { SecurityModule } from './security/security.module.js';
 
 /**
  * Aggregates every foundation-layer concern (config, logging, error
@@ -22,7 +23,10 @@ import { AuthorizationModule } from './authorization/authorization.module.js';
  * here makes their providers (APP_CONFIG, PINO_LOGGER, PrismaService,
  * AuditService, RedisService, AuthorizationGuard, ...) injectable
  * anywhere in the application without every future domain module
- * re-importing them.
+ * re-importing them. SecurityModule is not global — it only registers
+ * CsrfGuard as APP_GUARD; the CSRF-cookie-issuing half is a native
+ * Fastify hook wired in main.ts, not Nest middleware — see
+ * platform/security/csrf-cookie.hook.ts for why.
  */
 @Module({})
 export class PlatformModule implements NestModule {
@@ -38,6 +42,7 @@ export class PlatformModule implements NestModule {
         HealthModule,
         RedisModule,
         AuthorizationModule,
+        SecurityModule,
       ],
     };
   }

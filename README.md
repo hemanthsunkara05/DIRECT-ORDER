@@ -2,7 +2,7 @@
 
 Commission-free direct-ordering platform for independent Indian restaurants. Each restaurant gets a branded ordering link, a real-time order dashboard, online payments, and transparent visibility into every rupee — without giving up 25–35% of order value to an aggregator.
 
-**Status:** Phase 4 (Authorization) — see [PRODUCT/docs/13-implementation-phases.md](PRODUCT/docs/13-implementation-phases.md). Foundation (Phase 1), core schema and tenancy (Phase 2), authentication (Phase 3), and the permission catalogue + tenant-isolation guards (Phase 4) are done. No real restaurant-scoped business endpoint exists yet — Phase 4 built and proved the enforcement machinery every domain module from Phase 5 onward will attach to its own routes.
+**Status:** Phase 5 (Restaurant onboarding and profile) — see [PRODUCT/docs/13-implementation-phases.md](PRODUCT/docs/13-implementation-phases.md). Foundation (Phase 1), core schema and tenancy (Phase 2), authentication (Phase 3), authorization (Phase 4), and restaurant creation/onboarding/profile/staff/uploads (Phase 5) are done. A restaurant owner can now sign up, create a restaurant, complete onboarding, invite staff, and upload branding images end to end — menu and ordering are still Phase 6+.
 
 Full specification: [PRODUCT/IMPLEMENTATION_HANDOFF.md](PRODUCT/IMPLEMENTATION_HANDOFF.md).
 
@@ -69,6 +69,7 @@ curl http://localhost:4000/health   # {"status":"ok"}
 curl http://localhost:4000/ready    # {"status":"ready","checks":{"database":{"status":"ok",...}}}
 open http://localhost:3000          # "Direct-Order" placeholder page
 open http://localhost:3000/signup   # Create a restaurant-owner account (Phase 3)
+open http://localhost:3000/onboarding # Create and set up a restaurant (Phase 5)
 ```
 
 ## Common commands
@@ -101,7 +102,7 @@ pnpm --filter=@direct-order/money run test
 
 ## Environment variables
 
-See [.env.example](.env.example) for the complete list, grouped by concern, each annotated with the phase that introduces the code reading it. Only the variables tagged `[PHASE 1]`, `[PHASE 1/2]`, or `[PHASE 3]` are read by anything that exists today; the rest are documented ahead of time so the full production configuration surface is visible from day one.
+See [.env.example](.env.example) for the complete list, grouped by concern, each annotated with the phase that introduces the code reading it. Only variables tagged `[PHASE N]` for N ≤ 5 are read by anything that exists today; the rest are documented ahead of time so the full production configuration surface is visible from day one.
 
 **Never commit `.env` or any file containing real secrets.** `.env.example` contains variable names and formats only.
 
@@ -127,6 +128,7 @@ Registration, login, logout, refresh, password reset, and email/phone verificati
 - **Enumeration resistance.** `/auth/register`, `/auth/login`, and `/auth/password/forgot` return identical responses (and, for login, comparable timing via a dummy password-hash comparison) regardless of whether the account exists.
 - **Rate limiting fails open.** `RateLimitGuard` allows a request through — logging a warning — if Redis is unreachable, rather than taking down the entire authentication surface over a rate-limiter dependency outage. It is defense-in-depth, not the primary control.
 - Cookies (`do_access_token`, `do_refresh_token`) are `HttpOnly; SameSite=Lax; Path=/`, and `Secure` outside `APP_ENV=local` (a plain-HTTP `Secure` cookie would never reach the API in local development).
+- **CSRF: double-submit cookie, on top of SameSite=Lax.** A non-HttpOnly `do_csrf_token` cookie is set on every request (`platform/security/csrf-cookie.hook.ts` — a native Fastify `onRequest` hook, deliberately not `NestMiddleware`: chaining two Nest middlewares through `@fastify/middie` produced a real, reproducible "reply.code is not a function" bug under concurrent requests during Phase 5 development). Every non-GET request must echo it back as `X-CSRF-Token`, checked by the globally-registered `CsrfGuard`; `apps/web`'s `api-client.ts` reads the cookie and attaches the header automatically.
 
 ## Authorization
 
@@ -136,7 +138,17 @@ Permission catalogue, role definitions, and the tenant-isolation guards (Phase 4
 - **403 vs 404, deliberately different layers.** Sending `X-Restaurant-Id` for a restaurant the caller has no active membership in is **403** (`AuthorizationGuard`, logged as a `TENANT_ISOLATION_VIOLATION` audit event). Successfully resolving a tenant and then requesting a specific _resource_ that belongs to a different restaurant is **404**, not 403 — returning 403 would confirm the resource exists, leaking tenant structure (`docs/04-api-specification.md` §8.1). Domain modules get this for free by passing a tenant-scoped repository lookup's `null` result through `assertTenantResourceFound()`.
 - **Membership is re-checked per request**, exactly like Phase 3's session liveness check — a staff member disabled mid-session loses access on their very next request, not when their token happens to expire.
 - **Only restaurant roles (STAFF/MANAGER/OWNER) are enforceable today.** The permission catalogue also encodes SUPPORT/OPS/FINANCE/SUPER_ADMIN per the documented matrix, but `admin_users` (Phase 13) doesn't exist yet, so no principal can actually hold those roles — a route requiring only an admin-capable permission always denies.
-- No real business endpoint uses these guards yet — see `apps/api/test/authorization.e2e.test.ts` for the test-only probe controller that proves the full pipeline over real HTTP ahead of Phase 5 attaching it to real routes.
+- Proved ahead of any real endpoint via a test-only probe controller (`apps/api/test/authorization.e2e.test.ts`) before Phase 5 attached it to real routes — every `/restaurant/*` controller below uses exactly that pattern.
+
+## Restaurants
+
+Restaurant creation, onboarding, profile/branding/settings, staff invitations, and presigned image uploads (Phase 5, `docs/13-implementation-phases.md`). Every `/restaurant/*` route is `@UseGuards(AuthGuard, AuthorizationGuard)` plus `@TenantScoped()` + `@Permissions(...)` per handler — see Authorization above.
+
+- **`POST /restaurants` creates the tenant** — ownership is always the authenticated principal, and `slug` is optional (auto-derived from `name` with silent `-2`/`-3` disambiguation) or explicit (validated against the reserved-word list and uniqueness, **rejected**, not silently renamed, if either fails — `RestaurantService.validateExplicitSlug`).
+- **Onboarding is two independent state machines**, deliberately not one: `Restaurant.onboardingStatus` (the owner's own wizard progress: `IN_PROGRESS` from the moment of creation → `COMPLETED` on submit) and `Restaurant.status` (platform-controlled lifecycle: `DRAFT` → `PENDING_APPROVAL` on submit → `ACTIVE` only once an admin approves, Phase 13). Submitting requires a saved pickup address; both transitions happen server-side in `RestaurantProfileService.submitOnboarding`, so clearing browser storage cannot un-submit or fake completion.
+- **Last-active-OWNER protection** (`StaffManagementService`) blocks demoting or disabling a restaurant's sole OWNER with `409 LAST_OWNER` — checked before the (separate) self-demotion guard, so the common case where both would apply surfaces the more specific code.
+- **Presigned uploads, two steps.** `POST /restaurant/uploads/presign` validates the _declared_ content type/size (SVG rejected outright, 5 MB cap) and returns a time-limited PUT URL — the API never sees the bytes at this step. `POST /restaurant/uploads/verify` fetches what actually landed in storage afterward and checks the magic bytes match what was declared (`uploads/magic-bytes.ts`), deleting and rejecting on any mismatch — the only way to catch a `.exe` renamed to `.jpg`, since the declared type alone proves nothing.
+- **Storage is S3-compatible** (`uploads/s3-storage.adapter.ts`, MinIO locally via `docker-compose.yml`) behind a `StoragePort` interface — tests substitute an in-memory fake (`test/support/fake-storage.ts`) rather than requiring live MinIO.
 
 ## Testing
 

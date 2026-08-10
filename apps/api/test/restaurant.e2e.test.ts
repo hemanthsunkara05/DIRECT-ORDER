@@ -1,0 +1,283 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createTestApp, type TestApp } from './support/create-test-app.js';
+import { get, mutate, registerAndLogin } from './support/register-and-login.js';
+
+describe('Restaurants (Phase 5, e2e)', () => {
+  let ctx: TestApp;
+
+  beforeEach(async () => {
+    ctx = await createTestApp();
+  });
+
+  afterEach(async () => {
+    await ctx.app.close();
+  });
+
+  describe('POST /restaurants', () => {
+    it('creates a restaurant owned by the authenticated user, ignoring any ownerId in the body (docs/14-acceptance-criteria.md, Phase 5)', async () => {
+      const owner = await registerAndLogin(ctx);
+
+      const res = await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Spice Route', ownerId: 'someone-elses-user-id' })
+        .expect(201);
+
+      expect(res.body.data.name).toBe('Spice Route');
+      expect(res.body.data.slug).toBe('spice-route');
+      expect(res.body.data.status).toBe('DRAFT');
+      expect(res.body.data.onboardingStatus).toBe('IN_PROGRESS');
+
+      const membership = ctx.db.restaurantStaff.find((s) => s.restaurantId === res.body.data.id);
+      expect(membership?.userId).toBe(owner.userId);
+      expect(membership?.role).toBe('OWNER');
+    });
+
+    it('auto-generates and disambiguates a slug when none is supplied', async () => {
+      const ownerA = await registerAndLogin(ctx);
+      const ownerB = await registerAndLogin(ctx);
+
+      const first = await mutate(ctx, 'post', '/api/v1/restaurants', ownerA.cookie)
+        .send({ name: 'Spice Route' })
+        .expect(201);
+      const second = await mutate(ctx, 'post', '/api/v1/restaurants', ownerB.cookie)
+        .send({ name: 'Spice Route' })
+        .expect(201);
+
+      expect(first.body.data.slug).toBe('spice-route');
+      expect(second.body.data.slug).toBe('spice-route-2');
+    });
+
+    it('rejects a reserved slug with a clear message (docs/14-acceptance-criteria.md, Phase 5)', async () => {
+      const owner = await registerAndLogin(ctx);
+
+      const res = await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Admin Panel', slug: 'admin' })
+        .expect(422);
+
+      expect(res.body.error.message).toMatch(/reserved/i);
+    });
+
+    it('rejects an explicit slug that is already taken', async () => {
+      const ownerA = await registerAndLogin(ctx);
+      const ownerB = await registerAndLogin(ctx);
+      await mutate(ctx, 'post', '/api/v1/restaurants', ownerA.cookie)
+        .send({ name: 'Spice Route', slug: 'spice-route' })
+        .expect(201);
+
+      const res = await mutate(ctx, 'post', '/api/v1/restaurants', ownerB.cookie)
+        .send({ name: 'Something Else', slug: 'spice-route' })
+        .expect(409);
+      expect(res.body.error.message).toMatch(/already taken/i);
+    });
+
+    it('rejects a malformed explicit slug (uppercase, too short) with 422', async () => {
+      const owner = await registerAndLogin(ctx);
+      await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Spice Route', slug: 'AB' })
+        .expect(422);
+    });
+
+    it('requires authentication', async () => {
+      await mutate(ctx, 'post', '/api/v1/restaurants').send({ name: 'Spice Route' }).expect(401);
+    });
+  });
+
+  describe('GET/PATCH /restaurant/profile (tenant-scoped)', () => {
+    async function createRestaurant(cookie: string, name = 'Spice Route') {
+      const res = await mutate(ctx, 'post', '/api/v1/restaurants', cookie)
+        .send({ name })
+        .expect(201);
+      return res.body.data as { id: string };
+    }
+
+    it('an OWNER can read and update their own profile, including nested address', async () => {
+      const owner = await registerAndLogin(ctx);
+      await createRestaurant(owner.cookie);
+
+      const before = await get(ctx, '/api/v1/restaurant/profile', owner.cookie).expect(200);
+      expect(before.body.data.name).toBe('Spice Route');
+      expect(before.body.data.address).toBeNull();
+
+      const updated = await mutate(ctx, 'patch', '/api/v1/restaurant/profile', owner.cookie)
+        .send({
+          description: 'Authentic South Indian food',
+          address: {
+            line1: '123 MG Road',
+            city: 'Bengaluru',
+            state: 'Karnataka',
+            postalCode: '560001',
+          },
+        })
+        .expect(200);
+
+      expect(updated.body.data.description).toBe('Authentic South Indian food');
+      expect(updated.body.data.address).toMatchObject({ line1: '123 MG Road', city: 'Bengaluru' });
+
+      const after = await get(ctx, '/api/v1/restaurant/profile', owner.cookie).expect(200);
+      expect(after.body.data.address.postalCode).toBe('560001');
+    });
+
+    it('a STAFF member can read but not update the profile (403)', async () => {
+      const owner = await registerAndLogin(ctx);
+      const restaurant = await createRestaurant(owner.cookie);
+      const staffUser = await registerAndLogin(ctx);
+      ctx.db.restaurantStaff.push({
+        id: crypto.randomUUID(),
+        userId: staffUser.userId,
+        restaurantId: restaurant.id,
+        role: 'STAFF',
+        status: 'ACTIVE',
+        invitedByUserId: owner.userId,
+        joinedAt: new Date(),
+        disabledAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      await get(ctx, '/api/v1/restaurant/profile', staffUser.cookie).expect(200);
+      await mutate(ctx, 'patch', '/api/v1/restaurant/profile', staffUser.cookie)
+        .send({ description: 'hijacked' })
+        .expect(403);
+    });
+
+    it("requesting another restaurant's profile via X-Restaurant-Id you don't belong to returns 403", async () => {
+      const ownerA = await registerAndLogin(ctx);
+      const ownerB = await registerAndLogin(ctx);
+      const restaurantB = await createRestaurant(ownerB.cookie, 'Copper Kettle');
+      await createRestaurant(ownerA.cookie, 'Spice Route');
+
+      await get(ctx, '/api/v1/restaurant/profile', ownerA.cookie)
+        .set('X-Restaurant-Id', restaurantB.id)
+        .expect(403);
+    });
+  });
+
+  describe('GET/PATCH /restaurant/branding', () => {
+    it('upserts branding fields', async () => {
+      const owner = await registerAndLogin(ctx);
+      await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Spice Route' })
+        .expect(201);
+
+      const before = await get(ctx, '/api/v1/restaurant/branding', owner.cookie).expect(200);
+      expect(before.body.data).toBeNull();
+
+      const updated = await mutate(ctx, 'patch', '/api/v1/restaurant/branding', owner.cookie)
+        .send({ tagline: 'Taste of the South', themePrimaryColor: '#ff5722' })
+        .expect(200);
+      expect(updated.body.data.tagline).toBe('Taste of the South');
+      expect(updated.body.data.themePrimaryColor).toBe('#ff5722');
+    });
+
+    it('rejects a non-hex color', async () => {
+      const owner = await registerAndLogin(ctx);
+      await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Spice Route' })
+        .expect(201);
+
+      await mutate(ctx, 'patch', '/api/v1/restaurant/branding', owner.cookie)
+        .send({ themePrimaryColor: 'not-a-color' })
+        .expect(422);
+    });
+  });
+
+  describe('GET/PATCH /restaurant/settings', () => {
+    it('has sensible defaults immediately after restaurant creation (never 404s)', async () => {
+      const owner = await registerAndLogin(ctx);
+      await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Spice Route' })
+        .expect(201);
+
+      const res = await get(ctx, '/api/v1/restaurant/settings', owner.cookie).expect(200);
+      expect(res.body.data.minOrderAmountMinor).toBe('0');
+      expect(res.body.data.acceptsOnlinePayment).toBe(false);
+    });
+
+    it('updates money fields as integer minor units, serialized as strings', async () => {
+      const owner = await registerAndLogin(ctx);
+      await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Spice Route' })
+        .expect(201);
+
+      const res = await mutate(ctx, 'patch', '/api/v1/restaurant/settings', owner.cookie)
+        .send({ minOrderAmountMinor: 20000, deliveryFeeMode: 'FLAT', deliveryFeeFlatMinor: 3000 })
+        .expect(200);
+
+      expect(res.body.data.minOrderAmountMinor).toBe('20000');
+      expect(res.body.data.deliveryFeeFlatMinor).toBe('3000');
+    });
+
+    it('rejects a fractional money value', async () => {
+      const owner = await registerAndLogin(ctx);
+      await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Spice Route' })
+        .expect(201);
+
+      await mutate(ctx, 'patch', '/api/v1/restaurant/settings', owner.cookie)
+        .send({ minOrderAmountMinor: 100.5 })
+        .expect(422);
+    });
+  });
+
+  describe('POST /restaurant/onboarding/submit', () => {
+    it('requires an address before submission is allowed', async () => {
+      const owner = await registerAndLogin(ctx);
+      await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Spice Route' })
+        .expect(201);
+
+      await mutate(ctx, 'post', '/api/v1/restaurant/onboarding/submit', owner.cookie).expect(409);
+    });
+
+    it('moves DRAFT → PENDING_APPROVAL and onboardingStatus → COMPLETED once an address exists — backend-authoritative, not client state (docs/14-acceptance-criteria.md, Phase 5)', async () => {
+      const owner = await registerAndLogin(ctx);
+      await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Spice Route' })
+        .expect(201);
+      await mutate(ctx, 'patch', '/api/v1/restaurant/profile', owner.cookie)
+        .send({
+          address: {
+            line1: '123 MG Road',
+            city: 'Bengaluru',
+            state: 'Karnataka',
+            postalCode: '560001',
+          },
+        })
+        .expect(200);
+
+      const res = await mutate(
+        ctx,
+        'post',
+        '/api/v1/restaurant/onboarding/submit',
+        owner.cookie,
+      ).expect(200);
+      expect(res.body.data.status).toBe('PENDING_APPROVAL');
+      expect(res.body.data.onboardingStatus).toBe('COMPLETED');
+
+      // Re-reading from a fresh request proves this is server state, not
+      // something only reflected in the submit response itself — a
+      // client clearing localStorage cannot un-submit it.
+      const profile = await get(ctx, '/api/v1/restaurant/profile', owner.cookie).expect(200);
+      expect(profile.body.data.status).toBe('PENDING_APPROVAL');
+    });
+
+    it('cannot be submitted twice', async () => {
+      const owner = await registerAndLogin(ctx);
+      await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Spice Route' })
+        .expect(201);
+      await mutate(ctx, 'patch', '/api/v1/restaurant/profile', owner.cookie)
+        .send({
+          address: {
+            line1: '123 MG Road',
+            city: 'Bengaluru',
+            state: 'Karnataka',
+            postalCode: '560001',
+          },
+        })
+        .expect(200);
+      await mutate(ctx, 'post', '/api/v1/restaurant/onboarding/submit', owner.cookie).expect(200);
+
+      await mutate(ctx, 'post', '/api/v1/restaurant/onboarding/submit', owner.cookie).expect(409);
+    });
+  });
+});

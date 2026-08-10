@@ -6,6 +6,7 @@ import fastifyCors from '@fastify/cors';
 import { AppModule } from './app.module.js';
 import { validateEnv, EnvValidationError, type Env } from './platform/config/env.schema.js';
 import { AppLoggerService } from './platform/logging/logger.service.js';
+import { createCsrfCookieHook } from './platform/security/csrf-cookie.hook.js';
 
 /**
  * Validated BEFORE the Nest DI container is even constructed. A
@@ -43,6 +44,11 @@ async function bootstrap(): Promise<void> {
   // browser to actually send the HttpOnly session cookies cross-origin
   // between the web app's and the API's domains (docs/09-security.md §15.7).
   await app.register(fastifyCors, { origin: env.WEB_BASE_URL, credentials: true });
+
+  // Registered after @fastify/cookie so request.cookies is already
+  // populated — a native Fastify hook, not Nest middleware, see
+  // csrf-cookie.hook.ts for why.
+  app.getHttpAdapter().getInstance().addHook('onRequest', createCsrfCookieHook(env));
 
   // /health and /ready are infrastructure liveness/readiness probes, not
   // part of the versioned public API — excluded from the prefix so a
