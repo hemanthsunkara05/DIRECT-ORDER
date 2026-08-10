@@ -5,15 +5,16 @@
 // Phase 3 (Authentication) added: OtpChallenge, and Session.familyId
 // for O(1) refresh-token-family revocation on reuse detection.
 // Phase 6 (Menu management) added: MenuCategory, MenuItem.
+// Phase 7 (Public ordering page) added: OperatingHours, SpecialHours,
+// ClosurePeriod — the data isAcceptingOrders() evaluates.
 // See PRODUCT/docs/01-domain-model.md §5.1–5.3 and
 // PRODUCT/docs/02-database-schema.md for the authoritative field-level
 // specification this schema implements.
 //
 // Deliberately excludes anything not yet needed: Customer, AdminUser
-// (Phase 13), OperatingHours/SpecialHours/ClosurePeriod (Phase 7),
-// MenuItemImage/search_vector (multi-image and full-text search are not
-// needed until a phase actually consumes them). Do not add them ahead
-// of the phase that needs them.
+// (Phase 13), MenuItemImage/search_vector (multi-image and full-text
+// search are not needed until a phase actually consumes them). Do not
+// add them ahead of the phase that needs them.
 
 generator client {
   provider = "prisma-client-js"
@@ -107,10 +108,11 @@ model User {
   createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz
 
-  sessions             Session[]
-  restaurantStaff      RestaurantStaff[] @relation("StaffMember")
-  staffMembersInvited  RestaurantStaff[] @relation("StaffInvitedBy")
-  staffInvitationsSent StaffInvitation[] @relation("InvitationSentBy")
+  sessions              Session[]
+  restaurantStaff       RestaurantStaff[] @relation("StaffMember")
+  staffMembersInvited   RestaurantStaff[] @relation("StaffInvitedBy")
+  staffInvitationsSent  StaffInvitation[] @relation("InvitationSentBy")
+  closurePeriodsCreated ClosurePeriod[]   @relation("ClosurePeriodCreatedBy")
 
   @@map("users")
 }
@@ -215,6 +217,9 @@ model Restaurant {
   invitations    StaffInvitation[]
   menuCategories MenuCategory[]
   menuItems      MenuItem[]
+  operatingHours OperatingHours[]
+  specialHours   SpecialHours[]
+  closurePeriods ClosurePeriod[]
 
   @@index([status])
   @@map("restaurants")
@@ -396,6 +401,84 @@ model MenuItem {
 
   @@index([restaurantId, categoryId, displayOrder])
   @@map("menu_items")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Availability (Phase 7) — the data isAcceptingOrders() evaluates.
+// Precedence: Restaurant.status → ClosurePeriod → SpecialHours →
+// OperatingHours → Restaurant.orderingEnabled (docs/03-state-machines.md
+// §"Ordering availability", docs/06-business-rules.md BR-67). All
+// evaluated in the restaurant's own IANA timezone, never the server's.
+// ─────────────────────────────────────────────────────────────────
+
+/// Weekly recurring schedule. Multiple rows per `dayOfWeek` allow split
+/// shifts (e.g. lunch 11:00–15:00, dinner 18:00–23:00). `closesAt <=
+/// opensAt` denotes an overnight window spanning midnight (e.g.
+/// 22:00→02:00) — AvailabilityService checks both the nominal day and
+/// the following day for these. `opensAt`/`closesAt` are `@db.Time`
+/// (wall-clock time-of-day only, no date or timezone component) — see
+/// availability/time-of-day.ts for the epoch-date convention Prisma
+/// Client represents them with.
+model OperatingHours {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  restaurantId String   @map("restaurant_id") @db.Uuid
+  /// 0 (Sunday) – 6 (Saturday), in the restaurant's own timezone.
+  dayOfWeek    Int      @map("day_of_week")
+  opensAt      DateTime @map("opens_at") @db.Time
+  closesAt     DateTime @map("closes_at") @db.Time
+  isClosed     Boolean  @default(false) @map("is_closed")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId, dayOfWeek])
+  @@map("operating_hours")
+}
+
+/// Date-specific override — takes precedence over OperatingHours for
+/// that date entirely (docs/01-domain-model.md §5.2). One row per date:
+/// there is no restaurant-facing write endpoint for this table in Phase
+/// 7 (docs/04-api-specification.md §8.5 documents `/restaurant/hours`
+/// and `/restaurant/closures` but no special-hours endpoint) — the
+/// table and AvailabilityService's precedence logic exist and are fully
+/// tested now so a later phase can add the write path without touching
+/// the authority function itself.
+model SpecialHours {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  restaurantId String    @map("restaurant_id") @db.Uuid
+  date         DateTime  @db.Date
+  isClosed     Boolean   @default(false) @map("is_closed")
+  opensAt      DateTime? @map("opens_at") @db.Time
+  closesAt     DateTime? @map("closes_at") @db.Time
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@unique([restaurantId, date])
+  @@map("special_hours")
+}
+
+/// Temporary closure — e.g. a burst pipe or a family emergency, not a
+/// scheduled day off. `endsAt: null` means indefinite, ended explicitly
+/// via `POST /restaurant/closures/:id` (DELETE in the route, `end()` in
+/// the service — sets `endsAt` to now rather than deleting the row, so
+/// the closure stays in history).
+model ClosurePeriod {
+  id              String    @id @default(uuid(7)) @db.Uuid
+  restaurantId    String    @map("restaurant_id") @db.Uuid
+  startsAt        DateTime  @map("starts_at") @db.Timestamptz
+  endsAt          DateTime? @map("ends_at") @db.Timestamptz
+  reason          String?
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  createdBy  User       @relation("ClosurePeriodCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@index([restaurantId, startsAt])
+  @@map("closure_periods")
 }
 
 // ─────────────────────────────────────────────────────────────────

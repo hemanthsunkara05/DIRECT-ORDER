@@ -46,6 +46,18 @@ export default tseslint.config(
     },
   },
 
+  // Playwright's webServer runs this as a plain Node script (see its
+  // own doc comment) — apps/web has no TS-loader devDependency to run a
+  // .ts file standalone, and it's outside the apps/web browser-globals
+  // block above (which only matches .ts/.tsx) since it's plain JS.
+  {
+    files: ['apps/web/e2e/**/*.mjs'],
+    ignores,
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+  },
+
   // apps/web: browser globals + Next.js's own recommended rules
   // (accessibility, hooks correctness, image/link usage), bridged from
   // its legacy .eslintrc-shaped config via FlatCompat.

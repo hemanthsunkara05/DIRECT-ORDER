@@ -128,6 +128,9 @@ describe('Authorization (Phase 4, e2e)', () => {
       status: 'ACTIVE',
       onboardingStatus: 'COMPLETED',
       orderingEnabled: true,
+      avgPrepMinutes: null,
+      ratingAvg: null,
+      ratingCount: 0,
       createdAt: new Date(),
       updatedAt: new Date(),
     });

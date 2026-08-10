@@ -62,9 +62,12 @@ function AccountDetails() {
                       Continue setup
                     </Link>
                   )}
-                  {/* Menu is visible to every role, including STAFF — availability toggling is the one STAFF-permitted menu action. */}
+                  {/* Menu and Hours are visible to every role, including STAFF — availability toggling is the one STAFF-permitted action on each. */}
                   <Link href="/restaurant/menu" className="underline">
                     Menu
+                  </Link>
+                  <Link href="/restaurant/hours" className="underline">
+                    Hours
                   </Link>
                   {(m.role === 'MANAGER' || m.role === 'OWNER') && (
                     <>

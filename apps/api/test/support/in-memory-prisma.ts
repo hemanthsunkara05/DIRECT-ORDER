@@ -13,6 +13,31 @@ import type { PrismaService } from '../../src/platform/database/prisma.service.j
  * repositories send, nothing more.
  */
 
+/**
+ * Real Prisma Client treats an explicit `undefined` value in a `data`
+ * object as "field not provided" — it's stripped before the SQL is even
+ * built, so the column keeps its default/existing value. Plain object
+ * spread and `Object.assign` do NOT do this: `{...defaults, ...{a:
+ * undefined}}` overwrites `defaults.a` with `undefined`, and a service
+ * that always passes a key through (`{ description: input.description }`
+ * where `input.description` is an omitted optional field) hits this on
+ * every create/update call here. Every merge of a caller's `data` object
+ * in this file goes through this first, to match real Prisma's actual
+ * behavior instead of plain JS spread semantics — a real, previously
+ * unnoticed test-infrastructure bug found via Phase 7's public-API field
+ * allowlist test, which was the first test to assert on a response's
+ * exact key set rather than just individual field values.
+ */
+function omitUndefined<T extends object>(obj: T): Partial<T> {
+  const result: Partial<T> = {};
+  for (const key of Object.keys(obj) as (keyof T)[]) {
+    if (obj[key] !== undefined) {
+      result[key] = obj[key];
+    }
+  }
+  return result;
+}
+
 interface UserRow {
   id: string;
   email: string | null;
@@ -82,6 +107,9 @@ export interface RestaurantRow {
   status: string;
   onboardingStatus: string;
   orderingEnabled: boolean;
+  avgPrepMinutes: number | null;
+  ratingAvg: number | null;
+  ratingCount: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -186,6 +214,38 @@ export interface MenuItemRow {
   updatedAt: Date;
 }
 
+export interface OperatingHoursRow {
+  id: string;
+  restaurantId: string;
+  dayOfWeek: number;
+  opensAt: Date;
+  closesAt: Date;
+  isClosed: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface SpecialHoursRow {
+  id: string;
+  restaurantId: string;
+  date: Date;
+  isClosed: boolean;
+  opensAt: Date | null;
+  closesAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ClosurePeriodRow {
+  id: string;
+  restaurantId: string;
+  startsAt: Date;
+  endsAt: Date | null;
+  reason: string | null;
+  createdByUserId: string;
+  createdAt: Date;
+}
+
 export interface InMemoryPrisma {
   users: UserRow[];
   sessions: SessionRow[];
@@ -199,6 +259,9 @@ export interface InMemoryPrisma {
   staffInvitations: StaffInvitationRow[];
   menuCategories: MenuCategoryRow[];
   menuItems: MenuItemRow[];
+  operatingHours: OperatingHoursRow[];
+  specialHours: SpecialHoursRow[];
+  closurePeriods: ClosurePeriodRow[];
   prisma: PrismaService;
 }
 
@@ -215,6 +278,9 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   const staffInvitations: StaffInvitationRow[] = [];
   const menuCategories: MenuCategoryRow[] = [];
   const menuItems: MenuItemRow[] = [];
+  const operatingHours: OperatingHoursRow[] = [];
+  const specialHours: SpecialHoursRow[] = [];
+  const closurePeriods: ClosurePeriodRow[] = [];
 
   const user = {
     create: ({ data }: { data: Partial<UserRow> }) => {
@@ -232,7 +298,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         lastLoginAt: null,
         createdAt: new Date(),
         updatedAt: new Date(),
-        ...data,
+        ...omitUndefined(data),
       };
       users.push(row);
       return Promise.resolve(row);
@@ -250,7 +316,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     update: ({ where, data }: { where: { id: string }; data: Partial<UserRow> }) => {
       const row = users.find((u) => u.id === where.id);
       if (!row) throw new Error(`user ${where.id} not found`);
-      Object.assign(row, data, { updatedAt: new Date() });
+      Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
       return Promise.resolve(row);
     },
   };
@@ -264,7 +330,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         revokedReason: null,
         rotatedFromId: null,
         createdAt: new Date(),
-        ...data,
+        ...omitUndefined(data),
       } as SessionRow;
       sessions.push(row);
       return Promise.resolve(row);
@@ -282,7 +348,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     update: ({ where, data }: { where: { id: string }; data: Partial<SessionRow> }) => {
       const row = sessions.find((s) => s.id === where.id);
       if (!row) throw new Error(`session ${where.id} not found`);
-      Object.assign(row, data);
+      Object.assign(row, omitUndefined(data));
       return Promise.resolve(row);
     },
     updateMany: ({
@@ -300,7 +366,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         return true;
       });
       for (const row of matches) {
-        Object.assign(row, data);
+        Object.assign(row, omitUndefined(data));
       }
       return Promise.resolve({ count: matches.length });
     },
@@ -314,7 +380,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         maxAttempts: 5,
         consumedAt: null,
         createdAt: new Date(),
-        ...data,
+        ...omitUndefined(data),
       } as OtpChallengeRow;
       otpChallenges.push(row);
       return Promise.resolve(row);
@@ -374,7 +440,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         correlationId: null,
         ipHash: null,
         createdAt: new Date(),
-        ...data,
+        ...omitUndefined(data),
       } as AuditLogRow;
       auditLogs.push(row);
       return Promise.resolve(row);
@@ -409,7 +475,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         disabledAt: null,
         createdAt: new Date(),
         updatedAt: new Date(),
-        ...data,
+        ...omitUndefined(data),
       } as RestaurantStaffRow;
       restaurantStaff.push(row);
       return Promise.resolve(row);
@@ -470,7 +536,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     }) => {
       const matches = restaurantStaff.filter(matchRestaurantStaff(where));
       for (const row of matches) {
-        Object.assign(row, data, { updatedAt: new Date() });
+        Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
       }
       return Promise.resolve({ count: matches.length });
     },
@@ -487,26 +553,57 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         status: 'DRAFT',
         onboardingStatus: 'NOT_STARTED',
         orderingEnabled: false,
+        avgPrepMinutes: null,
+        ratingAvg: null,
+        ratingCount: 0,
         createdAt: new Date(),
         updatedAt: new Date(),
-        ...data,
+        ...omitUndefined(data),
       } as RestaurantRow;
       restaurants.push(row);
       return Promise.resolve(row);
     },
-    findUnique: ({ where }: { where: { id?: string; slug?: string } }) => {
+    findUnique: ({
+      where,
+      include,
+    }: {
+      where: { id?: string; slug?: string };
+      include?: { address?: boolean; branding?: boolean; settings?: boolean };
+    }) => {
       const row =
         restaurants.find((r) => {
           if (where.id !== undefined) return r.id === where.id;
           if (where.slug !== undefined) return r.slug === where.slug;
           return false;
         }) ?? null;
-      return Promise.resolve(row);
+      if (!row) return Promise.resolve(null);
+      if (!include) return Promise.resolve(row);
+
+      let result: object = row;
+      if (include.address) {
+        result = {
+          ...result,
+          address: restaurantAddresses.find((a) => a.restaurantId === row.id) ?? null,
+        };
+      }
+      if (include.branding) {
+        result = {
+          ...result,
+          branding: restaurantBranding.find((b) => b.restaurantId === row.id) ?? null,
+        };
+      }
+      if (include.settings) {
+        result = {
+          ...result,
+          settings: restaurantSettings.find((s) => s.restaurantId === row.id) ?? null,
+        };
+      }
+      return Promise.resolve(result);
     },
     update: ({ where, data }: { where: { id: string }; data: Partial<RestaurantRow> }) => {
       const row = restaurants.find((r) => r.id === where.id);
       if (!row) throw new Error(`restaurant ${where.id} not found`);
-      Object.assign(row, data, { updatedAt: new Date() });
+      Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
       return Promise.resolve(row);
     },
     count: ({ where }: { where: { slug?: string } }) => {
@@ -525,7 +622,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         return Promise.resolve(rows.find((r) => r.restaurantId === where.restaurantId) ?? null);
       },
       create: ({ data }: { data: Partial<Row> & { restaurantId: string } }) => {
-        const row = { id: randomUUID(), ...defaults, ...data } as Row;
+        const row = { id: randomUUID(), ...defaults, ...omitUndefined(data) } as Row;
         rows.push(row);
         return Promise.resolve(row);
       },
@@ -540,10 +637,14 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       }) => {
         const existing = rows.find((r) => r.restaurantId === where.restaurantId);
         if (existing) {
-          Object.assign(existing, update, 'updatedAt' in existing ? { updatedAt: new Date() } : {});
+          Object.assign(
+            existing,
+            omitUndefined(update),
+            'updatedAt' in existing ? { updatedAt: new Date() } : {},
+          );
           return Promise.resolve(existing);
         }
-        const row = { id: randomUUID(), ...defaults, ...create } as Row;
+        const row = { id: randomUUID(), ...defaults, ...omitUndefined(create) } as Row;
         rows.push(row);
         return Promise.resolve(row);
       },
@@ -607,7 +708,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         acceptedAt: null,
         revokedAt: null,
         createdAt: new Date(),
-        ...data,
+        ...omitUndefined(data),
       } as StaffInvitationRow;
       staffInvitations.push(row);
       return Promise.resolve(row);
@@ -634,7 +735,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     update: ({ where, data }: { where: { id: string }; data: Partial<StaffInvitationRow> }) => {
       const row = staffInvitations.find((i) => i.id === where.id);
       if (!row) throw new Error(`staffInvitation ${where.id} not found`);
-      Object.assign(row, data);
+      Object.assign(row, omitUndefined(data));
       return Promise.resolve(row);
     },
     updateMany: ({
@@ -646,7 +747,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     }) => {
       const matches = staffInvitations.filter(matchInvitation(where));
       for (const row of matches) {
-        Object.assign(row, data);
+        Object.assign(row, omitUndefined(data));
       }
       return Promise.resolve({ count: matches.length });
     },
@@ -682,7 +783,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         archivedAt: null,
         createdAt: new Date(),
         updatedAt: new Date(),
-        ...data,
+        ...omitUndefined(data),
       } as MenuCategoryRow;
       menuCategories.push(row);
       return Promise.resolve(row);
@@ -707,7 +808,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     updateMany: ({ where, data }: { where: MenuCategoryWhere; data: Partial<MenuCategoryRow> }) => {
       const matches = menuCategories.filter(matchMenuCategory(where));
       for (const row of matches) {
-        Object.assign(row, data, { updatedAt: new Date() });
+        Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
       }
       return Promise.resolve({ count: matches.length });
     },
@@ -741,7 +842,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         archivedAt: null,
         createdAt: new Date(),
         updatedAt: new Date(),
-        ...data,
+        ...omitUndefined(data),
       } as MenuItemRow;
       menuItems.push(row);
       return Promise.resolve(row);
@@ -766,12 +867,133 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     updateMany: ({ where, data }: { where: MenuItemWhere; data: Partial<MenuItemRow> }) => {
       const matches = menuItems.filter(matchMenuItem(where));
       for (const row of matches) {
-        Object.assign(row, data, { updatedAt: new Date() });
+        Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
       }
       return Promise.resolve({ count: matches.length });
     },
     count: ({ where }: { where: MenuItemWhere }) => {
       return Promise.resolve(menuItems.filter(matchMenuItem(where)).length);
+    },
+  };
+
+  type OperatingHoursWhere = { restaurantId?: string; dayOfWeek?: number };
+  const matchOperatingHours = (where: OperatingHoursWhere) => (row: OperatingHoursRow) => {
+    if (where.restaurantId !== undefined && row.restaurantId !== where.restaurantId) return false;
+    if (where.dayOfWeek !== undefined && row.dayOfWeek !== where.dayOfWeek) return false;
+    return true;
+  };
+
+  const operatingHoursTable = {
+    create: ({ data }: { data: Partial<OperatingHoursRow> }) => {
+      const row: OperatingHoursRow = {
+        id: randomUUID(),
+        isClosed: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...omitUndefined(data),
+      } as OperatingHoursRow;
+      operatingHours.push(row);
+      return Promise.resolve(row);
+    },
+    findMany: ({
+      where,
+      orderBy,
+    }: {
+      where: OperatingHoursWhere;
+      orderBy?: { dayOfWeek: 'asc' | 'desc' }[] | { dayOfWeek: 'asc' | 'desc' };
+    }) => {
+      let matches = operatingHours.filter(matchOperatingHours(where));
+      const primary = Array.isArray(orderBy) ? orderBy[0] : orderBy;
+      if (primary?.dayOfWeek) {
+        const dir = primary.dayOfWeek === 'desc' ? -1 : 1;
+        matches = [...matches].sort((a, b) => dir * (a.dayOfWeek - b.dayOfWeek));
+      }
+      return Promise.resolve(matches);
+    },
+    deleteMany: ({ where }: { where: OperatingHoursWhere }) => {
+      const keep = operatingHours.filter((row) => !matchOperatingHours(where)(row));
+      const removed = operatingHours.length - keep.length;
+      operatingHours.length = 0;
+      operatingHours.push(...keep);
+      return Promise.resolve({ count: removed });
+    },
+  };
+
+  type SpecialHoursWhere = { restaurantId?: string; date?: Date };
+  const specialHoursTable = {
+    findFirst: ({ where }: { where: SpecialHoursWhere }) => {
+      const row =
+        specialHours.find((s) => {
+          if (where.restaurantId !== undefined && s.restaurantId !== where.restaurantId)
+            return false;
+          if (where.date !== undefined && s.date.getTime() !== where.date.getTime()) return false;
+          return true;
+        }) ?? null;
+      return Promise.resolve(row);
+    },
+  };
+
+  type ClosurePeriodWhere = {
+    id?: string;
+    restaurantId?: string;
+    startsAt?: { lte: Date };
+    OR?: ({ endsAt: null } | { endsAt: { gt: Date } })[];
+  };
+  const matchClosurePeriod = (where: ClosurePeriodWhere) => (row: ClosurePeriodRow) => {
+    if (where.id !== undefined && row.id !== where.id) return false;
+    if (where.restaurantId !== undefined && row.restaurantId !== where.restaurantId) return false;
+    if (where.startsAt?.lte && row.startsAt.getTime() > where.startsAt.lte.getTime()) return false;
+    if (where.OR) {
+      const matchesOr = where.OR.some((clause) => {
+        if (clause.endsAt === null) return row.endsAt === null;
+        return row.endsAt !== null && row.endsAt.getTime() > clause.endsAt.gt.getTime();
+      });
+      if (!matchesOr) return false;
+    }
+    return true;
+  };
+
+  const closurePeriodTable = {
+    create: ({ data }: { data: Partial<ClosurePeriodRow> }) => {
+      const row: ClosurePeriodRow = {
+        id: randomUUID(),
+        endsAt: null,
+        reason: null,
+        createdAt: new Date(),
+        ...omitUndefined(data),
+      } as ClosurePeriodRow;
+      closurePeriods.push(row);
+      return Promise.resolve(row);
+    },
+    findFirst: ({ where }: { where: ClosurePeriodWhere }) => {
+      return Promise.resolve(closurePeriods.find(matchClosurePeriod(where)) ?? null);
+    },
+    findMany: ({
+      where,
+      orderBy,
+    }: {
+      where: ClosurePeriodWhere;
+      orderBy?: { startsAt: 'asc' | 'desc' };
+    }) => {
+      let matches = closurePeriods.filter(matchClosurePeriod(where));
+      if (orderBy?.startsAt) {
+        const dir = orderBy.startsAt === 'desc' ? -1 : 1;
+        matches = [...matches].sort((a, b) => dir * (a.startsAt.getTime() - b.startsAt.getTime()));
+      }
+      return Promise.resolve(matches);
+    },
+    updateMany: ({
+      where,
+      data,
+    }: {
+      where: ClosurePeriodWhere;
+      data: Partial<ClosurePeriodRow>;
+    }) => {
+      const matches = closurePeriods.filter(matchClosurePeriod(where));
+      for (const row of matches) {
+        Object.assign(row, omitUndefined(data));
+      }
+      return Promise.resolve({ count: matches.length });
     },
   };
 
@@ -788,6 +1010,9 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     staffInvitation: staffInvitationTable,
     menuCategory: menuCategoryTable,
     menuItem: menuItemTable,
+    operatingHours: operatingHoursTable,
+    specialHours: specialHoursTable,
+    closurePeriod: closurePeriodTable,
     // Supports both Prisma `$transaction` forms this codebase uses: the
     // array form (a list of already-constructed operations, awaited
     // together — see session.repository.ts) and the interactive
@@ -819,6 +1044,9 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     staffInvitations,
     menuCategories,
     menuItems,
+    operatingHours,
+    specialHours,
+    closurePeriods,
     prisma,
   };
 }

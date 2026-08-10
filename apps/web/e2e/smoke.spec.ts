@@ -15,7 +15,17 @@ test('home page renders without a console error', async ({ page }) => {
   await page.goto('/');
 
   await expect(page.getByRole('heading', { name: 'Direct-Order' })).toBeVisible();
-  expect(consoleErrors).toEqual([]);
+  // Every page mounts SessionProvider (Phase 3), which checks GET
+  // /auth/me on load — a logged-out visitor genuinely gets a 401 from a
+  // real API, and Chrome itself (not application code) logs any non-2xx
+  // resource load as a console error regardless of how gracefully the
+  // app handles the response. This is real, unavoidable production
+  // behavior, not a bug — the assertion below allows exactly that one
+  // expected message and nothing else.
+  const unexpectedErrors = consoleErrors.filter(
+    (text) => !/Failed to load resource.*401/.test(text),
+  );
+  expect(unexpectedErrors).toEqual([]);
 });
 
 test('page has the expected title', async ({ page }) => {

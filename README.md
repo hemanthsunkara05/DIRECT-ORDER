@@ -2,7 +2,7 @@
 
 Commission-free direct-ordering platform for independent Indian restaurants. Each restaurant gets a branded ordering link, a real-time order dashboard, online payments, and transparent visibility into every rupee — without giving up 25–35% of order value to an aggregator.
 
-**Status:** Phase 6 (Menu management) — see [PRODUCT/docs/13-implementation-phases.md](PRODUCT/docs/13-implementation-phases.md). Foundation (Phase 1), core schema and tenancy (Phase 2), authentication (Phase 3), authorization (Phase 4), restaurant creation/onboarding/profile/staff/uploads (Phase 5), and menu categories/items (Phase 6) are done. A restaurant owner can now sign up, create a restaurant, complete onboarding, invite staff, upload branding images, and build out a full categorized menu end to end — public ordering is still Phase 7+.
+**Status:** Phase 7 (Public ordering page) — see [PRODUCT/docs/13-implementation-phases.md](PRODUCT/docs/13-implementation-phases.md). Foundation (Phase 1), core schema and tenancy (Phase 2), authentication (Phase 3), authorization (Phase 4), restaurant creation/onboarding/profile/staff/uploads (Phase 5), menu categories/items (Phase 6), and the public ordering page (Phase 7 — operating hours, `isAcceptingOrders()`, and the customer-facing `/r/:slug` menu/browse/cart page) are done. A restaurant owner can now sign up, create a restaurant, complete onboarding, invite staff, upload branding images, build out a full categorized menu, set weekly hours, and go live on a real public ordering link — checkout and payments are still Phase 8+.
 
 Full specification: [PRODUCT/IMPLEMENTATION_HANDOFF.md](PRODUCT/IMPLEMENTATION_HANDOFF.md).
 
@@ -71,6 +71,8 @@ open http://localhost:3000          # "Direct-Order" placeholder page
 open http://localhost:3000/signup   # Create a restaurant-owner account (Phase 3)
 open http://localhost:3000/onboarding # Create and set up a restaurant (Phase 5)
 open http://localhost:3000/restaurant/menu # Build out categories and items (Phase 6)
+open http://localhost:3000/restaurant/hours # Set weekly hours, closures, ordering toggle (Phase 7)
+open http://localhost:3000/r/<slug>         # The live public ordering page for a given restaurant (Phase 7)
 ```
 
 ## Common commands
@@ -161,10 +163,21 @@ Categories and items, CRUD + archiving + reordering (Phase 6, `docs/13-implement
 - **Category name uniqueness (among non-archived rows) is enforced at the service layer, not a DB constraint** — Prisma's schema DSL can't express a partial unique index, the same limitation already noted for `User`'s email-or-phone invariant.
 - **Frontend reordering is dual-input:** native HTML5 drag-and-drop for mouse users, plus keyboard-focusable ▲/▼ buttons that do the same reorder call — an `aria-live` region announces the result for screen readers, since a drag's visual reshuffle is otherwise silent to them.
 
+## Availability and the public ordering page
+
+`isAcceptingOrders()` (Phase 7, `apps/api/src/modules/availability/availability.service.ts`) is **the single authority** on whether a restaurant can take an order right now — consumed by the public page today, and by search's "open now" filter and checkout revalidation once those phases exist, so all three always agree (docs/03-state-machines.md, BR-66).
+
+- **Precedence, first match wins:** `Restaurant.status` → an active `ClosurePeriod` → `SpecialHours` (a date-specific override, if one exists for that date — replaces `OperatingHours` for that day entirely, doesn't merge with it) → `OperatingHours` (the weekly recurring schedule, overnight shifts spanning midnight supported) → `Restaurant.orderingEnabled`. A restaurant with `status: SUSPENDED` can never make itself orderable by flipping `orderingEnabled` — `status` is checked first, unconditionally.
+- **Everything is evaluated in the restaurant's own IANA timezone**, via `Intl.DateTimeFormat`, never the server's — see `availability/timezone.ts`. `OperatingHours.opensAt`/`closesAt` are Postgres `TIME` columns (wall-clock time-of-day only), round-tripped through an epoch-date convention documented in `availability/time-of-day.ts`.
+- **Restaurant-facing management:** `GET/PUT /restaurant/hours` (full weekly replace, MANAGER+), `GET/POST/DELETE /restaurant/closures` (temporary closures — `DELETE` ends one early by setting `endsAt`, never a hard delete), `PATCH /restaurant/availability` (the `ordering_enabled` toggle, STAFF-permitted). `SpecialHours` has no restaurant-facing write endpoint yet (not in docs/04-api-specification.md §8.5) — the table and the precedence logic are fully built and tested; a later phase can add the write path without touching the authority function.
+- **`GET /public/restaurants/:slug` and `/menu`** (`apps/api/src/modules/public/`) are unauthenticated and slug-keyed — the highest-risk leak surface in the API, so the response is an explicit field allowlist, never a spread of the Prisma row (asserted directly in `public.e2e.test.ts`). DRAFT/PENDING_APPROVAL restaurants 404 exactly like a nonexistent slug; ACTIVE/SUSPENDED/CLOSED are all visible (200) with a non-accepting `availability` decision for the latter two, so a bookmarked link still explains itself instead of just disappearing.
+- **The customer page** (`apps/web/src/app/r/[slug]/`) is a real Server Component with dynamic metadata/Open Graph tags — not a client-side spinner. The cart is client-side, persisted to `localStorage` under a **per-slug key**, which is what makes "switching restaurants never mixes their items" true by construction rather than a runtime check. In-page search filters the already-fetched menu client-side; there is no separate search endpoint (cross-restaurant discovery is feature-flagged off, BR-146).
+- **Playwright coverage runs against a mock API**, not a live database (`apps/web/e2e/support/mock-public-api-server.mjs`, wired in via a second `webServer` entry in `playwright.config.ts`) — this sandbox has no Docker/Postgres to seed a real restaurant against. Actually running `pnpm test:e2e` end-to-end for (apparently) the first time in this environment surfaced a real, unrelated pre-existing gap: every page mounts `SessionProvider` (Phase 3), which checks `GET /auth/me` on load — Chrome itself logs any non-2xx resource load as a console error regardless of how gracefully the app handles the response, so `smoke.spec.ts`'s original "zero console errors" assertion was never actually compatible with a logged-out visit once that session check existed. Fixed by allowing exactly that one expected, benign 401 message rather than loosening the assertion generally.
+
 ## Testing
 
 - **Unit / integration:** Vitest, per workspace (`apps/api/test`, `packages/money/test`, ...). API integration tests boot a real NestJS + Fastify application over real HTTP (via supertest); `PrismaService` and `RedisService` are overridden with in-memory stand-ins (`apps/api/test/support/`) rather than requiring a live database and Redis in every environment that runs the suite — see the note at the top of `apps/api/test/health.e2e.test.ts` and `apps/api/test/support/create-test-app.ts`.
-- **End-to-end:** Playwright, in `apps/web/e2e`. Builds and starts the real Next.js app, then drives it with a real browser.
+- **End-to-end:** Playwright, in `apps/web/e2e`. Builds and starts the real Next.js app, then drives it with a real browser. `ordering.spec.ts` (Phase 7) is the first real customer-journey coverage: valid/invalid slugs, sold-out items, cart persistence across a reload, cross-restaurant cart isolation, in-page search, and a keyboard-only pass through the browse flow — run against the mock API server described above.
 - **Full-stack / live database:** CI runs a dedicated job (`live-database-smoke-test`) that starts a real PostgreSQL service and the actual compiled API against it, then polls `/health` and `/ready` — this is the closest equivalent to `docker compose up -d && pnpm db:migrate && pnpm dev` that runs automatically on every change. See `.github/workflows/ci.yml`.
 
 ## Money

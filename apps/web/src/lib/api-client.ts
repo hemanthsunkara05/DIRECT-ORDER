@@ -463,3 +463,71 @@ export const menuApi = {
       }),
   },
 };
+
+// ── Availability: hours, closures, ordering toggle (Phase 7) ─────────
+
+export interface OperatingHoursRow {
+  id: string;
+  dayOfWeek: number;
+  opensAt: string;
+  closesAt: string;
+  isClosed: boolean;
+}
+
+export interface ClosurePeriod {
+  id: string;
+  startsAt: string;
+  endsAt: string | null;
+  reason: string | null;
+}
+
+export const hoursApi = {
+  get: (restaurantId?: string) =>
+    request<OperatingHoursRow[]>('/restaurant/hours', {
+      method: 'GET',
+      ...restaurantHeaders(restaurantId),
+    }),
+
+  set: (
+    days: { dayOfWeek: number; opensAt: string; closesAt: string; isClosed?: boolean }[],
+    restaurantId?: string,
+  ) =>
+    request<OperatingHoursRow[]>('/restaurant/hours', {
+      method: 'PUT',
+      body: JSON.stringify({ days }),
+      ...restaurantHeaders(restaurantId),
+    }),
+};
+
+export const closuresApi = {
+  list: (restaurantId?: string) =>
+    request<ClosurePeriod[]>('/restaurant/closures', {
+      method: 'GET',
+      ...restaurantHeaders(restaurantId),
+    }),
+
+  create: (
+    input: { startsAt: string; endsAt?: string | null; reason?: string },
+    restaurantId?: string,
+  ) =>
+    request<ClosurePeriod>('/restaurant/closures', {
+      method: 'POST',
+      body: JSON.stringify(input),
+      ...restaurantHeaders(restaurantId),
+    }),
+
+  end: (closureId: string, restaurantId?: string) =>
+    request<{ status: string }>(`/restaurant/closures/${closureId}`, {
+      method: 'DELETE',
+      ...restaurantHeaders(restaurantId),
+    }),
+};
+
+export const availabilityApi = {
+  toggle: (orderingEnabled: boolean, restaurantId?: string) =>
+    request<{ orderingEnabled: boolean }>('/restaurant/availability', {
+      method: 'PATCH',
+      body: JSON.stringify({ orderingEnabled }),
+      ...restaurantHeaders(restaurantId),
+    }),
+};

@@ -4,13 +4,22 @@ import { PlatformModule } from './platform/platform.module.js';
 import { IdentityModule } from './modules/identity/identity.module.js';
 import { RestaurantsModule } from './modules/restaurants/restaurants.module.js';
 import { MenuModule } from './modules/menu/menu.module.js';
+import { AvailabilityModule } from './modules/availability/availability.module.js';
+import { PublicModule } from './modules/public/public.module.js';
 
 @Module({})
 export class AppModule {
   static forRoot(env: Env) {
     return {
       module: AppModule,
-      imports: [PlatformModule.forRoot(env), IdentityModule, RestaurantsModule, MenuModule],
+      imports: [
+        PlatformModule.forRoot(env),
+        IdentityModule,
+        RestaurantsModule,
+        MenuModule,
+        AvailabilityModule,
+        PublicModule,
+      ],
     };
   }
 }
