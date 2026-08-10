@@ -873,17 +873,29 @@ model ReconciliationIssue {
 /// phase's report for why full job/queue infrastructure stays Phase 12
 /// (apps/worker's own Phase 1 doc comment: "Real consumers ... attach
 /// here starting Phase 12").
+///
+/// `restaurantId` (Phase 10) — nullable, no `@relation` (same reasoning
+/// as AuditLog: an event record must remain exactly as recorded even if
+/// the referenced restaurant is later modified, and must never be
+/// blocked from being written by a foreign-key constraint). Lets the
+/// restaurant order dashboard's SSE stream (`GET /restaurant/orders/
+/// stream`) replay only its own tenant's events by `id` since a given
+/// `Last-Event-ID`, without joining back through `orderId` on every
+/// request. Events with no natural restaurant (none exist yet) leave
+/// this null rather than a placeholder value.
 model OutboxEvent {
-  id          String       @id @default(uuid(7)) @db.Uuid
-  eventType   String       @map("event_type")
-  payload     Json
-  status      OutboxStatus @default(PENDING)
-  attempts    Int          @default(0)
-  lastError   String?      @map("last_error")
-  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
-  processedAt DateTime?    @map("processed_at") @db.Timestamptz
+  id           String       @id @default(uuid(7)) @db.Uuid
+  eventType    String       @map("event_type")
+  payload      Json
+  status       OutboxStatus @default(PENDING)
+  attempts     Int          @default(0)
+  lastError    String?      @map("last_error")
+  restaurantId String?      @map("restaurant_id") @db.Uuid
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  processedAt  DateTime?    @map("processed_at") @db.Timestamptz
 
   @@index([status, createdAt])
+  @@index([restaurantId, id])
   @@map("outbox_events")
 }
 

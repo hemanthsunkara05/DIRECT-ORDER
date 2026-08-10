@@ -19,6 +19,8 @@ export interface TransitionResult {
   order: Order;
   /** false when this call was an idempotent replay — the order was already at `toStatus`. */
   applied: boolean;
+  /** The state applied from — undefined on an idempotent replay. Carried out of the transaction for the post-commit outbox event; see the comment where it's captured below. */
+  fromStatus?: OrderStatus;
 }
 
 /**
@@ -105,20 +107,26 @@ export class OrderStateService {
         },
       });
 
-      return { order: updated, applied: true };
+      return { order: updated, applied: true, fromStatus };
     });
 
     if (result.applied) {
       // Universal rule 4: side effects emitted after commit, never
       // inside the transaction. A lightweight in-process outbox insert
       // (see platform/outbox) — real notification delivery arrives with
-      // apps/worker's Phase 12 consumers.
-      await this.outbox.record(`ORDER_${result.order.status}`, {
-        orderId: result.order.id,
-        orderNumber: result.order.orderNumber,
-        fromStatus: null,
-        toStatus: result.order.status,
-      });
+      // apps/worker's Phase 12 consumers. `restaurantId` (Phase 10) lets
+      // the restaurant dashboard's SSE stream replay only its own
+      // tenant's events.
+      await this.outbox.record(
+        `ORDER_${result.order.status}`,
+        {
+          orderId: result.order.id,
+          orderNumber: result.order.orderNumber,
+          fromStatus: result.fromStatus ?? null,
+          toStatus: result.order.status,
+        },
+        result.order.restaurantId,
+      );
     }
 
     return result;

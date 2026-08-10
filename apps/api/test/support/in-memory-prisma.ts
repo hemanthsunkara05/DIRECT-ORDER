@@ -410,6 +410,7 @@ export interface OutboxEventRow {
   status: string;
   attempts: number;
   lastError: string | null;
+  restaurantId: string | null;
   createdAt: Date;
   processedAt: Date | null;
 }
@@ -1331,6 +1332,63 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     );
   }
 
+  interface OrderListWhere {
+    id?: string;
+    restaurantId?: string;
+    status?: string | { in: string[] };
+    createdAt?: { lt: Date };
+  }
+
+  /** Backs both the expiry scheduler's scan (`status`, `createdAt.lt`) and Phase 10's restaurant order queue/detail (`restaurantId`, `status.in`, `id`). */
+  function matchOrderList(where: OrderListWhere) {
+    return (o: OrderRow) => {
+      if (where.id !== undefined && o.id !== where.id) return false;
+      if (where.restaurantId !== undefined && o.restaurantId !== where.restaurantId) return false;
+      if (where.status !== undefined) {
+        const matchesStatus =
+          typeof where.status === 'string'
+            ? o.status === where.status
+            : where.status.in.includes(o.status);
+        if (!matchesStatus) return false;
+      }
+      if (where.createdAt?.lt && o.createdAt.getTime() >= where.createdAt.lt.getTime())
+        return false;
+      return true;
+    };
+  }
+
+  type OrderInclude = { items?: boolean; history?: unknown; payments?: unknown };
+
+  /** Shared by `findUnique` and `findFirst` — both need the same items/history/payments population, real Prisma's `include` behavior for a single-row lookup. */
+  function withOrderRelations(
+    row: OrderRow,
+    include: OrderInclude,
+  ): OrderRow & {
+    items?: OrderItemRow[];
+    history?: OrderStatusHistoryRow[];
+    payments?: PaymentRow[];
+  } {
+    const result: OrderRow & {
+      items?: OrderItemRow[];
+      history?: OrderStatusHistoryRow[];
+      payments?: PaymentRow[];
+    } = { ...row };
+    if (include.items) {
+      result.items = orderItems.filter((i) => i.orderId === row.id);
+    }
+    if (include.history) {
+      result.history = orderStatusHistory
+        .filter((h) => h.orderId === row.id)
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    }
+    if (include.payments) {
+      result.payments = payments
+        .filter((p) => p.orderId === row.id)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    }
+    return result;
+  }
+
   const orderTable = {
     create: ({ data, include }: { data: OrderCreateData; include?: { payments?: boolean } }) => {
       if (orders.some((o) => o.orderNumber === data.orderNumber)) {
@@ -1436,36 +1494,10 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       if (include?.payments) result.payments = createdPayments;
       return Promise.resolve(result);
     },
-    findUnique: ({
-      where,
-      include,
-    }: {
-      where: OrderWhere;
-      include?: { items?: boolean; history?: unknown; payments?: unknown };
-    }) => {
+    findUnique: ({ where, include }: { where: OrderWhere; include?: OrderInclude }) => {
       const row = findOrder(where);
       if (!row) return Promise.resolve(null);
-      if (!include) return Promise.resolve(row);
-
-      const result: OrderRow & {
-        items?: OrderItemRow[];
-        history?: OrderStatusHistoryRow[];
-        payments?: PaymentRow[];
-      } = { ...row };
-      if (include.items) {
-        result.items = orderItems.filter((i) => i.orderId === row.id);
-      }
-      if (include.history) {
-        result.history = orderStatusHistory
-          .filter((h) => h.orderId === row.id)
-          .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-      }
-      if (include.payments) {
-        result.payments = payments
-          .filter((p) => p.orderId === row.id)
-          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-      }
-      return Promise.resolve(result);
+      return Promise.resolve(include ? withOrderRelations(row, include) : row);
     },
     update: ({ where, data }: { where: { id: string }; data: Partial<OrderRow> }) => {
       const row = orders.find((o) => o.id === where.id);
@@ -1473,15 +1505,36 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
       return Promise.resolve(row);
     },
-    findMany: ({ where }: { where: { status?: string; createdAt?: { lt: Date } } }) => {
-      return Promise.resolve(
-        orders.filter((o) => {
-          if (where.status !== undefined && o.status !== where.status) return false;
-          if (where.createdAt?.lt && o.createdAt.getTime() >= where.createdAt.lt.getTime())
-            return false;
-          return true;
-        }),
-      );
+    findMany: ({
+      where,
+      orderBy,
+      cursor,
+      skip,
+      take,
+    }: {
+      where: OrderListWhere;
+      orderBy?: { createdAt: 'asc' | 'desc' };
+      cursor?: { id: string };
+      skip?: number;
+      take?: number;
+    }) => {
+      let matches = orders.filter(matchOrderList(where));
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      if (cursor) {
+        const cursorIndex = matches.findIndex((o) => o.id === cursor.id);
+        matches = cursorIndex === -1 ? [] : matches.slice(cursorIndex + (skip ?? 0));
+      }
+      if (take !== undefined) matches = matches.slice(0, take);
+      return Promise.resolve(matches);
+    },
+    findFirst: ({ where, include }: { where: OrderListWhere; include?: OrderInclude }) => {
+      const row = orders.find(matchOrderList(where)) ?? null;
+      if (!row) return Promise.resolve(null);
+      return Promise.resolve(include ? withOrderRelations(row, include) : row);
     },
   };
 
@@ -1783,7 +1836,11 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   };
 
   const outboxEventTable = {
-    create: ({ data }: { data: { eventType: string; payload: unknown } }) => {
+    create: ({
+      data,
+    }: {
+      data: { eventType: string; payload: unknown; restaurantId?: string };
+    }) => {
       const row: OutboxEventRow = {
         id: randomUUID(),
         eventType: data.eventType,
@@ -1791,6 +1848,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         status: 'PENDING',
         attempts: 0,
         lastError: null,
+        restaurantId: data.restaurantId ?? null,
         createdAt: new Date(),
         processedAt: null,
       };
@@ -1802,12 +1860,30 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       orderBy,
       take,
     }: {
-      where: { status: string };
-      orderBy?: { createdAt: 'asc' | 'desc' };
+      where: { status?: string; restaurantId?: string; id?: { gt: string } };
+      orderBy?: { createdAt?: 'asc' | 'desc'; id?: 'asc' | 'desc' };
       take?: number;
     }) => {
-      let matches = outboxEvents.filter((o) => o.status === where.status);
-      if (orderBy?.createdAt === 'asc') {
+      // `id` here is a plain `randomUUID()` (v4) in this fake, not a
+      // real time-ordered UUIDv7 the way production ids are — a
+      // lexicographic `id > cursor` comparison would be pure chance.
+      // Array insertion order (outboxEvents.push in OutboxRepository.create)
+      // IS creation order, so an `id: { gt }` cursor is resolved by
+      // position in this array instead, the same substitution the
+      // order-cursor pagination above already relies on.
+      let pool = outboxEvents;
+      if (where.id?.gt !== undefined) {
+        const afterIndex = outboxEvents.findIndex((o) => o.id === where.id!.gt);
+        pool = afterIndex === -1 ? outboxEvents : outboxEvents.slice(afterIndex + 1);
+      }
+      let matches = pool.filter((o) => {
+        if (where.status !== undefined && o.status !== where.status) return false;
+        if (where.restaurantId !== undefined && o.restaurantId !== where.restaurantId) return false;
+        return true;
+      });
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
         matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
       }
       if (take !== undefined) matches = matches.slice(0, take);

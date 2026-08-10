@@ -46,7 +46,16 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export interface Pagination {
+  nextCursor: string | null;
+  hasMore: boolean;
+  limit: number;
+}
+
+async function fetchEnvelope<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<{ data: T; meta: { requestId: string; pagination?: Pagination } }> {
   const method = (init.method ?? 'GET').toUpperCase();
   const csrfToken = SAFE_METHODS.has(method) ? undefined : readCsrfToken();
 
@@ -71,7 +80,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(res.status, body);
   }
 
-  return (json as { data: T }).data;
+  return json as { data: T; meta: { requestId: string; pagination?: Pagination } };
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return (await fetchEnvelope<T>(path, init)).data;
+}
+
+/** For cursor-paginated list endpoints (docs/04-api-specification.md §8.1: `meta.pagination`) — first used by Phase 10's order queue. */
+async function requestPage<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<{ items: T[]; pagination: Pagination }> {
+  const envelope = await fetchEnvelope<T[]>(path, init);
+  if (!envelope.meta.pagination) {
+    throw new Error(`requestPage() called against a non-paginated endpoint: ${path}`);
+  }
+  return { items: envelope.data, pagination: envelope.meta.pagination };
 }
 
 function post<T>(path: string, body: unknown): Promise<T> {
@@ -671,4 +696,154 @@ export const orderApi = {
       token,
       outcome,
     }),
+};
+
+// ── Restaurant order management (Phase 10) ────────────────────────────
+
+export interface RestaurantOrderSummary {
+  id: string;
+  orderNumber: string;
+  status: string;
+  customerName: string;
+  payableTotalMinor: string;
+  createdAt: string;
+  placedAt: string | null;
+}
+
+export interface RestaurantOrderDetail {
+  id: string;
+  orderNumber: string;
+  status: string;
+  customerName: string;
+  customerPhone: string;
+  deliveryAddress: unknown;
+  itemsSubtotalMinor: string;
+  packagingFeeMinor: string;
+  deliveryFeeMinor: string;
+  platformFeeMinor: string;
+  taxMinor: string;
+  discountMinor: string;
+  payableTotalMinor: string;
+  rejectionReason: string | null;
+  cancellationReason: string | null;
+  createdAt: string;
+  placedAt: string | null;
+  acceptedAt: string | null;
+  readyAt: string | null;
+  deliveredAt: string | null;
+  cancelledAt: string | null;
+  items: {
+    id: string;
+    nameSnapshot: string;
+    descriptionSnapshot: string | null;
+    unitPriceMinorSnapshot: string;
+    quantity: number;
+    lineTotalMinor: string;
+  }[];
+  history: {
+    fromStatus: string | null;
+    toStatus: string;
+    actorType: string;
+    reason: string | null;
+    createdAt: string;
+  }[];
+  payment: {
+    status: string;
+    amountMinor: string;
+    capturedMinor: string;
+    refundedMinor: string;
+    method: string | null;
+  } | null;
+}
+
+export interface TransitionResult {
+  status: string;
+  applied: boolean;
+}
+
+/**
+ * Every mutating call here sends a fresh `Idempotency-Key`
+ * (`crypto.randomUUID()`) — required by the API (docs/04 §8.5) even
+ * though the underlying transition is already safely idempotent by
+ * target state; see OrderStateService's own doc comment. `restaurantId`
+ * is only needed when the caller belongs to more than one restaurant
+ * (`restaurantHeaders()` omits the header entirely otherwise, and
+ * `AuthorizationGuard` resolves the sole active membership implicitly).
+ */
+export const restaurantOrdersApi = {
+  list: (
+    params: { status?: string[]; cursor?: string; limit?: number } = {},
+    restaurantId?: string,
+  ) => {
+    const query = new URLSearchParams();
+    if (params.status?.length) query.set('status', params.status.join(','));
+    if (params.cursor) query.set('cursor', params.cursor);
+    if (params.limit) query.set('limit', String(params.limit));
+    const qs = query.toString();
+    return requestPage<RestaurantOrderSummary>(`/restaurant/orders${qs ? `?${qs}` : ''}`, {
+      method: 'GET',
+      ...restaurantHeaders(restaurantId),
+    });
+  },
+
+  detail: (orderId: string, restaurantId?: string) =>
+    request<RestaurantOrderDetail>(`/restaurant/orders/${orderId}`, {
+      method: 'GET',
+      ...restaurantHeaders(restaurantId),
+    }),
+
+  accept: (orderId: string, restaurantId?: string) =>
+    request<TransitionResult>(`/restaurant/orders/${orderId}/accept`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      ...restaurantHeaders(restaurantId),
+    }),
+
+  reject: (orderId: string, reason: string, restaurantId?: string) =>
+    request<TransitionResult>(`/restaurant/orders/${orderId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      ...restaurantHeaders(restaurantId),
+    }),
+
+  preparing: (orderId: string, restaurantId?: string) =>
+    request<TransitionResult>(`/restaurant/orders/${orderId}/preparing`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      ...restaurantHeaders(restaurantId),
+    }),
+
+  ready: (orderId: string, restaurantId?: string) =>
+    request<TransitionResult>(`/restaurant/orders/${orderId}/ready`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      ...restaurantHeaders(restaurantId),
+    }),
+
+  /**
+   * Builds the SSE URL directly rather than wrapping it in a helper
+   * that constructs `EventSource` itself — `useOrderStream` needs to
+   * own the `EventSource` instance to manage manual reconnection with
+   * a resume cursor (see that hook for why native auto-reconnect isn't
+   * enough on its own).
+   *
+   * No `X-Restaurant-Id` disambiguation is possible here — `EventSource`
+   * cannot set custom request headers, only cookies (`withCredentials`
+   * covers the session, nothing else), and `AuthorizationGuard` only
+   * ever reads that header, never a query param, by design (it's
+   * security-sensitive, heavily-tested infrastructure from Phase 4 this
+   * phase deliberately didn't touch for a narrow SSE convenience). A
+   * staff member belonging to more than one restaurant therefore can't
+   * use this stream at all — `useOrderStream` checks for that case
+   * up front and skips straight to the 15s polling fallback, which
+   * goes through the normal header-carrying `request()` path and works
+   * for every account shape.
+   */
+  streamUrl: (lastEventId: string | undefined): string => {
+    const query = new URLSearchParams();
+    if (lastEventId) query.set('lastEventId', lastEventId);
+    const qs = query.toString();
+    return `${API_BASE_URL}/api/v1/restaurant/orders/stream${qs ? `?${qs}` : ''}`;
+  },
 };

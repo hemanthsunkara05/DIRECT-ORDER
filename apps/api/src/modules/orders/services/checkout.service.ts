@@ -213,10 +213,11 @@ export class CheckoutService {
       data: { providerOrderId: intent.providerOrderId, status: 'PENDING' },
     });
 
-    await this.outbox.record('ORDER_PENDING_PAYMENT', {
-      orderId: order.id,
-      orderNumber: order.orderNumber,
-    });
+    await this.outbox.record(
+      'ORDER_PENDING_PAYMENT',
+      { orderId: order.id, orderNumber: order.orderNumber },
+      order.restaurantId,
+    );
 
     return {
       orderNumber: order.orderNumber,

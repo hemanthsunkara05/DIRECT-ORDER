@@ -34,8 +34,13 @@ export class OutboxService implements OnModuleInit, OnModuleDestroy {
     @Inject(PINO_LOGGER) private readonly logger: Logger,
   ) {}
 
-  async record(eventType: string, payload: unknown): Promise<void> {
-    await this.outbox.create(eventType, payload);
+  async record(eventType: string, payload: unknown, restaurantId?: string): Promise<void> {
+    await this.outbox.create(eventType, payload, restaurantId);
+  }
+
+  /** Phase 10's SSE replay/poll query — see OutboxRepository.findSinceForRestaurant. */
+  async findSinceForRestaurant(restaurantId: string, afterId: string | undefined, limit = 50) {
+    return this.outbox.findSinceForRestaurant(restaurantId, afterId, limit);
   }
 
   onModuleInit(): void {

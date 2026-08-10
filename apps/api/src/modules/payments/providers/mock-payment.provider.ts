@@ -1,5 +1,6 @@
 import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
+import { ProviderError } from '../../../platform/errors/app-error.js';
 import type {
   CreatePaymentIntentInput,
   CreateRefundInput,
@@ -76,7 +77,15 @@ export class MockPaymentProvider implements PaymentProvider {
   async fetchPaymentStatus(providerPaymentId: string): Promise<ProviderPaymentStatus> {
     const record = this.byPaymentId.get(providerPaymentId);
     if (!record) {
-      throw new Error(`MockPaymentProvider: unknown providerPaymentId ${providerPaymentId}`);
+      // A real Razorpay lookup against an unknown id fails the same way
+      // `RazorpayPaymentProvider.request()` already reports every
+      // provider-side failure — a typed `ProviderError`, never a bare
+      // `Error` that would otherwise surface to the client as an opaque
+      // 500 with no code the frontend could branch on (found live,
+      // against real Postgres, during this phase's manual verification —
+      // a client-supplied `providerPaymentId` hint that doesn't match
+      // anything is a real, reachable case, not just a theoretical one).
+      throw new ProviderError(`Unknown provider payment id: ${providerPaymentId}`, 502);
     }
     return Promise.resolve({
       providerPaymentId,
@@ -112,7 +121,7 @@ export class MockPaymentProvider implements PaymentProvider {
   async createRefund(input: CreateRefundInput): Promise<ProviderRefundResult> {
     const record = this.byPaymentId.get(input.providerPaymentId);
     if (!record) {
-      throw new Error(`MockPaymentProvider: unknown providerPaymentId ${input.providerPaymentId}`);
+      throw new ProviderError(`Unknown provider payment id: ${input.providerPaymentId}`, 502);
     }
     return Promise.resolve({
       providerRefundId: `mock_refund_${randomUUID()}`,

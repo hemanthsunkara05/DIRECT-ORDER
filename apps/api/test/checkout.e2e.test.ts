@@ -170,6 +170,24 @@ describe('Orders, checkout, payments (Phase 9, e2e)', () => {
     expect(ctx.db.carts.find((c) => c.id === cartId)?.status).toBe('CONVERTED');
   });
 
+  it('verify-payment with a providerPaymentId hint that matches nothing fails cleanly, not with a raw 500', async () => {
+    // Found live, against real Postgres, during this phase's manual
+    // verification: MockPaymentProvider.fetchPaymentStatus used to throw
+    // a bare Error for an unrecognized id, which GlobalExceptionFilter
+    // has no choice but to report as an opaque 500 INTERNAL_ERROR. Fixed
+    // to throw ProviderError (502 SERVICE_UNAVAILABLE), the same typed
+    // failure RazorpayPaymentProvider already reports for every
+    // provider-side failure.
+    const { cartId, guestToken } = await fullSetup();
+    const checkoutRes = await checkoutRequest(cartId, guestToken, randomUUID()).expect(200);
+    const { orderNumber, accessToken } = checkoutRes.body.data;
+
+    const res = await mutate(ctx, 'post', `/api/v1/public/orders/${orderNumber}/verify-payment`)
+      .send({ token: accessToken, providerPaymentId: 'mock_pay_does-not-exist' })
+      .expect(502);
+    expect(res.body.error.code).toBe('SERVICE_UNAVAILABLE');
+  });
+
   it('full happy path: checkout -> simulate CAPTURED -> verify-payment -> order PLACED -> visible via tracking', async () => {
     const { cartId, guestToken } = await fullSetup();
     const checkoutRes = await checkoutRequest(cartId, guestToken, randomUUID()).expect(200);

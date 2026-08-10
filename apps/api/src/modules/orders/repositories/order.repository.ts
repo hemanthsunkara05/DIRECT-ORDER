@@ -1,12 +1,22 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Order, OrderItem, OrderStatus, OrderStatusHistory, Payment } from '@prisma/client';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
+import { TenantScopedRepository } from '../../../platform/tenancy/tenant-scoped.repository.js';
 
 export type OrderWithRelations = Order & {
   items: OrderItem[];
   history: OrderStatusHistory[];
   payments: Payment[];
 };
+
+export interface RestaurantOrderFilters {
+  status?: OrderStatus[];
+}
+
+export interface ListForRestaurantOptions {
+  cursor?: string;
+  limit?: number;
+}
 
 /**
  * Reads and the locked-transition write path only. Order *creation* is
@@ -18,10 +28,20 @@ export type OrderWithRelations = Order & {
  * transaction" shape MenuItemService.reorder already established) —
  * see docs/12-repository-structure.md §19 for why that beats inventing
  * a transaction-aware repository abstraction this is the only caller of.
+ *
+ * Extends `TenantScopedRepository` (Phase 10) for the two new
+ * restaurant-facing methods below — every earlier method here stays
+ * deliberately unscoped: `findById`/`findByIdForUpdate`/
+ * `findPendingPaymentOlderThan`/etc. are called from system contexts
+ * with no authenticated tenant at all (webhook processing, the expiry
+ * scheduler, order tracking by guest token), so scoping them would be
+ * wrong, not just redundant.
  */
 @Injectable()
-export class OrderRepository {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+export class OrderRepository extends TenantScopedRepository {
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {
+    super();
+  }
 
   async findById(orderId: string): Promise<Order | null> {
     return this.prisma.order.findUnique({ where: { id: orderId } });
@@ -74,6 +94,46 @@ export class OrderRepository {
   ): Promise<void> {
     await this.prisma.orderStatusHistory.create({
       data: { orderId, fromStatus, toStatus, actorType, actorId, reason },
+    });
+  }
+
+  /**
+   * The order queue (`GET /restaurant/orders`, docs/04 §8.5) — cursor
+   * pagination by `id` (UUIDv7, time-ordered), same convention
+   * AuditService's pagination already established. Callers request
+   * `limit + 1` rows and treat the extra row's presence as `hasMore`
+   * (RestaurantOrderService does this, never this method) rather than
+   * returning it.
+   */
+  async listForRestaurant(
+    restaurantId: string,
+    filters: RestaurantOrderFilters,
+    options: ListForRestaurantOptions = {},
+  ): Promise<Order[]> {
+    const limit = Math.min(options.limit ?? 20, 100);
+    return this.prisma.order.findMany({
+      where: this.withTenant(
+        restaurantId,
+        filters.status?.length ? { status: { in: filters.status } } : {},
+      ),
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+    });
+  }
+
+  /** Order detail (`GET /restaurant/orders/:id`) — `findFirst`, not `findUnique`: `{id, restaurantId}` isn't a declared unique constraint, only `id` alone is. */
+  async findByIdForRestaurant(
+    restaurantId: string,
+    orderId: string,
+  ): Promise<OrderWithRelations | null> {
+    return this.prisma.order.findFirst({
+      where: this.withTenant(restaurantId, { id: orderId }),
+      include: {
+        items: true,
+        history: { orderBy: { createdAt: 'asc' } },
+        payments: { orderBy: { createdAt: 'desc' } },
+      },
     });
   }
 }
