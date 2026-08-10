@@ -1,15 +1,16 @@
 // Direct-Order — Prisma schema
 //
 // Phase 2 (Core schema and tenancy): identity, restaurant-as-tenant,
-// staff membership, and the append-only audit log. See
-// PRODUCT/docs/01-domain-model.md §5.1–5.2 and
+// staff membership, and the append-only audit log.
+// Phase 3 (Authentication) added: OtpChallenge, and Session.familyId
+// for O(1) refresh-token-family revocation on reuse detection.
+// See PRODUCT/docs/01-domain-model.md §5.1–5.2 and
 // PRODUCT/docs/02-database-schema.md for the authoritative field-level
 // specification this schema implements.
 //
-// Deliberately excludes anything not yet needed: Customer, AdminUser,
-// OtpChallenge (Phase 3 auth), OperatingHours/SpecialHours/ClosurePeriod
-// (Phase 7 public page), and every order/payment/catalog table (Phases
-// 6+). Do not add them ahead of the phase that needs them.
+// Deliberately excludes anything not yet needed: Customer, AdminUser
+// (Phase 13), OperatingHours/SpecialHours/ClosurePeriod (Phase 7). Do
+// not add them ahead of the phase that needs them.
 
 generator client {
   provider = "prisma-client-js"
@@ -105,16 +106,26 @@ model User {
 }
 
 /// Server-side record making refresh tokens revocable (docs/09-security.md
-/// §15.2). Reuse of an already-rotated token is a token-theft signal —
-/// handled at the service layer in Phase 3, not by this table alone.
+/// §15.2). Every rotation (each `/auth/refresh` call) creates a NEW Session
+/// row and revokes the old one — `familyId` is shared across every
+/// generation of one continuous login, so reuse of an already-rotated
+/// token (Phase 3 acceptance criterion) can revoke the whole family in one
+/// indexed UPDATE rather than walking the `rotatedFromId` chain.
 model Session {
   id               String    @id @default(uuid(7)) @db.Uuid
   userId           String    @map("user_id") @db.Uuid
+  /// Shared by every rotation descending from the same original login.
+  /// Equal to `id` for the first session in a family.
+  familyId         String    @map("family_id") @db.Uuid
   refreshTokenHash String    @unique @map("refresh_token_hash")
   userAgent        String?   @map("user_agent")
   ipHash           String?   @map("ip_hash")
   expiresAt        DateTime  @map("expires_at") @db.Timestamptz
   revokedAt        DateTime? @map("revoked_at") @db.Timestamptz
+  /// Set when this row was created as the audit trail's "reuse detected"
+  /// marker rather than a normal rotation — distinguishes an ordinary
+  /// revoke (logout, password change) from a security event.
+  revokedReason    String?   @map("revoked_reason")
   rotatedFromId    String?   @map("rotated_from_id") @db.Uuid
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
@@ -122,7 +133,41 @@ model Session {
 
   @@map("sessions")
   @@index([userId])
+  @@index([familyId])
   @@index([expiresAt])
+}
+
+enum OtpPurpose {
+  EMAIL_VERIFICATION
+  PHONE_VERIFICATION
+  PASSWORD_RESET
+}
+
+/// Unified verification/challenge mechanism (docs/01-domain-model.md
+/// §5.1). Serves two shapes of secret through the same table, varied by
+/// `purpose` at the service layer: a short numeric OTP for
+/// EMAIL_VERIFICATION/PHONE_VERIFICATION, and a long random link-token
+/// for PASSWORD_RESET. Only the hash is ever persisted either way.
+model OtpChallenge {
+  id          String     @id @default(uuid(7)) @db.Uuid
+  /// Email or phone the challenge was issued for — not necessarily tied
+  /// to an existing User (e.g. registration verifies an email before the
+  /// account is considered active).
+  identifier  String
+  purpose     OtpPurpose
+  codeHash    String     @map("code_hash")
+  attempts    Int        @default(0)
+  maxAttempts Int        @default(5) @map("max_attempts")
+  expiresAt   DateTime   @map("expires_at") @db.Timestamptz
+  consumedAt  DateTime?  @map("consumed_at") @db.Timestamptz
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("otp_challenges")
+  @@index([identifier, purpose, consumedAt])
+  @@index([expiresAt])
+  // PASSWORD_RESET links carry only the token, not the identifier — this
+  // index backs the by-hash lookup path (OtpService.verifyResetToken).
+  @@index([codeHash, purpose, consumedAt])
 }
 
 // ─────────────────────────────────────────────────────────────────

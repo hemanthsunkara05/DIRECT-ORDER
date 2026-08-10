@@ -2,7 +2,7 @@
 
 Commission-free direct-ordering platform for independent Indian restaurants. Each restaurant gets a branded ordering link, a real-time order dashboard, online payments, and transparent visibility into every rupee — without giving up 25–35% of order value to an aggregator.
 
-**Status:** Phase 1 (Foundation) — see [PRODUCT/docs/13-implementation-phases.md](PRODUCT/docs/13-implementation-phases.md). No product features exist yet; this phase establishes the engineering foundation everything else builds on.
+**Status:** Phase 3 (Authentication) — see [PRODUCT/docs/13-implementation-phases.md](PRODUCT/docs/13-implementation-phases.md). Foundation (Phase 1), core schema and tenancy (Phase 2), and registration/login/session management (Phase 3) are done. Authorization (roles, permissions, tenant isolation) is Phase 4 — until then, an authenticated user has no restaurant-scoped access of any kind.
 
 Full specification: [PRODUCT/IMPLEMENTATION_HANDOFF.md](PRODUCT/IMPLEMENTATION_HANDOFF.md).
 
@@ -10,7 +10,7 @@ Full specification: [PRODUCT/IMPLEMENTATION_HANDOFF.md](PRODUCT/IMPLEMENTATION_H
 
 ## Stack
 
-TypeScript everywhere. Next.js 15 (frontend) · NestJS on Fastify (API) · PostgreSQL 16 + Prisma · Redis + BullMQ (from Phase 12) · pnpm workspaces monorepo.
+TypeScript everywhere. Next.js 15 (frontend) · NestJS on Fastify (API) · PostgreSQL 16 + Prisma · Redis (rate limiting since Phase 3; job queues via BullMQ from Phase 12) · pnpm workspaces monorepo.
 
 See [PRODUCT/IMPLEMENTATION_HANDOFF.md §4](PRODUCT/IMPLEMENTATION_HANDOFF.md#4-technology-stack) for the full stack with rationale.
 
@@ -68,6 +68,7 @@ Verify the stack is up:
 curl http://localhost:4000/health   # {"status":"ok"}
 curl http://localhost:4000/ready    # {"status":"ready","checks":{"database":{"status":"ok",...}}}
 open http://localhost:3000          # "Direct-Order" placeholder page
+open http://localhost:3000/signup   # Create a restaurant-owner account (Phase 3)
 ```
 
 ## Common commands
@@ -100,7 +101,7 @@ pnpm --filter=@direct-order/money run test
 
 ## Environment variables
 
-See [.env.example](.env.example) for the complete list, grouped by concern, each annotated with the phase that introduces the code reading it. Only the variables under `[PHASE 1]` are read by anything that exists today; the rest are documented ahead of time so the full production configuration surface is visible from day one.
+See [.env.example](.env.example) for the complete list, grouped by concern, each annotated with the phase that introduces the code reading it. Only the variables tagged `[PHASE 1]`, `[PHASE 1/2]`, or `[PHASE 3]` are read by anything that exists today; the rest are documented ahead of time so the full production configuration surface is visible from day one.
 
 **Never commit `.env` or any file containing real secrets.** `.env.example` contains variable names and formats only.
 
@@ -117,9 +118,19 @@ The point: even if application code were compromised or buggy, it cannot rewrite
 
 Production provisions its own equivalent roles through the platform's secret manager, not these files.
 
+## Authentication
+
+Registration, login, logout, refresh, password reset, and email/phone verification (Phase 3, `docs/09-security.md` §15.2). A few load-bearing decisions worth knowing before touching this code:
+
+- **Sessions, not just tokens.** Access tokens are short-lived JWTs (15 min) carrying `{sub, sid}`, but `AuthGuard` re-checks both the user's status and the referenced `Session` row's live/revoked status on every request — logout, password reset, and refresh-token-reuse detection all take effect immediately, not after the token happens to expire.
+- **Refresh-token rotation with reuse detection.** Every `/auth/refresh` call issues a new refresh token and revokes the old one. Presenting an already-rotated token revokes the entire session family and logs a `SESSION_REUSE_DETECTED` audit event — see `SessionService.rotate()`.
+- **Enumeration resistance.** `/auth/register`, `/auth/login`, and `/auth/password/forgot` return identical responses (and, for login, comparable timing via a dummy password-hash comparison) regardless of whether the account exists.
+- **Rate limiting fails open.** `RateLimitGuard` allows a request through — logging a warning — if Redis is unreachable, rather than taking down the entire authentication surface over a rate-limiter dependency outage. It is defense-in-depth, not the primary control.
+- Cookies (`do_access_token`, `do_refresh_token`) are `HttpOnly; SameSite=Lax; Path=/`, and `Secure` outside `APP_ENV=local` (a plain-HTTP `Secure` cookie would never reach the API in local development).
+
 ## Testing
 
-- **Unit / integration:** Vitest, per workspace (`apps/api/test`, `packages/money/test`, ...). API integration tests boot a real NestJS + Fastify application over real HTTP (via supertest); `PrismaService` is overridden with a controllable stub rather than requiring a live database in every environment that runs the suite — see the note at the top of `apps/api/test/health.e2e.test.ts`.
+- **Unit / integration:** Vitest, per workspace (`apps/api/test`, `packages/money/test`, ...). API integration tests boot a real NestJS + Fastify application over real HTTP (via supertest); `PrismaService` and `RedisService` are overridden with in-memory stand-ins (`apps/api/test/support/`) rather than requiring a live database and Redis in every environment that runs the suite — see the note at the top of `apps/api/test/health.e2e.test.ts` and `apps/api/test/support/create-test-app.ts`.
 - **End-to-end:** Playwright, in `apps/web/e2e`. Builds and starts the real Next.js app, then drives it with a real browser.
 - **Full-stack / live database:** CI runs a dedicated job (`live-database-smoke-test`) that starts a real PostgreSQL service and the actual compiled API against it, then polls `/health` and `/ready` — this is the closest equivalent to `docker compose up -d && pnpm db:migrate && pnpm dev` that runs automatically on every change. See `.github/workflows/ci.yml`.
 

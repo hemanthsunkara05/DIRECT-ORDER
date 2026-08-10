@@ -1,6 +1,8 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import fastifyCookie from '@fastify/cookie';
+import fastifyCors from '@fastify/cors';
 import { AppModule } from './app.module.js';
 import { validateEnv, EnvValidationError, type Env } from './platform/config/env.schema.js';
 import { AppLoggerService } from './platform/logging/logger.service.js';
@@ -35,6 +37,17 @@ async function bootstrap(): Promise<void> {
   );
 
   app.useLogger(app.get(AppLoggerService));
+
+  await app.register(fastifyCookie);
+  // credentials:true + an explicit origin (not '*') is required for the
+  // browser to actually send the HttpOnly session cookies cross-origin
+  // between the web app's and the API's domains (docs/09-security.md §15.7).
+  await app.register(fastifyCors, { origin: env.WEB_BASE_URL, credentials: true });
+
+  // /health and /ready are infrastructure liveness/readiness probes, not
+  // part of the versioned public API — excluded from the prefix so a
+  // load balancer can hit them at a fixed, version-independent path.
+  app.setGlobalPrefix('api/v1', { exclude: ['health', 'ready'] });
 
   registerGracefulShutdown(app);
 

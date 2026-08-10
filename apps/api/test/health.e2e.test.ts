@@ -27,6 +27,11 @@ const TEST_ENV: Env = {
   LOG_LEVEL: 'silent',
   APP_DATABASE_URL: 'postgresql://direct_order_app:test@localhost:5432/direct_order_test',
   DATABASE_POOL_MAX: 5,
+  REDIS_URL: 'redis://localhost:6379',
+  JWT_SECRET: 'test-only-secret-at-least-32-characters-long',
+  JWT_ACCESS_TTL_SECONDS: 900,
+  REFRESH_TOKEN_TTL_DAYS: 30,
+  ARGON2_MEMORY_KB: 65536,
 };
 
 class ControllablePrismaStub {

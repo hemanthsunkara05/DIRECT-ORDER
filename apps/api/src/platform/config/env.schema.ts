@@ -30,7 +30,16 @@ export const EnvSchema = z.object({
   APP_DATABASE_URL: z.string().min(1, 'APP_DATABASE_URL is required'),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
 
-  REDIS_URL: z.string().min(1).optional(),
+  // Phase 3: required now — rate limiting (docs/09-security.md §15.7) and
+  // session-adjacent state depend on Redis being reachable.
+  REDIS_URL: z.string().min(1, 'REDIS_URL is required'),
+
+  // Phase 3: authentication.
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
+  JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().positive().default(900), // 15 min
+  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  COOKIE_DOMAIN: z.string().min(1).optional(),
+  ARGON2_MEMORY_KB: z.coerce.number().int().positive().default(65536),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -39,9 +48,16 @@ export type Env = z.infer<typeof EnvSchema>;
  * Fields that MUST be present (non-empty, non-placeholder) when
  * APP_ENV=production, even though EnvSchema itself treats them as
  * having safe local defaults or being merely present-if-provided.
- * PORT/LOG_LEVEL have safe defaults everywhere and are excluded.
+ * PORT/LOG_LEVEL/JWT_ACCESS_TTL_SECONDS/REFRESH_TOKEN_TTL_DAYS/
+ * ARGON2_MEMORY_KB have safe defaults everywhere and are excluded.
  */
-const PRODUCTION_REQUIRED_KEYS = ['APP_DATABASE_URL', 'API_BASE_URL', 'WEB_BASE_URL'] as const;
+const PRODUCTION_REQUIRED_KEYS = [
+  'APP_DATABASE_URL',
+  'API_BASE_URL',
+  'WEB_BASE_URL',
+  'REDIS_URL',
+  'JWT_SECRET',
+] as const;
 
 export class EnvValidationError extends Error {
   constructor(public readonly issues: string[]) {

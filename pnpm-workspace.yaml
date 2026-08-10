@@ -2,6 +2,17 @@ packages:
   - 'apps/*'
   - 'packages/*'
 
+# @nestjs/platform-fastify pins an exact `fastify` version internally
+# (peer compatibility). Without this override, pnpm resolves a second,
+# slightly newer `fastify` for the app's own direct dependency, and the
+# two copies' structurally-similar-but-distinct `FastifyInstance` types
+# break every fastify plugin's module augmentation (@fastify/cookie,
+# @fastify/cors, ...) with a confusing "missing properties" TS error.
+# One resolved copy, matching what @nestjs/platform-fastify itself uses,
+# avoids the whole class of problem.
+overrides:
+  fastify: 4.28.1
+
 # pnpm 10+ refuses to run dependency install/postinstall scripts unless
 # explicitly allowed, to limit supply-chain risk from transitive
 # dependencies (PRODUCT/docs/09-security.md §15.11). Every package below
@@ -16,10 +27,14 @@ packages:
 #     Next.js's built-in image optimization)
 #   - unrs-resolver: native module resolver used transitively by ESLint's
 #     Next.js config
+#   - argon2: downloads its native binary (or builds from source), the
+#     password-hashing algorithm this system uses (docs/09-security.md
+#     §15.2) — required for password hashing to function at all
 allowBuilds:
   '@nestjs/core': true
   '@prisma/client': true
   '@prisma/engines': true
+  argon2: true
   esbuild: true
   prisma: true
   sharp: true
