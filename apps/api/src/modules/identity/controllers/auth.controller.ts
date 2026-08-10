@@ -7,6 +7,7 @@ import { UnauthenticatedError, ValidationError } from '../../../platform/errors/
 import { RateLimit } from '../../../platform/rate-limit/rate-limit.decorator.js';
 import { ok } from '../../../platform/http/response-envelope.js';
 import { hashIp } from '../../../platform/security/hash-ip.js';
+import { RestaurantMembershipRepository } from '../../../platform/authorization/restaurant-membership.repository.js';
 import { ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE } from '../auth.constants.js';
 import { AuthService } from '../services/auth.service.js';
 import type { SessionContext } from '../services/session.service.js';
@@ -37,6 +38,8 @@ export class AuthController {
   constructor(
     @Inject(AuthService) private readonly auth: AuthService,
     @Inject(APP_CONFIG) private readonly env: Env,
+    @Inject(RestaurantMembershipRepository)
+    private readonly memberships: RestaurantMembershipRepository,
   ) {}
 
   @Post('register')
@@ -154,8 +157,18 @@ export class AuthController {
   @Get('me')
   @UseGuards(AuthGuard)
   @HttpCode(200)
-  me(@CurrentUser() user: User) {
-    return ok(this.toPublicUser(user));
+  async me(@CurrentUser() user: User) {
+    const memberships = await this.memberships.findActiveByUserWithRestaurant(user.id);
+    return ok({
+      ...this.toPublicUser(user),
+      restaurantMemberships: memberships.map((m) => ({
+        restaurantId: m.restaurantId,
+        restaurantName: m.restaurant.name,
+        restaurantSlug: m.restaurant.slug,
+        role: m.role,
+        onboardingStatus: m.restaurant.onboardingStatus,
+      })),
+    });
   }
 
   private setSessionCookies(reply: FastifyReply, accessToken: string, refreshToken: string): void {

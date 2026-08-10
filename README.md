@@ -2,7 +2,7 @@
 
 Commission-free direct-ordering platform for independent Indian restaurants. Each restaurant gets a branded ordering link, a real-time order dashboard, online payments, and transparent visibility into every rupee — without giving up 25–35% of order value to an aggregator.
 
-**Status:** Phase 3 (Authentication) — see [PRODUCT/docs/13-implementation-phases.md](PRODUCT/docs/13-implementation-phases.md). Foundation (Phase 1), core schema and tenancy (Phase 2), and registration/login/session management (Phase 3) are done. Authorization (roles, permissions, tenant isolation) is Phase 4 — until then, an authenticated user has no restaurant-scoped access of any kind.
+**Status:** Phase 4 (Authorization) — see [PRODUCT/docs/13-implementation-phases.md](PRODUCT/docs/13-implementation-phases.md). Foundation (Phase 1), core schema and tenancy (Phase 2), authentication (Phase 3), and the permission catalogue + tenant-isolation guards (Phase 4) are done. No real restaurant-scoped business endpoint exists yet — Phase 4 built and proved the enforcement machinery every domain module from Phase 5 onward will attach to its own routes.
 
 Full specification: [PRODUCT/IMPLEMENTATION_HANDOFF.md](PRODUCT/IMPLEMENTATION_HANDOFF.md).
 
@@ -127,6 +127,16 @@ Registration, login, logout, refresh, password reset, and email/phone verificati
 - **Enumeration resistance.** `/auth/register`, `/auth/login`, and `/auth/password/forgot` return identical responses (and, for login, comparable timing via a dummy password-hash comparison) regardless of whether the account exists.
 - **Rate limiting fails open.** `RateLimitGuard` allows a request through — logging a warning — if Redis is unreachable, rather than taking down the entire authentication surface over a rate-limiter dependency outage. It is defense-in-depth, not the primary control.
 - Cookies (`do_access_token`, `do_refresh_token`) are `HttpOnly; SameSite=Lax; Path=/`, and `Secure` outside `APP_ENV=local` (a plain-HTTP `Secure` cookie would never reach the API in local development).
+
+## Authorization
+
+Permission catalogue, role definitions, and the tenant-isolation guards (Phase 4, `docs/05-authorization-matrix.md`). Answers the three questions every request must pass: authentication (Phase 3's `AuthGuard`), role capability (`@Permissions(...)`), and resource scope (`@TenantScoped()`).
+
+- **Two decorators, one guard.** A tenant-scoped, permission-gated route declares `@TenantScoped()` and `@Permissions('menu:write')`; `AuthorizationGuard` (`platform/authorization`) reads both. It is **not** a global guard — Nest runs global guards before controller-level ones, and it depends on `AuthGuard` having already populated `request.user`, so every tenant-scoped controller applies both explicitly and in order: `@UseGuards(AuthGuard, AuthorizationGuard)`.
+- **403 vs 404, deliberately different layers.** Sending `X-Restaurant-Id` for a restaurant the caller has no active membership in is **403** (`AuthorizationGuard`, logged as a `TENANT_ISOLATION_VIOLATION` audit event). Successfully resolving a tenant and then requesting a specific _resource_ that belongs to a different restaurant is **404**, not 403 — returning 403 would confirm the resource exists, leaking tenant structure (`docs/04-api-specification.md` §8.1). Domain modules get this for free by passing a tenant-scoped repository lookup's `null` result through `assertTenantResourceFound()`.
+- **Membership is re-checked per request**, exactly like Phase 3's session liveness check — a staff member disabled mid-session loses access on their very next request, not when their token happens to expire.
+- **Only restaurant roles (STAFF/MANAGER/OWNER) are enforceable today.** The permission catalogue also encodes SUPPORT/OPS/FINANCE/SUPER_ADMIN per the documented matrix, but `admin_users` (Phase 13) doesn't exist yet, so no principal can actually hold those roles — a route requiring only an admin-capable permission always denies.
+- No real business endpoint uses these guards yet — see `apps/api/test/authorization.e2e.test.ts` for the test-only probe controller that proves the full pipeline over real HTTP ahead of Phase 5 attaching it to real routes.
 
 ## Testing
 

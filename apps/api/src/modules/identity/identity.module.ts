@@ -46,6 +46,11 @@ import { RateLimitGuard } from '../../platform/rate-limit/rate-limit.guard.js';
     AuthGuard,
     { provide: APP_GUARD, useClass: RateLimitGuard },
   ],
-  exports: [AuthGuard, UserRepository],
+  // TokenService and SessionRepository are exported alongside AuthGuard
+  // (not just AuthGuard itself) because AuthGuard depends on both —
+  // a module that imports IdentityModule purely to use `@UseGuards(AuthGuard)`
+  // needs AuthGuard's full constructor dependency chain resolvable, not
+  // just the guard class itself.
+  exports: [AuthGuard, UserRepository, TokenService, SessionRepository],
 })
 export class IdentityModule {}

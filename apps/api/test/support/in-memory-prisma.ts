@@ -71,11 +71,35 @@ interface AuditLogRow {
   createdAt: Date;
 }
 
+export interface RestaurantRow {
+  id: string;
+  slug: string;
+  name: string;
+  status: string;
+  onboardingStatus: string;
+  orderingEnabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface RestaurantStaffRow {
+  id: string;
+  userId: string;
+  restaurantId: string;
+  role: 'STAFF' | 'MANAGER' | 'OWNER';
+  status: 'ACTIVE' | 'DISABLED';
+  joinedAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface InMemoryPrisma {
   users: UserRow[];
   sessions: SessionRow[];
   otpChallenges: OtpChallengeRow[];
   auditLogs: AuditLogRow[];
+  restaurants: RestaurantRow[];
+  restaurantStaff: RestaurantStaffRow[];
   prisma: PrismaService;
 }
 
@@ -84,6 +108,8 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   const sessions: SessionRow[] = [];
   const otpChallenges: OtpChallengeRow[] = [];
   const auditLogs: AuditLogRow[] = [];
+  const restaurants: RestaurantRow[] = [];
+  const restaurantStaff: RestaurantStaffRow[] = [];
 
   const user = {
     create: ({ data }: { data: Partial<UserRow> }) => {
@@ -251,14 +277,73 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     findMany: () => Promise.resolve([]),
   };
 
+  type RestaurantStaffWhere = {
+    id?: string;
+    userId?: string;
+    restaurantId?: string;
+    role?: string;
+    status?: string;
+  };
+
+  const matchRestaurantStaff = (where: RestaurantStaffWhere) => (s: RestaurantStaffRow) => {
+    if (where.id !== undefined && s.id !== where.id) return false;
+    if (where.userId !== undefined && s.userId !== where.userId) return false;
+    if (where.restaurantId !== undefined && s.restaurantId !== where.restaurantId) return false;
+    if (where.role !== undefined && s.role !== where.role) return false;
+    if (where.status !== undefined && s.status !== where.status) return false;
+    return true;
+  };
+
+  const restaurantStaffTable = {
+    findMany: ({
+      where,
+      orderBy,
+      include,
+    }: {
+      where: RestaurantStaffWhere;
+      orderBy?: { joinedAt: 'asc' | 'desc' };
+      include?: { restaurant?: boolean };
+    }) => {
+      let matches = restaurantStaff.filter(matchRestaurantStaff(where));
+      if (orderBy?.joinedAt) {
+        const dir = orderBy.joinedAt === 'desc' ? -1 : 1;
+        matches = [...matches].sort((a, b) => dir * (a.joinedAt.getTime() - b.joinedAt.getTime()));
+      }
+      return Promise.resolve(
+        matches.map((s) =>
+          include?.restaurant
+            ? { ...s, restaurant: restaurants.find((r) => r.id === s.restaurantId) ?? null }
+            : s,
+        ),
+      );
+    },
+    findFirst: ({ where }: { where: RestaurantStaffWhere }) => {
+      return Promise.resolve(restaurantStaff.find(matchRestaurantStaff(where)) ?? null);
+    },
+    count: ({ where }: { where: RestaurantStaffWhere }) => {
+      return Promise.resolve(restaurantStaff.filter(matchRestaurantStaff(where)).length);
+    },
+    findUnique: ({
+      where,
+    }: {
+      where: { userId_restaurantId: { userId: string; restaurantId: string } };
+    }) => {
+      const { userId, restaurantId } = where.userId_restaurantId;
+      const row =
+        restaurantStaff.find((s) => s.userId === userId && s.restaurantId === restaurantId) ?? null;
+      return Promise.resolve(row);
+    },
+  };
+
   const prisma = {
     user,
     session,
     otpChallenge,
     auditLog,
+    restaurantStaff: restaurantStaffTable,
     $transaction: (operations: Promise<unknown>[]) => Promise.all(operations),
     ping: () => Promise.resolve(),
   } as unknown as PrismaService;
 
-  return { users, sessions, otpChallenges, auditLogs, prisma };
+  return { users, sessions, otpChallenges, auditLogs, restaurants, restaurantStaff, prisma };
 }

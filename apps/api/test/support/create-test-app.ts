@@ -42,12 +42,20 @@ export interface TestApp {
  * HTTP via supertest — a fresh instance per test keeps rate-limit
  * counters and DB state from leaking between test cases.
  */
-export async function createTestApp(envOverrides: Partial<Env> = {}): Promise<TestApp> {
+export async function createTestApp(
+  envOverrides: Partial<Env> = {},
+  // Lets a test register extra test-only controllers/modules (e.g. a
+  // probe controller proving AuthorizationGuard's behaviour over real
+  // HTTP) alongside the real app, without this helper needing to know
+  // about them. `any[]` matches Nest's own `imports` array type
+  // (DynamicModule | Type<any> | ...), which is this broad already.
+  extraImports: any[] = [],
+): Promise<TestApp> {
   const db = createInMemoryPrisma();
   const notifier = new FakeAuthNotifierService();
 
   const moduleRef = await Test.createTestingModule({
-    imports: [AppModule.forRoot({ ...TEST_ENV, ...envOverrides })],
+    imports: [AppModule.forRoot({ ...TEST_ENV, ...envOverrides }), ...extraImports],
   })
     .overrideProvider(PrismaService)
     .useValue(db.prisma)

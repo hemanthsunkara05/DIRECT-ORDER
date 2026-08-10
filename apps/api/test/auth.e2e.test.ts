@@ -309,6 +309,7 @@ describe('Authentication (Phase 3, e2e)', () => {
         'emailVerified',
         'phoneVerified',
         'createdAt',
+        'restaurantMemberships',
       ]);
       const actualFields = Object.keys(res.body.data);
 
