@@ -1,0 +1,8 @@
+import { z } from 'zod';
+
+export const CreateCategoryDto = z.object({
+  name: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(2000).optional(),
+});
+
+export type CreateCategoryInput = z.infer<typeof CreateCategoryDto>;

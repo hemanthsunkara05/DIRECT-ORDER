@@ -2,7 +2,7 @@
 
 Commission-free direct-ordering platform for independent Indian restaurants. Each restaurant gets a branded ordering link, a real-time order dashboard, online payments, and transparent visibility into every rupee — without giving up 25–35% of order value to an aggregator.
 
-**Status:** Phase 5 (Restaurant onboarding and profile) — see [PRODUCT/docs/13-implementation-phases.md](PRODUCT/docs/13-implementation-phases.md). Foundation (Phase 1), core schema and tenancy (Phase 2), authentication (Phase 3), authorization (Phase 4), and restaurant creation/onboarding/profile/staff/uploads (Phase 5) are done. A restaurant owner can now sign up, create a restaurant, complete onboarding, invite staff, and upload branding images end to end — menu and ordering are still Phase 6+.
+**Status:** Phase 6 (Menu management) — see [PRODUCT/docs/13-implementation-phases.md](PRODUCT/docs/13-implementation-phases.md). Foundation (Phase 1), core schema and tenancy (Phase 2), authentication (Phase 3), authorization (Phase 4), restaurant creation/onboarding/profile/staff/uploads (Phase 5), and menu categories/items (Phase 6) are done. A restaurant owner can now sign up, create a restaurant, complete onboarding, invite staff, upload branding images, and build out a full categorized menu end to end — public ordering is still Phase 7+.
 
 Full specification: [PRODUCT/IMPLEMENTATION_HANDOFF.md](PRODUCT/IMPLEMENTATION_HANDOFF.md).
 
@@ -70,6 +70,7 @@ curl http://localhost:4000/ready    # {"status":"ready","checks":{"database":{"s
 open http://localhost:3000          # "Direct-Order" placeholder page
 open http://localhost:3000/signup   # Create a restaurant-owner account (Phase 3)
 open http://localhost:3000/onboarding # Create and set up a restaurant (Phase 5)
+open http://localhost:3000/restaurant/menu # Build out categories and items (Phase 6)
 ```
 
 ## Common commands
@@ -149,6 +150,16 @@ Restaurant creation, onboarding, profile/branding/settings, staff invitations, a
 - **Last-active-OWNER protection** (`StaffManagementService`) blocks demoting or disabling a restaurant's sole OWNER with `409 LAST_OWNER` — checked before the (separate) self-demotion guard, so the common case where both would apply surfaces the more specific code.
 - **Presigned uploads, two steps.** `POST /restaurant/uploads/presign` validates the _declared_ content type/size (SVG rejected outright, 5 MB cap) and returns a time-limited PUT URL — the API never sees the bytes at this step. `POST /restaurant/uploads/verify` fetches what actually landed in storage afterward and checks the magic bytes match what was declared (`uploads/magic-bytes.ts`), deleting and rejecting on any mismatch — the only way to catch a `.exe` renamed to `.jpg`, since the declared type alone proves nothing.
 - **Storage is S3-compatible** (`uploads/s3-storage.adapter.ts`, MinIO locally via `docker-compose.yml`) behind a `StoragePort` interface — tests substitute an in-memory fake (`test/support/fake-storage.ts`) rather than requiring live MinIO.
+
+## Menu
+
+Categories and items, CRUD + archiving + reordering (Phase 6, `docs/13-implementation-phases.md`). Same guard/permission pattern as Restaurants above (`menu:read`/`menu:write`/`menu:availability`).
+
+- **Never hard-deleted.** "Delete" in the UI means archive (`archivedAt` set, `isActive`/`isAvailable` flipped off) — a row a later phase's order references for display context must still exist, per its schema.prisma doc comment.
+- **Three states, not one:** `isActive` (on the menu) · `isAvailable` (orderable right now — the one field STAFF, not just MANAGER/OWNER, can toggle: `PATCH /restaurant/menu/items/:id/availability` is `menu:availability`, every other write is `menu:write`) · `archivedAt` (removed, retained for history). Don't conflate them.
+- **Reordering is one transaction, validated before any write.** `POST /restaurant/menu/{categories,items}/reorder` first checks every id in the batch belongs to the caller's tenant; an unknown or foreign id fails the whole request with the previous order completely intact, rather than applying a prefix of the batch.
+- **Category name uniqueness (among non-archived rows) is enforced at the service layer, not a DB constraint** — Prisma's schema DSL can't express a partial unique index, the same limitation already noted for `User`'s email-or-phone invariant.
+- **Frontend reordering is dual-input:** native HTML5 drag-and-drop for mouse users, plus keyboard-focusable ▲/▼ buttons that do the same reorder call — an `aria-live` region announces the result for screen readers, since a drag's visual reshuffle is otherwise silent to them.
 
 ## Testing
 

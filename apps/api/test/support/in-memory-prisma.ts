@@ -156,6 +156,36 @@ export interface StaffInvitationRow {
   createdAt: Date;
 }
 
+export interface MenuCategoryRow {
+  id: string;
+  restaurantId: string;
+  name: string;
+  description: string | null;
+  displayOrder: number;
+  isActive: boolean;
+  archivedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface MenuItemRow {
+  id: string;
+  restaurantId: string;
+  categoryId: string;
+  name: string;
+  description: string | null;
+  priceMinor: bigint;
+  currency: string;
+  imageUrl: string | null;
+  isAvailable: boolean;
+  isActive: boolean;
+  displayOrder: number;
+  dietaryTag: 'VEG' | 'NON_VEG' | 'EGG' | 'UNKNOWN';
+  archivedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface InMemoryPrisma {
   users: UserRow[];
   sessions: SessionRow[];
@@ -167,6 +197,8 @@ export interface InMemoryPrisma {
   restaurantBranding: RestaurantBrandingRow[];
   restaurantSettings: RestaurantSettingsRow[];
   staffInvitations: StaffInvitationRow[];
+  menuCategories: MenuCategoryRow[];
+  menuItems: MenuItemRow[];
   prisma: PrismaService;
 }
 
@@ -181,6 +213,8 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   const restaurantBranding: RestaurantBrandingRow[] = [];
   const restaurantSettings: RestaurantSettingsRow[] = [];
   const staffInvitations: StaffInvitationRow[] = [];
+  const menuCategories: MenuCategoryRow[] = [];
+  const menuItems: MenuItemRow[] = [];
 
   const user = {
     create: ({ data }: { data: Partial<UserRow> }) => {
@@ -618,6 +652,129 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     },
   };
 
+  type MenuCategoryWhere = {
+    id?: string;
+    restaurantId?: string;
+    archivedAt?: null;
+    name?: { equals: string; mode?: string };
+  };
+  const matchMenuCategory = (where: MenuCategoryWhere) => (c: MenuCategoryRow) => {
+    if (where.id !== undefined && c.id !== where.id) return false;
+    if (where.restaurantId !== undefined && c.restaurantId !== where.restaurantId) return false;
+    if (where.archivedAt === null && c.archivedAt !== null) return false;
+    if (where.name !== undefined) {
+      const matches =
+        where.name.mode === 'insensitive'
+          ? c.name.toLowerCase() === where.name.equals.toLowerCase()
+          : c.name === where.name.equals;
+      if (!matches) return false;
+    }
+    return true;
+  };
+
+  const menuCategoryTable = {
+    create: ({ data }: { data: Partial<MenuCategoryRow> }) => {
+      const row: MenuCategoryRow = {
+        id: randomUUID(),
+        description: null,
+        displayOrder: 0,
+        isActive: true,
+        archivedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...data,
+      } as MenuCategoryRow;
+      menuCategories.push(row);
+      return Promise.resolve(row);
+    },
+    findFirst: ({ where }: { where: MenuCategoryWhere }) => {
+      return Promise.resolve(menuCategories.find(matchMenuCategory(where)) ?? null);
+    },
+    findMany: ({
+      where,
+      orderBy,
+    }: {
+      where: MenuCategoryWhere;
+      orderBy?: { displayOrder: 'asc' | 'desc' };
+    }) => {
+      let matches = menuCategories.filter(matchMenuCategory(where));
+      if (orderBy?.displayOrder) {
+        const dir = orderBy.displayOrder === 'desc' ? -1 : 1;
+        matches = [...matches].sort((a, b) => dir * (a.displayOrder - b.displayOrder));
+      }
+      return Promise.resolve(matches);
+    },
+    updateMany: ({ where, data }: { where: MenuCategoryWhere; data: Partial<MenuCategoryRow> }) => {
+      const matches = menuCategories.filter(matchMenuCategory(where));
+      for (const row of matches) {
+        Object.assign(row, data, { updatedAt: new Date() });
+      }
+      return Promise.resolve({ count: matches.length });
+    },
+  };
+
+  type MenuItemWhere = {
+    id?: string;
+    restaurantId?: string;
+    categoryId?: string;
+    archivedAt?: null;
+  };
+  const matchMenuItem = (where: MenuItemWhere) => (i: MenuItemRow) => {
+    if (where.id !== undefined && i.id !== where.id) return false;
+    if (where.restaurantId !== undefined && i.restaurantId !== where.restaurantId) return false;
+    if (where.categoryId !== undefined && i.categoryId !== where.categoryId) return false;
+    if (where.archivedAt === null && i.archivedAt !== null) return false;
+    return true;
+  };
+
+  const menuItemTable = {
+    create: ({ data }: { data: Partial<MenuItemRow> }) => {
+      const row: MenuItemRow = {
+        id: randomUUID(),
+        description: null,
+        currency: 'INR',
+        imageUrl: null,
+        isAvailable: true,
+        isActive: true,
+        displayOrder: 0,
+        dietaryTag: 'UNKNOWN',
+        archivedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...data,
+      } as MenuItemRow;
+      menuItems.push(row);
+      return Promise.resolve(row);
+    },
+    findFirst: ({ where }: { where: MenuItemWhere }) => {
+      return Promise.resolve(menuItems.find(matchMenuItem(where)) ?? null);
+    },
+    findMany: ({
+      where,
+      orderBy,
+    }: {
+      where: MenuItemWhere;
+      orderBy?: { displayOrder: 'asc' | 'desc' };
+    }) => {
+      let matches = menuItems.filter(matchMenuItem(where));
+      if (orderBy?.displayOrder) {
+        const dir = orderBy.displayOrder === 'desc' ? -1 : 1;
+        matches = [...matches].sort((a, b) => dir * (a.displayOrder - b.displayOrder));
+      }
+      return Promise.resolve(matches);
+    },
+    updateMany: ({ where, data }: { where: MenuItemWhere; data: Partial<MenuItemRow> }) => {
+      const matches = menuItems.filter(matchMenuItem(where));
+      for (const row of matches) {
+        Object.assign(row, data, { updatedAt: new Date() });
+      }
+      return Promise.resolve({ count: matches.length });
+    },
+    count: ({ where }: { where: MenuItemWhere }) => {
+      return Promise.resolve(menuItems.filter(matchMenuItem(where)).length);
+    },
+  };
+
   const prisma = {
     user,
     session,
@@ -629,6 +786,8 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     restaurantBranding: restaurantBrandingTable,
     restaurantSettings: restaurantSettingsTable,
     staffInvitation: staffInvitationTable,
+    menuCategory: menuCategoryTable,
+    menuItem: menuItemTable,
     // Supports both Prisma `$transaction` forms this codebase uses: the
     // array form (a list of already-constructed operations, awaited
     // together — see session.repository.ts) and the interactive
@@ -658,6 +817,8 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     restaurantBranding,
     restaurantSettings,
     staffInvitations,
+    menuCategories,
+    menuItems,
     prisma,
   };
 }

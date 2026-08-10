@@ -4,13 +4,16 @@
 // staff membership, and the append-only audit log.
 // Phase 3 (Authentication) added: OtpChallenge, and Session.familyId
 // for O(1) refresh-token-family revocation on reuse detection.
-// See PRODUCT/docs/01-domain-model.md §5.1–5.2 and
+// Phase 6 (Menu management) added: MenuCategory, MenuItem.
+// See PRODUCT/docs/01-domain-model.md §5.1–5.3 and
 // PRODUCT/docs/02-database-schema.md for the authoritative field-level
 // specification this schema implements.
 //
 // Deliberately excludes anything not yet needed: Customer, AdminUser
-// (Phase 13), OperatingHours/SpecialHours/ClosurePeriod (Phase 7). Do
-// not add them ahead of the phase that needs them.
+// (Phase 13), OperatingHours/SpecialHours/ClosurePeriod (Phase 7),
+// MenuItemImage/search_vector (multi-image and full-text search are not
+// needed until a phase actually consumes them). Do not add them ahead
+// of the phase that needs them.
 
 generator client {
   provider = "prisma-client-js"
@@ -68,6 +71,13 @@ enum StaffInvitationStatus {
   ACCEPTED
   EXPIRED
   REVOKED
+}
+
+enum DietaryTag {
+  VEG
+  NON_VEG
+  EGG
+  UNKNOWN
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -131,10 +141,10 @@ model Session {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@map("sessions")
   @@index([userId])
   @@index([familyId])
   @@index([expiresAt])
+  @@map("sessions")
 }
 
 enum OtpPurpose {
@@ -162,12 +172,12 @@ model OtpChallenge {
   consumedAt  DateTime?  @map("consumed_at") @db.Timestamptz
   createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz
 
-  @@map("otp_challenges")
   @@index([identifier, purpose, consumedAt])
   @@index([expiresAt])
   // PASSWORD_RESET links carry only the token, not the identifier — this
   // index backs the by-hash lookup path (OtpService.verifyResetToken).
   @@index([codeHash, purpose, consumedAt])
+  @@map("otp_challenges")
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -182,30 +192,32 @@ model OtpChallenge {
 /// check) is validated at the service layer in Phase 5, where restaurant
 /// creation is actually implemented — only uniqueness is enforced here.
 model Restaurant {
-  id               String                      @id @default(uuid(7)) @db.Uuid
-  slug             String                      @unique
+  id               String                     @id @default(uuid(7)) @db.Uuid
+  slug             String                     @unique
   name             String
   description      String?
   phone            String?
   email            String?
-  timezone         String                      @default("Asia/Kolkata")
-  status           RestaurantStatus            @default(DRAFT)
-  onboardingStatus RestaurantOnboardingStatus  @default(NOT_STARTED) @map("onboarding_status")
-  orderingEnabled  Boolean                     @default(false) @map("ordering_enabled")
-  avgPrepMinutes   Int?                        @map("avg_prep_minutes")
-  ratingAvg        Decimal?                    @map("rating_avg") @db.Decimal(3, 2)
-  ratingCount      Int                         @default(0) @map("rating_count")
-  createdAt        DateTime                    @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt        DateTime                    @updatedAt @map("updated_at") @db.Timestamptz
+  timezone         String                     @default("Asia/Kolkata")
+  status           RestaurantStatus           @default(DRAFT)
+  onboardingStatus RestaurantOnboardingStatus @default(NOT_STARTED) @map("onboarding_status")
+  orderingEnabled  Boolean                    @default(false) @map("ordering_enabled")
+  avgPrepMinutes   Int?                       @map("avg_prep_minutes")
+  ratingAvg        Decimal?                   @map("rating_avg") @db.Decimal(3, 2)
+  ratingCount      Int                        @default(0) @map("rating_count")
+  createdAt        DateTime                   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime                   @updatedAt @map("updated_at") @db.Timestamptz
 
-  address     RestaurantAddress?
-  branding    RestaurantBranding?
-  settings    RestaurantSettings?
-  staff       RestaurantStaff[]
-  invitations StaffInvitation[]
+  address        RestaurantAddress?
+  branding       RestaurantBranding?
+  settings       RestaurantSettings?
+  staff          RestaurantStaff[]
+  invitations    StaffInvitation[]
+  menuCategories MenuCategory[]
+  menuItems      MenuItem[]
 
-  @@map("restaurants")
   @@index([status])
+  @@map("restaurants")
 }
 
 /// Pickup address for delivery and the public location. 1:1 with
@@ -300,8 +312,8 @@ model RestaurantStaff {
   // Phase 2 acceptance criterion: duplicate (user_id, restaurant_id) fails
   // at the database level, not just in application code.
   @@unique([userId, restaurantId])
-  @@map("restaurant_staff")
   @@index([restaurantId, status])
+  @@map("restaurant_staff")
 }
 
 /// Single-use, expiring invitation. The raw token exists only in the
@@ -322,9 +334,68 @@ model StaffInvitation {
   restaurant    Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   invitedByUser User       @relation("InvitationSentBy", fields: [invitedByUserId], references: [id], onDelete: Restrict)
 
-  @@map("staff_invitations")
   @@index([restaurantId, status])
   @@index([email])
+  @@map("staff_invitations")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Catalog (Phase 6)
+// ─────────────────────────────────────────────────────────────────
+
+/// Groups MenuItems for display. `(restaurantId, name)` uniqueness among
+/// non-archived rows is enforced at the service layer (MenuCategoryService),
+/// not a DB constraint — Prisma's schema DSL cannot express a partial
+/// unique index (docs/02-database-schema.md pattern already used for
+/// User's email-or-phone invariant), and this repo has no live database
+/// in this sandbox to apply a hand-written migration against anyway.
+model MenuCategory {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  restaurantId String    @map("restaurant_id") @db.Uuid
+  name         String
+  description  String?
+  displayOrder Int       @default(0) @map("display_order")
+  isActive     Boolean   @default(true) @map("is_active")
+  archivedAt   DateTime? @map("archived_at") @db.Timestamptz
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  items      MenuItem[]
+
+  @@index([restaurantId, displayOrder])
+  @@map("menu_categories")
+}
+
+/// **Three distinct states, do not conflate** (docs/01-domain-model.md
+/// §5.3): `isActive` (exists on the menu) · `isAvailable` (orderable
+/// right now — the one field STAFF, not just MANAGER/OWNER, can toggle)
+/// · `archivedAt` (removed from the menu, retained for history).
+/// **Never hard-deleted** — a later phase's order references this row
+/// for display context even after archiving, alongside its own price
+/// snapshot taken at order time.
+model MenuItem {
+  id           String     @id @default(uuid(7)) @db.Uuid
+  restaurantId String     @map("restaurant_id") @db.Uuid
+  categoryId   String     @map("category_id") @db.Uuid
+  name         String
+  description  String?
+  priceMinor   BigInt     @map("price_minor")
+  currency     String     @default("INR")
+  imageUrl     String?    @map("image_url")
+  isAvailable  Boolean    @default(true) @map("is_available")
+  isActive     Boolean    @default(true) @map("is_active")
+  displayOrder Int        @default(0) @map("display_order")
+  dietaryTag   DietaryTag @default(UNKNOWN) @map("dietary_tag")
+  archivedAt   DateTime?  @map("archived_at") @db.Timestamptz
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+
+  restaurant Restaurant   @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  category   MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@index([restaurantId, categoryId, displayOrder])
+  @@map("menu_items")
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -358,8 +429,8 @@ model AuditLog {
   ipHash        String?  @map("ip_hash")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
 
-  @@map("audit_logs")
   @@index([entityType, entityId, createdAt(sort: Desc)])
   @@index([actorType, actorId, createdAt(sort: Desc)])
   @@index([restaurantId, createdAt(sort: Desc)])
+  @@map("audit_logs")
 }

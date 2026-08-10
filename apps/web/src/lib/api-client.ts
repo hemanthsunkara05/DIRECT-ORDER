@@ -323,3 +323,143 @@ export const uploadApi = {
       ...restaurantHeaders(restaurantId),
     }),
 };
+
+// ── Menu (Phase 6) ───────────────────────────────────────────────────
+
+export interface MenuCategory {
+  id: string;
+  name: string;
+  description: string | null;
+  displayOrder: number;
+  isActive: boolean;
+  archivedAt: string | null;
+}
+
+export type DietaryTag = 'VEG' | 'NON_VEG' | 'EGG' | 'UNKNOWN';
+
+export interface MenuItem {
+  id: string;
+  categoryId: string;
+  name: string;
+  description: string | null;
+  // Integer paise as a string (INV-1) — never a JS number, same
+  // reasoning as RestaurantSettingsData's money fields.
+  priceMinor: string;
+  currency: string;
+  imageUrl: string | null;
+  isAvailable: boolean;
+  isActive: boolean;
+  displayOrder: number;
+  dietaryTag: DietaryTag;
+  archivedAt: string | null;
+}
+
+export interface ReorderEntry {
+  id: string;
+  displayOrder: number;
+}
+
+export const menuApi = {
+  categories: {
+    list: (restaurantId?: string) =>
+      request<MenuCategory[]>('/restaurant/menu/categories', {
+        method: 'GET',
+        ...restaurantHeaders(restaurantId),
+      }),
+
+    create: (input: { name: string; description?: string }, restaurantId?: string) =>
+      request<MenuCategory>('/restaurant/menu/categories', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        ...restaurantHeaders(restaurantId),
+      }),
+
+    update: (
+      categoryId: string,
+      input: Partial<{ name: string; description: string | null; isActive: boolean }>,
+      restaurantId?: string,
+    ) =>
+      request<MenuCategory>(`/restaurant/menu/categories/${categoryId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+        ...restaurantHeaders(restaurantId),
+      }),
+
+    archive: (categoryId: string, restaurantId?: string) =>
+      request<{ status: string }>(`/restaurant/menu/categories/${categoryId}`, {
+        method: 'DELETE',
+        ...restaurantHeaders(restaurantId),
+      }),
+
+    reorder: (items: ReorderEntry[], restaurantId?: string) =>
+      request<{ status: string }>('/restaurant/menu/categories/reorder', {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+        ...restaurantHeaders(restaurantId),
+      }),
+  },
+
+  items: {
+    list: (categoryId: string | undefined, restaurantId?: string) =>
+      request<MenuItem[]>(
+        `/restaurant/menu/items${categoryId ? `?categoryId=${categoryId}` : ''}`,
+        { method: 'GET', ...restaurantHeaders(restaurantId) },
+      ),
+
+    create: (
+      input: {
+        categoryId: string;
+        name: string;
+        description?: string;
+        priceMinor: string;
+        imageUrl?: string;
+        dietaryTag?: DietaryTag;
+      },
+      restaurantId?: string,
+    ) =>
+      request<MenuItem>('/restaurant/menu/items', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        ...restaurantHeaders(restaurantId),
+      }),
+
+    update: (
+      itemId: string,
+      input: Partial<{
+        categoryId: string;
+        name: string;
+        description: string | null;
+        priceMinor: string;
+        imageUrl: string | null;
+        dietaryTag: DietaryTag;
+        isActive: boolean;
+      }>,
+      restaurantId?: string,
+    ) =>
+      request<MenuItem>(`/restaurant/menu/items/${itemId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+        ...restaurantHeaders(restaurantId),
+      }),
+
+    archive: (itemId: string, restaurantId?: string) =>
+      request<{ status: string }>(`/restaurant/menu/items/${itemId}`, {
+        method: 'DELETE',
+        ...restaurantHeaders(restaurantId),
+      }),
+
+    setAvailability: (itemId: string, isAvailable: boolean, restaurantId?: string) =>
+      request<MenuItem>(`/restaurant/menu/items/${itemId}/availability`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isAvailable }),
+        ...restaurantHeaders(restaurantId),
+      }),
+
+    reorder: (items: ReorderEntry[], restaurantId?: string) =>
+      request<{ status: string }>('/restaurant/menu/items/reorder', {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+        ...restaurantHeaders(restaurantId),
+      }),
+  },
+};
