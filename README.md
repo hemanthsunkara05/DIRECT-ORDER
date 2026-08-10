@@ -2,7 +2,7 @@
 
 Commission-free direct-ordering platform for independent Indian restaurants. Each restaurant gets a branded ordering link, a real-time order dashboard, online payments, and transparent visibility into every rupee — without giving up 25–35% of order value to an aggregator.
 
-**Status:** Phase 7 (Public ordering page) — see [PRODUCT/docs/13-implementation-phases.md](PRODUCT/docs/13-implementation-phases.md). Foundation (Phase 1), core schema and tenancy (Phase 2), authentication (Phase 3), authorization (Phase 4), restaurant creation/onboarding/profile/staff/uploads (Phase 5), menu categories/items (Phase 6), and the public ordering page (Phase 7 — operating hours, `isAcceptingOrders()`, and the customer-facing `/r/:slug` menu/browse/cart page) are done. A restaurant owner can now sign up, create a restaurant, complete onboarding, invite staff, upload branding images, build out a full categorized menu, set weekly hours, and go live on a real public ordering link — checkout and payments are still Phase 8+.
+**Status:** Phase 8 (Pricing engine and cart validation) — see [PRODUCT/docs/13-implementation-phases.md](PRODUCT/docs/13-implementation-phases.md). Foundation (Phase 1), core schema and tenancy (Phase 2), authentication (Phase 3), authorization (Phase 4), restaurant creation/onboarding/profile/staff/uploads (Phase 5), menu categories/items (Phase 6), the public ordering page (Phase 7), and the pricing engine + server-side cart validation (Phase 8 — `POST /public/checkout/quote`) are done. A restaurant owner can now sign up, create a restaurant, complete onboarding, invite staff, upload branding images, build out a full categorized menu, set weekly hours, and go live on a real public ordering link where a customer's cart is authoritatively priced and validated server-side — order creation and payments are still Phase 9+.
 
 Full specification: [PRODUCT/IMPLEMENTATION_HANDOFF.md](PRODUCT/IMPLEMENTATION_HANDOFF.md).
 
@@ -59,7 +59,9 @@ pnpm db:seed       # Optional: two sample restaurants with distinct owners/staff
 
 pnpm dev
 # Starts api (http://localhost:4000), web (http://localhost:3000),
-# and worker in parallel, with file watching.
+# and worker in parallel, with file watching. apps/api's dev script
+# loads the repo-root .env via Node's --env-file flag — it must exist
+# (the `cp .env.example .env` step above) before this will boot.
 ```
 
 Verify the stack is up:
@@ -73,6 +75,8 @@ open http://localhost:3000/onboarding # Create and set up a restaurant (Phase 5)
 open http://localhost:3000/restaurant/menu # Build out categories and items (Phase 6)
 open http://localhost:3000/restaurant/hours # Set weekly hours, closures, ordering toggle (Phase 7)
 open http://localhost:3000/r/<slug>         # The live public ordering page for a given restaurant (Phase 7)
+                                             # — add an item to the cart and open it to see the
+                                             # server-priced breakdown (Phase 8, POST /public/checkout/quote)
 ```
 
 ## Common commands
@@ -174,6 +178,17 @@ Categories and items, CRUD + archiving + reordering (Phase 6, `docs/13-implement
 - **The customer page** (`apps/web/src/app/r/[slug]/`) is a real Server Component with dynamic metadata/Open Graph tags — not a client-side spinner. The cart is client-side, persisted to `localStorage` under a **per-slug key**, which is what makes "switching restaurants never mixes their items" true by construction rather than a runtime check. In-page search filters the already-fetched menu client-side; there is no separate search endpoint (cross-restaurant discovery is feature-flagged off, BR-146).
 - **Playwright coverage runs against a mock API**, not a live database (`apps/web/e2e/support/mock-public-api-server.mjs`, wired in via a second `webServer` entry in `playwright.config.ts`) — this sandbox has no Docker/Postgres to seed a real restaurant against. Actually running `pnpm test:e2e` end-to-end for (apparently) the first time in this environment surfaced a real, unrelated pre-existing gap: every page mounts `SessionProvider` (Phase 3), which checks `GET /auth/me` on load — Chrome itself logs any non-2xx resource load as a console error regardless of how gracefully the app handles the response, so `smoke.spec.ts`'s original "zero console errors" assertion was never actually compatible with a logged-out visit once that session check existed. Fixed by allowing exactly that one expected, benign 401 message rather than loosening the assertion generally.
 
+## Pricing engine and cart validation
+
+The pricing engine (`packages/money/src/pricing.ts`, `calculatePricing()`) is **the single place order totals are computed** — Phase 8 builds it and `POST /public/checkout/quote`; Phase 9's real checkout, and every later phase that touches a total (promotion redemption, loyalty redemption, refund calculation), calls this same function rather than re-deriving one.
+
+- **BR-3:** `payableTotalMinor = itemsSubtotal + packagingFee + deliveryFee + platformFee + tax − discount`, discount being promotion + loyalty, combined and capped so it can never exceed the discountable base (BR-7) or push the total negative (BR-6). Promotion is clamped against the base first, loyalty against whatever remains — a deterministic priority order, not a simultaneous split.
+- **BR-5:** every percentage (tax, a percentage-type promotion, the platform fee) is rounded half-up to the nearest paise **once**, at the point of calculation — reusing `percentageOf()` from Phase 1, never re-rounding a later sum.
+- **Platform fee is basis points of the subtotal** (`PLATFORM_FEE_BPS`, global config, default 0 — BR-14: zero renders as an absent line, not a "₹0 platform fee" one), not per-restaurant; no `RestaurantSettings` field exists for this.
+- **`POST /public/checkout/quote`** runs the pricing-relevant subset of the mandated checkout sequence (docs/04-api-specification.md §8.3: availability, live item state, price-drift detection, minimum order, then pricing) without the parts that need infrastructure this phase doesn't build — a persisted cart (`POST /public/carts`, Phase 9), coupon/loyalty reservation (Phase 14/16), or order creation (Phase 9). It takes cart contents directly in the request body rather than a `cartId`. Issues (`ITEM_UNAVAILABLE`, `PRICE_CHANGED`, `BELOW_MINIMUM_ORDER`, `RESTAURANT_UNAVAILABLE`) come back in a 200 response, not a single fatal error — `valid: false` is what actually blocks proceeding, and the breakdown is still computed from whatever items passed validation.
+- **The frontend cart** (`apps/web/src/app/r/[slug]/restaurant-ordering-view.tsx`) re-quotes on every cart change and renders the server-computed breakdown plus any issue messages — there is no client-side price estimate anywhere; the number shown is always what the server just said.
+- **Tax has no restaurant-level config yet** (BR-15 is explicitly flagged as needing real tax advice) — the engine supports a `taxPercent` input and is fully tested against it, but the live endpoint always passes none, the same "build it, don't wire it to a guess" treatment `SpecialHours` got in Phase 7.
+
 ## Testing
 
 - **Unit / integration:** Vitest, per workspace (`apps/api/test`, `packages/money/test`, ...). API integration tests boot a real NestJS + Fastify application over real HTTP (via supertest); `PrismaService` and `RedisService` are overridden with in-memory stand-ins (`apps/api/test/support/`) rather than requiring a live database and Redis in every environment that runs the suite — see the note at the top of `apps/api/test/health.e2e.test.ts` and `apps/api/test/support/create-test-app.ts`.
@@ -182,7 +197,7 @@ Categories and items, CRUD + archiving + reordering (Phase 6, `docs/13-implement
 
 ## Money
 
-Every monetary value in this codebase is an integer number of minor units (paise) represented as a `bigint`. There is no floating-point representation of money anywhere. `packages/money` is the only place money arithmetic happens — see its source for `toMinor`, `formatINR`, `percentageOf`, and `sum`. A repo-wide ESLint rule bans `Math.round`, `.toFixed`, and `parseFloat` outside legitimate, individually-justified exceptions (grep for `eslint-disable.*no-restricted-syntax` to review every one).
+Every monetary value in this codebase is an integer number of minor units (paise) represented as a `bigint`. There is no floating-point representation of money anywhere. `packages/money` is the only place money arithmetic happens — see its source for `toMinor`, `formatINR`, `percentageOf`, `sum`, and (Phase 8) the pricing engine, `calculatePricing`. A repo-wide ESLint rule bans `Math.round`, `.toFixed`, and `parseFloat` outside legitimate, individually-justified exceptions (grep for `eslint-disable.*no-restricted-syntax` to review every one).
 
 ## Non-negotiable invariants
 

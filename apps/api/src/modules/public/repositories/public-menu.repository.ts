@@ -27,4 +27,17 @@ export class PublicMenuRepository {
       orderBy: { displayOrder: 'asc' },
     });
   }
+
+  /**
+   * Deliberately unfiltered by `isActive`/`archivedAt`/`isAvailable` —
+   * cart validation (Phase 8) needs to tell "this item is archived/
+   * unavailable" apart from "this item id never existed at all", which
+   * requires seeing the row regardless of its current state.
+   */
+  async findByIds(restaurantId: string, itemIds: string[]): Promise<MenuItem[]> {
+    if (itemIds.length === 0) return [];
+    return this.prisma.menuItem.findMany({
+      where: { restaurantId, id: { in: itemIds } },
+    });
+  }
 }

@@ -531,3 +531,51 @@ export const availabilityApi = {
       ...restaurantHeaders(restaurantId),
     }),
 };
+
+// ── Checkout quote (Phase 8) ──────────────────────────────────────────
+// Public/unauthenticated endpoint, but called through this same
+// CSRF-aware fetch wrapper like every other mutating request — the
+// globally-registered CsrfGuard checks every non-GET request
+// regardless of auth state (apps/api/src/platform/security/csrf.guard.ts).
+
+export type CartIssue =
+  | { code: 'RESTAURANT_UNAVAILABLE'; reason: string }
+  | { code: 'ITEM_UNAVAILABLE'; itemId: string }
+  | { code: 'PRICE_CHANGED'; itemId: string; oldPriceMinor: string; newPriceMinor: string }
+  | { code: 'BELOW_MINIMUM_ORDER'; minimumMinor: string; subtotalMinor: string };
+
+export interface QuoteLineItem {
+  itemId: string;
+  name: string;
+  unitPriceMinor: string;
+  quantity: number;
+  lineTotalMinor: string;
+}
+
+export interface QuoteBreakdown {
+  items: QuoteLineItem[];
+  itemsSubtotalMinor: string;
+  packagingFeeMinor: string;
+  deliveryFeeMinor: string;
+  platformFeeMinor: string;
+  taxMinor: string;
+  discountableBaseMinor: string;
+  promotionDiscountMinor: string;
+  loyaltyDiscountMinor: string;
+  discountMinor: string;
+  payableTotalMinor: string;
+}
+
+export interface QuoteResult {
+  valid: boolean;
+  issues: CartIssue[];
+  breakdown: QuoteBreakdown;
+}
+
+export const checkoutApi = {
+  quote: (input: {
+    restaurantSlug: string;
+    items: { itemId: string; quantity: number; unitPriceMinorAtAdd: string }[];
+  }) =>
+    request<QuoteResult>('/public/checkout/quote', { method: 'POST', body: JSON.stringify(input) }),
+};

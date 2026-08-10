@@ -43,6 +43,30 @@ test('adding an item shows the cart summary, and it survives a refresh', async (
   await expect(page.getByText('1 item ·')).toBeVisible();
 });
 
+test('opening the cart shows a server-computed price breakdown (Phase 8: server-side cart validation)', async ({
+  page,
+}) => {
+  await page.goto('/r/spice-route');
+
+  const dosaRow = page.getByRole('listitem').filter({ hasText: 'Masala Dosa' });
+  await dosaRow.getByRole('button', { name: 'Add' }).click();
+  await page.getByRole('button', { name: /View cart/ }).click();
+
+  // The breakdown comes from POST /public/checkout/quote (the mock
+  // server's handleQuote), not a client-side estimate — proves the
+  // real request/response round-trip renders correctly, not just that
+  // local cart math works. ₹120.00 also legitimately appears in the
+  // item card, the cart line item, and the collapsed summary bar all
+  // at once, so the assertion walks from the unique "Subtotal" label
+  // to its adjacent value span (the Row component's exact DOM shape)
+  // rather than searching the whole page for the amount.
+  const subtotalLabel = page.getByText('Subtotal', { exact: true });
+  await expect(subtotalLabel).toBeVisible();
+  const subtotalValue = subtotalLabel.locator('xpath=following-sibling::span[1]');
+  await expect(subtotalValue).toHaveText('₹120.00'); // Masala Dosa is 12000 paise
+  await expect(page.getByRole('button', { name: 'Proceed to checkout' })).toBeEnabled();
+});
+
 test('the cart is isolated per restaurant — switching restaurants never mixes items', async ({
   page,
 }) => {

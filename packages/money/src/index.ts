@@ -151,3 +151,9 @@ export function percentageOf(amountMinor: Minor, percent: number): Minor {
 export function sum(...values: Minor[]): Minor {
   return values.reduce((total, value) => total + value, 0n);
 }
+
+// The pricing engine (Phase 8) imports percentageOf/sum/Minor from this
+// file — re-exported here rather than merged in, so this file stays
+// the primitives (toMinor/formatINR/percentageOf/sum) and pricing.ts
+// stays the domain-shaped calculation built on top of them.
+export * from './pricing.js';

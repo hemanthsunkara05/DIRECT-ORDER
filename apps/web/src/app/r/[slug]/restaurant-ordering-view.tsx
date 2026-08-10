@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { formatINR } from '@direct-order/money';
+import { ApiError, checkoutApi, type CartIssue, type QuoteResult } from '@/lib/api-client';
 import type { PublicMenu, PublicMenuItem, PublicRestaurant } from '@/lib/public-api';
 
 interface CartItem {
@@ -52,6 +53,22 @@ function availabilityMessage(restaurant: PublicRestaurant): string {
   }
 }
 
+function issueMessage(issue: CartIssue, cart: CartItem[]): string {
+  const itemName = (itemId: string) => cart.find((c) => c.itemId === itemId)?.name ?? 'This item';
+  switch (issue.code) {
+    case 'RESTAURANT_UNAVAILABLE':
+      return "This restaurant isn't accepting orders right now.";
+    case 'ITEM_UNAVAILABLE':
+      return `${itemName(issue.itemId)} is no longer available and has been excluded from your total.`;
+    case 'PRICE_CHANGED':
+      return `${itemName(issue.itemId)}'s price changed to ${formatINR(BigInt(issue.newPriceMinor))}. Remove and re-add it to accept the new price.`;
+    case 'BELOW_MINIMUM_ORDER':
+      return `Minimum order is ${formatINR(BigInt(issue.minimumMinor))} — add ${formatINR(BigInt(issue.minimumMinor) - BigInt(issue.subtotalMinor))} more.`;
+    default:
+      return 'There is a problem with your cart.';
+  }
+}
+
 export function RestaurantOrderingView({
   restaurant,
   menu,
@@ -63,6 +80,9 @@ export function RestaurantOrderingView({
   const [hydrated, setHydrated] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [quote, setQuote] = useState<QuoteResult | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoting, setQuoting] = useState(false);
 
   // Cart hydration is client-only (localStorage doesn't exist during
   // SSR) — loaded once per slug on mount, then every change is
@@ -74,6 +94,45 @@ export function RestaurantOrderingView({
 
   useEffect(() => {
     if (hydrated) saveCart(restaurant.slug, cart);
+  }, [cart, hydrated, restaurant.slug]);
+
+  // Re-quotes on every cart change — this IS the server-side cart
+  // validation (docs/13-implementation-phases.md, Phase 8), not a
+  // client-side estimate: prices, fees, and issue detection all come
+  // from POST /public/checkout/quote, never computed locally.
+  useEffect(() => {
+    if (!hydrated) return;
+    if (cart.length === 0) {
+      setQuote(null);
+      setQuoteError(null);
+      return;
+    }
+    let cancelled = false;
+    setQuoting(true);
+    setQuoteError(null);
+    checkoutApi
+      .quote({
+        restaurantSlug: restaurant.slug,
+        items: cart.map((c) => ({
+          itemId: c.itemId,
+          quantity: c.quantity,
+          unitPriceMinorAtAdd: c.priceMinor,
+        })),
+      })
+      .then((result) => {
+        if (!cancelled) setQuote(result);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setQuoteError(err instanceof ApiError ? err.body.message : 'Could not price your cart.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setQuoting(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [cart, hydrated, restaurant.slug]);
 
   function addToCart(item: PublicMenuItem) {
@@ -203,26 +262,69 @@ export function RestaurantOrderingView({
       {cartCount > 0 && (
         <div className="fixed inset-x-0 bottom-0 border-t border-slate-200 bg-white shadow-lg">
           {cartOpen && (
-            <ul className="max-h-64 overflow-y-auto border-b border-slate-100 px-6 py-3">
-              {cart.map((c) => (
-                <li key={c.itemId} className="flex items-center justify-between py-1 text-sm">
-                  <span>
-                    {c.quantity}× {c.name}
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <span>{formatINR(BigInt(c.priceMinor) * BigInt(c.quantity))}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeFromCart(c.itemId)}
-                      className="text-xs text-red-600 underline"
-                      aria-label={`Remove ${c.name} from cart`}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <div className="max-h-80 overflow-y-auto border-b border-slate-100 px-6 py-3">
+              <ul>
+                {cart.map((c) => (
+                  <li key={c.itemId} className="flex items-center justify-between py-1 text-sm">
+                    <span>
+                      {c.quantity}× {c.name}
+                    </span>
+                    <div className="flex items-center gap-3">
+                      <span>{formatINR(BigInt(c.priceMinor) * BigInt(c.quantity))}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeFromCart(c.itemId)}
+                        className="text-xs text-red-600 underline"
+                        aria-label={`Remove ${c.name} from cart`}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="mt-3 flex flex-col gap-1 border-t border-slate-100 pt-3 text-sm">
+                {quoting && <p className="text-xs text-slate-400">Pricing your order…</p>}
+                {quoteError && <p className="text-xs text-red-600">{quoteError}</p>}
+                {quote?.issues.map((issue, index) => (
+                  <p key={index} className="text-xs text-amber-700">
+                    {issueMessage(issue, cart)}
+                  </p>
+                ))}
+                {quote && (
+                  <>
+                    <Row label="Subtotal" valueMinor={quote.breakdown.itemsSubtotalMinor} />
+                    {quote.breakdown.packagingFeeMinor !== '0' && (
+                      <Row label="Packaging" valueMinor={quote.breakdown.packagingFeeMinor} />
+                    )}
+                    {quote.breakdown.deliveryFeeMinor !== '0' && (
+                      <Row label="Delivery" valueMinor={quote.breakdown.deliveryFeeMinor} />
+                    )}
+                    {quote.breakdown.platformFeeMinor !== '0' && (
+                      <Row label="Platform fee" valueMinor={quote.breakdown.platformFeeMinor} />
+                    )}
+                    {quote.breakdown.taxMinor !== '0' && (
+                      <Row label="Tax" valueMinor={quote.breakdown.taxMinor} />
+                    )}
+                    {quote.breakdown.discountMinor !== '0' && (
+                      <Row label="Discount" valueMinor={`-${quote.breakdown.discountMinor}`} />
+                    )}
+                    <div className="flex items-center justify-between pt-1 font-semibold">
+                      <span>Total</span>
+                      <span>{formatINR(BigInt(quote.breakdown.payableTotalMinor))}</span>
+                    </div>
+                  </>
+                )}
+                <button
+                  type="button"
+                  disabled={!quote?.valid}
+                  className="btn-primary mt-2 w-full disabled:cursor-not-allowed"
+                >
+                  {canOrder ? 'Proceed to checkout' : 'Restaurant unavailable'}
+                </button>
+              </div>
+            </div>
           )}
           <button
             type="button"
@@ -238,6 +340,15 @@ export function RestaurantOrderingView({
         </div>
       )}
     </main>
+  );
+}
+
+function Row({ label, valueMinor }: { label: string; valueMinor: string }) {
+  return (
+    <div className="flex items-center justify-between text-xs text-slate-600">
+      <span>{label}</span>
+      <span>{formatINR(BigInt(valueMinor))}</span>
+    </div>
   );
 }
 

@@ -3,16 +3,24 @@ import { AvailabilityModule } from '../availability/availability.module.js';
 import { PublicRestaurantRepository } from './repositories/public-restaurant.repository.js';
 import { PublicMenuRepository } from './repositories/public-menu.repository.js';
 import { PublicRestaurantService } from './services/public-restaurant.service.js';
+import { CheckoutQuoteService } from './services/checkout-quote.service.js';
 import { PublicRestaurantController } from './controllers/public-restaurant.controller.js';
+import { PublicCheckoutController } from './controllers/public-checkout.controller.js';
 
 /**
- * Phase 7. Unauthenticated — no IdentityModule import, no AuthGuard
- * anywhere in this module. Imports AvailabilityModule to reuse
- * `isAcceptingOrders()` rather than re-deriving availability logic.
+ * Phase 7 (restaurant/menu), Phase 8 (checkout quote) — all
+ * unauthenticated, no IdentityModule import, no AuthGuard anywhere in
+ * this module. Imports AvailabilityModule to reuse `isAcceptingOrders()`
+ * rather than re-deriving availability logic.
  */
 @Module({
   imports: [AvailabilityModule],
-  controllers: [PublicRestaurantController],
-  providers: [PublicRestaurantRepository, PublicMenuRepository, PublicRestaurantService],
+  controllers: [PublicRestaurantController, PublicCheckoutController],
+  providers: [
+    PublicRestaurantRepository,
+    PublicMenuRepository,
+    PublicRestaurantService,
+    CheckoutQuoteService,
+  ],
 })
 export class PublicModule {}

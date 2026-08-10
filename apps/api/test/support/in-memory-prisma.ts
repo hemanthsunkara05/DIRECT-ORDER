@@ -815,13 +815,17 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   };
 
   type MenuItemWhere = {
-    id?: string;
+    id?: string | { in: string[] };
     restaurantId?: string;
     categoryId?: string;
     archivedAt?: null;
   };
   const matchMenuItem = (where: MenuItemWhere) => (i: MenuItemRow) => {
-    if (where.id !== undefined && i.id !== where.id) return false;
+    if (where.id !== undefined) {
+      const matchesId =
+        typeof where.id === 'string' ? i.id === where.id : where.id.in.includes(i.id);
+      if (!matchesId) return false;
+    }
     if (where.restaurantId !== undefined && i.restaurantId !== where.restaurantId) return false;
     if (where.categoryId !== undefined && i.categoryId !== where.categoryId) return false;
     if (where.archivedAt === null && i.archivedAt !== null) return false;

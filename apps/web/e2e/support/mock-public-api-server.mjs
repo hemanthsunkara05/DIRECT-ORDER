@@ -169,6 +169,97 @@ function unauthenticatedEnvelope() {
   });
 }
 
+/**
+ * A deliberately simplified stand-in for CheckoutQuoteService — enough
+ * to exercise the frontend's cart summary/validation UI (Phase 8)
+ * against real menu data in a real browser, without reimplementing the
+ * whole pricing engine here. No fees/tax in this mock (RESTAURANT/
+ * RESTAURANT_2 have no settings object at all); it only needs to prove
+ * the UI renders a breakdown and issue messages correctly.
+ */
+function handleQuote(req, res) {
+  let body = '';
+  req.on('data', (chunk) => {
+    body += chunk;
+  });
+  req.on('end', () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      res.statusCode = 400;
+      res.end(
+        JSON.stringify({
+          error: { code: 'VALIDATION_ERROR', message: 'Invalid JSON.', requestId: 'mock' },
+        }),
+      );
+      return;
+    }
+
+    const menu = MENUS[parsed.restaurantSlug];
+    if (!menu) {
+      res.statusCode = 404;
+      res.end(notFoundEnvelope());
+      return;
+    }
+
+    const allItems = menu.categories.flatMap((category) => category.items);
+    const issues = [];
+    const validLines = [];
+
+    for (const line of parsed.items ?? []) {
+      const live = allItems.find((item) => item.id === line.itemId);
+      if (!live || !live.isAvailable) {
+        issues.push({ code: 'ITEM_UNAVAILABLE', itemId: line.itemId });
+        continue;
+      }
+      if (String(live.priceMinor) !== String(line.unitPriceMinorAtAdd)) {
+        issues.push({
+          code: 'PRICE_CHANGED',
+          itemId: line.itemId,
+          oldPriceMinor: String(line.unitPriceMinorAtAdd),
+          newPriceMinor: live.priceMinor,
+        });
+        continue;
+      }
+      validLines.push({
+        itemId: live.id,
+        name: live.name,
+        unitPriceMinor: live.priceMinor,
+        quantity: line.quantity,
+      });
+    }
+
+    const itemsSubtotalMinor = validLines.reduce(
+      (sum, l) => sum + BigInt(l.unitPriceMinor) * BigInt(l.quantity),
+      0n,
+    );
+
+    const breakdown = {
+      items: validLines.map((l) => ({
+        itemId: l.itemId,
+        name: l.name,
+        unitPriceMinor: String(l.unitPriceMinor),
+        quantity: l.quantity,
+        lineTotalMinor: String(BigInt(l.unitPriceMinor) * BigInt(l.quantity)),
+      })),
+      itemsSubtotalMinor: String(itemsSubtotalMinor),
+      packagingFeeMinor: '0',
+      deliveryFeeMinor: '0',
+      platformFeeMinor: '0',
+      taxMinor: '0',
+      discountableBaseMinor: String(itemsSubtotalMinor),
+      promotionDiscountMinor: '0',
+      loyaltyDiscountMinor: '0',
+      discountMinor: '0',
+      payableTotalMinor: String(itemsSubtotalMinor),
+    };
+
+    res.statusCode = 200;
+    res.end(envelope({ valid: issues.length === 0, issues, breakdown }));
+  });
+}
+
 export function startMockPublicApiServer() {
   const server = createServer((req, res) => {
     // The Next.js app runs on a different origin/port (localhost:3000)
@@ -199,6 +290,11 @@ export function startMockPublicApiServer() {
     if (url === '/api/v1/auth/me') {
       res.statusCode = 401;
       res.end(unauthenticatedEnvelope());
+      return;
+    }
+
+    if (req.method === 'POST' && url === '/api/v1/public/checkout/quote') {
+      handleQuote(req, res);
       return;
     }
 

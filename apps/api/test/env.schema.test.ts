@@ -30,6 +30,11 @@ describe('validateEnv', () => {
     expect(env.DATABASE_POOL_MAX).toBe(25);
   });
 
+  it('PLATFORM_FEE_BPS defaults to 0 and coerces from a string', () => {
+    expect(validateEnv(BASE_VALID_ENV).PLATFORM_FEE_BPS).toBe(0);
+    expect(validateEnv({ ...BASE_VALID_ENV, PLATFORM_FEE_BPS: '250' }).PLATFORM_FEE_BPS).toBe(250);
+  });
+
   it('rejects a missing APP_DATABASE_URL', () => {
     const { APP_DATABASE_URL: _APP_DATABASE_URL, ...rest } = BASE_VALID_ENV;
     expect(() => validateEnv(rest)).toThrow(EnvValidationError);

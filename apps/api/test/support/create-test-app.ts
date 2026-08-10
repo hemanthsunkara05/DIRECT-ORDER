@@ -35,6 +35,7 @@ export const TEST_ENV: Env = {
   STORAGE_SECRET_KEY: 'test-secret-key',
   STORAGE_REGION: 'us-east-1',
   CDN_BASE_URL: 'http://localhost:9000/direct-order-test',
+  PLATFORM_FEE_BPS: 0,
 };
 
 export interface TestApp {

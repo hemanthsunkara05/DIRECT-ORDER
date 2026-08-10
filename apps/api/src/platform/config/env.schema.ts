@@ -51,6 +51,14 @@ export const EnvSchema = z.object({
   STORAGE_SECRET_KEY: z.string().min(1),
   STORAGE_REGION: z.string().min(1).default('us-east-1'),
   CDN_BASE_URL: z.string().url(),
+
+  // Phase 8: pricing engine. Basis points (1/100 of a percent) of the
+  // items subtotal, platform-wide rather than per-restaurant — no
+  // RestaurantSettings field exists for this (BR-14: "may be zero
+  // during the pilot"), and it's the platform's own fee, not something
+  // an individual restaurant configures. Already scaffolded in
+  // .env.example ahead of this phase.
+  PLATFORM_FEE_BPS: z.coerce.number().int().nonnegative().default(0),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

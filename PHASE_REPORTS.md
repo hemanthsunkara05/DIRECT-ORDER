@@ -216,7 +216,7 @@ Added `MenuCategory` and `MenuItem` models plus `DietaryTag` enum to `prisma/sch
 Every route `@UseGuards(AuthGuard, AuthorizationGuard)` + `@TenantScoped()` + `@Permissions(...)`; cross-tenant access to a specific category/item id returns 404 (tenant-scoped `findById` returns null), not 403. Availability toggle uses the narrower `menu:availability` permission (STAFF+) while every other write requires `menu:write` (MANAGER+). Reorder batches are validated against the caller's tenant before any write, so a foreign or unknown id fails the whole batch.
 
 **TESTS**
-268 passing in apps/api (up from Phase 5's 256), 0 failing — 307 repo-wide once `packages/money` (28), `packages/contracts` (7), and `apps/worker` (4) are included. *(Correction made while compiling this file: the report originally delivered in chat stated "295 passing repo-wide," which was Phase 5's repo-wide figure copy-forwarded without updating for Phase 6's +12 apps/api tests. The correct repo-wide figure for the end of Phase 6 is 307, matching what Phase 7's own report — using the same apps/api baseline of 268 — implicitly confirms.)* New: `menu.e2e.test.ts` (12 tests) covering CRUD, archiving-is-soft-delete, duplicate-name rejection, price validation, STAFF permission boundaries, atomic reorder rejection, cross-restaurant 404s, and XSS/long-name payloads stored verbatim.
+268 passing in apps/api (up from Phase 5's 256), 0 failing — 307 repo-wide once `packages/money` (28), `packages/contracts` (7), and `apps/worker` (4) are included. _(Correction made while compiling this file: the report originally delivered in chat stated "295 passing repo-wide," which was Phase 5's repo-wide figure copy-forwarded without updating for Phase 6's +12 apps/api tests. The correct repo-wide figure for the end of Phase 6 is 307, matching what Phase 7's own report — using the same apps/api baseline of 268 — implicitly confirms.)_ New: `menu.e2e.test.ts` (12 tests) covering CRUD, archiving-is-soft-delete, duplicate-name rejection, price validation, STAFF permission boundaries, atomic reorder rejection, cross-restaurant 404s, and XSS/long-name payloads stored verbatim.
 
 **VALIDATION**
 typecheck / lint (`--max-warnings=0`) / format:check / full test suite / `apps/api` + `apps/web` production builds — all clean, run in full immediately before commit.
@@ -269,3 +269,49 @@ Nothing.
 
 **NEXT**
 Phase 8 (Pricing engine and cart validation) — **paused pending explicit user go-ahead.** The user clarified mid-Phase-8-research that only Phase 2 had actually been authorized to proceed to; phases 3–7 above were built under a standing "continue phase by phase" instruction from earlier in the session that the user had not, in fact, extended that far. No Phase 8 code was written before this was caught — implementation stopped at the research stage.
+
+---
+
+## PHASE 8 — Pricing engine and cart validation
+
+**IMPLEMENTED**
+The pricing engine (`calculatePricing()`) — subtotal, packaging/delivery/platform fees, tax, percentage-discount and fixed-discount promotions, loyalty redemption, half-up rounding applied once, full breakdown trace, provably no floating point anywhere. Server-side cart validation with per-item issue codes. `POST /public/checkout/quote`. Frontend cart summary and validation messaging on the Phase 7 ordering page.
+
+**FILES**
+New `packages/money/src/pricing.ts` + `packages/money/test/pricing.test.ts` (25 tests); new `apps/api/src/modules/public/{dto/quote-cart.dto.ts, services/checkout-quote.service.ts, controllers/public-checkout.controller.ts}`; new `apps/api/test/checkout-quote.e2e.test.ts` (11 tests); extended `apps/web/src/app/r/[slug]/restaurant-ordering-view.tsx`, `apps/web/src/lib/api-client.ts`, `apps/web/e2e/support/mock-public-api-server.mjs`, `apps/web/e2e/ordering.spec.ts`. Also: `apps/api/package.json` (real bug fix, see KNOWN ISSUES), `.env.example`/`env.schema.ts` (`PLATFORM_FEE_BPS`).
+
+**DATABASE**
+None — the quote endpoint prices cart contents sent directly in the request body rather than a persisted cart; no new Prisma models this phase.
+
+**APIS**
+`POST /public/checkout/quote` — unauthenticated, same surface as `/public/restaurants/*`.
+
+**SECURITY**
+`POST /public/checkout/quote` still goes through the global `CsrfGuard` like every other non-GET route, even though it's unauthenticated (no `@SkipCsrf()`) — kept uniform with the rest of the app rather than special-cased. Prices are always recomputed server-side from the live `MenuItem.priceMinor`; a client-supplied `unitPriceMinorAtAdd` is only ever compared for drift detection (`PRICE_CHANGED`), never trusted (BR-2, BR-20).
+
+**TESTS**
+346 passing repo-wide (319 in apps/api, up from 307; +12 across `checkout-quote.e2e.test.ts` and one new env-schema test) plus `packages/money`'s 53 (28 existing + 25 new pricing tests), `packages/contracts`' 7, `apps/worker`'s 4. 10 Playwright tests green, including a new one asserting the cart drawer renders the server-computed breakdown from a real `POST /public/checkout/quote` round-trip against the mock server, not a client-side estimate.
+
+**VALIDATION**
+typecheck / lint (`--max-warnings=0`) / format:check / full test suite / both app builds / full Playwright suite — all clean, run in full immediately before commit. Additionally: the user asked me to actually boot the dev servers ("go live") mid-phase — this exercised `pnpm dev` and the real running app for the first time all session, which is what surfaced the `.env`-loading bug below.
+
+**DECISIONS**
+
+- BR-3's formula computed by summing packaging/delivery/platform fee/tax then subtracting a combined, capped discount (BR-6, BR-7) — promotion clamped against the discountable base first, loyalty against whatever remains, a deterministic priority order.
+- Platform fee is basis points of the subtotal (`PLATFORM_FEE_BPS`, global config, default 0), not per-restaurant — matches a config var already scaffolded in `.env.example` ahead of this phase, tagged `[Phase 8+]`.
+- Tax (`taxPercent`) is fully built and tested in the engine but never wired to a live value — BR-15 flags it as needing real tax advice, so the endpoint always passes none rather than guessing a rate.
+- No persisted `Cart` entity (`POST /public/carts`, BR-31's 24h TTL) this phase — the quote endpoint takes cart contents directly; a stable, cartId-addressable cart is deferred to Phase 9, where checkout actually needs one to survive a payment redirect.
+- Delivery fee mode `DISTANCE_BASED` falls back to the flat fee value — no geocoding/distance tooling exists until delivery integration (Phase 11+); documented as a placeholder, not a real calculation.
+
+**KNOWN ISSUES**
+Two real bugs found and fixed during implementation:
+
+- A pre-existing, previously-unnoticed gap: nothing in the codebase ever actually loaded `.env` into `process.env` for `apps/api`'s dev server — `tsx watch src/main.ts` had no `--env-file` flag, no `dotenv` call, nothing. The documented `cp .env.example .env && pnpm dev` onboarding flow in the README had apparently never been exercised end-to-end in this environment before the user asked to see the app running live. Fixed by adding `--env-file=../../.env` to `apps/api`'s `dev` script (Node's native flag, not a new dependency) — `start` (production) is deliberately left untouched, since production must get real env vars from its deployment platform, never a local file.
+- Two Playwright test-infrastructure issues, not app bugs: a stale `next start` process from an earlier session run was still squatting port 3000 with an outdated build, causing `reuseExistingServer` to silently test against old code (fixed by killing it); and a genuine test-precision bug where `getByText('₹120.00')` matched five different on-page elements showing that amount simultaneously (fixed by walking from the unique "Subtotal" label to its adjacent value span instead of searching the whole page).
+- No Docker in this sandbox — standing limitation, unchanged from every prior phase; the pricing engine and cart validation are proven via the in-memory-Prisma-backed suite and the Playwright mock server, not a live database.
+
+**BLOCKED ON**
+Nothing technically. Procedurally: paused, awaiting the user's explicit go-ahead before starting Phase 9, per their standing instruction.
+
+**NEXT**
+Phase 9 (Orders, checkout, payments) — the highest-risk phase in the project — once authorized.
