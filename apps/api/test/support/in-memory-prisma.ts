@@ -403,6 +403,31 @@ export interface ReconciliationIssueRow {
   detectedAt: Date;
 }
 
+export interface DeliveryRow {
+  id: string;
+  orderId: string;
+  provider: string;
+  providerDeliveryId: string | null;
+  status: string;
+  pickupAddress: unknown;
+  dropoffAddress: unknown;
+  courierName: string | null;
+  courierPhone: string | null;
+  trackingUrl: string | null;
+  quotedFeeMinor: bigint | null;
+  actualFeeMinor: bigint | null;
+  idempotencyKey: string;
+  attemptCount: number;
+  estimatedPickupAt: Date | null;
+  estimatedDeliveryAt: Date | null;
+  pickedUpAt: Date | null;
+  deliveredAt: Date | null;
+  cancellationReason: string | null;
+  failureReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface OutboxEventRow {
   id: string;
   eventType: string;
@@ -454,6 +479,7 @@ export interface InMemoryPrisma {
   refunds: RefundRow[];
   webhookEvents: WebhookEventRow[];
   reconciliationIssues: ReconciliationIssueRow[];
+  deliveries: DeliveryRow[];
   outboxEvents: OutboxEventRow[];
   prisma: PrismaService;
 }
@@ -484,6 +510,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   const refunds: RefundRow[] = [];
   const webhookEvents: WebhookEventRow[] = [];
   const reconciliationIssues: ReconciliationIssueRow[] = [];
+  const deliveries: DeliveryRow[] = [];
   const outboxEvents: OutboxEventRow[] = [];
 
   const user = {
@@ -1357,9 +1384,14 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     };
   }
 
-  type OrderInclude = { items?: boolean; history?: unknown; payments?: unknown };
+  type OrderInclude = {
+    items?: boolean;
+    history?: unknown;
+    payments?: unknown;
+    delivery?: boolean;
+  };
 
-  /** Shared by `findUnique` and `findFirst` — both need the same items/history/payments population, real Prisma's `include` behavior for a single-row lookup. */
+  /** Shared by `findUnique` and `findFirst` — both need the same items/history/payments/delivery population, real Prisma's `include` behavior for a single-row lookup. */
   function withOrderRelations(
     row: OrderRow,
     include: OrderInclude,
@@ -1367,11 +1399,13 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     items?: OrderItemRow[];
     history?: OrderStatusHistoryRow[];
     payments?: PaymentRow[];
+    delivery?: DeliveryRow | null;
   } {
     const result: OrderRow & {
       items?: OrderItemRow[];
       history?: OrderStatusHistoryRow[];
       payments?: PaymentRow[];
+      delivery?: DeliveryRow | null;
     } = { ...row };
     if (include.items) {
       result.items = orderItems.filter((i) => i.orderId === row.id);
@@ -1385,6 +1419,9 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       result.payments = payments
         .filter((p) => p.orderId === row.id)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    }
+    if (include.delivery) {
+      result.delivery = deliveries.find((d) => d.orderId === row.id) ?? null;
     }
     return result;
   }
@@ -1907,6 +1944,91 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     },
   };
 
+  type DeliveryWhere = { orderId: string } | { provider: string; providerDeliveryId: string };
+
+  function findDelivery(where: DeliveryWhere): DeliveryRow | undefined {
+    if ('orderId' in where) return deliveries.find((d) => d.orderId === where.orderId);
+    return deliveries.find(
+      (d) => d.provider === where.provider && d.providerDeliveryId === where.providerDeliveryId,
+    );
+  }
+
+  const deliveryTable = {
+    create: ({
+      data,
+    }: {
+      data: {
+        orderId: string;
+        provider: string;
+        status: string;
+        pickupAddress: unknown;
+        dropoffAddress: unknown;
+        idempotencyKey: string;
+      };
+    }) => {
+      if (deliveries.some((d) => d.orderId === data.orderId)) {
+        throw prismaUniqueError(['orderId']);
+      }
+      const row: DeliveryRow = {
+        id: randomUUID(),
+        orderId: data.orderId,
+        provider: data.provider,
+        providerDeliveryId: null,
+        status: data.status,
+        pickupAddress: data.pickupAddress,
+        dropoffAddress: data.dropoffAddress,
+        courierName: null,
+        courierPhone: null,
+        trackingUrl: null,
+        quotedFeeMinor: null,
+        actualFeeMinor: null,
+        idempotencyKey: data.idempotencyKey,
+        attemptCount: 0,
+        estimatedPickupAt: null,
+        estimatedDeliveryAt: null,
+        pickedUpAt: null,
+        deliveredAt: null,
+        cancellationReason: null,
+        failureReason: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      deliveries.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { orderId: string } }) => {
+      return Promise.resolve(findDelivery(where) ?? null);
+    },
+    findFirst: ({ where }: { where: DeliveryWhere }) => {
+      return Promise.resolve(findDelivery(where) ?? null);
+    },
+    update: ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: Omit<Partial<DeliveryRow>, 'attemptCount'> & { attemptCount?: { increment: number } };
+    }) => {
+      const row = deliveries.find((d) => d.id === where.id);
+      if (!row) throw new Error(`delivery ${where.id} not found`);
+      if (data.providerDeliveryId !== undefined && data.providerDeliveryId !== null) {
+        const clash = deliveries.some(
+          (d) =>
+            d.id !== row.id &&
+            d.provider === row.provider &&
+            d.providerDeliveryId === data.providerDeliveryId,
+        );
+        if (clash) throw prismaUniqueError(['provider', 'providerDeliveryId']);
+      }
+      if (data.attemptCount) {
+        row.attemptCount += data.attemptCount.increment;
+      }
+      const { attemptCount: _attemptCount, ...rest } = data;
+      Object.assign(row, omitUndefined(rest), { updatedAt: new Date() });
+      return Promise.resolve(row);
+    },
+  };
+
   const prisma = {
     user,
     session,
@@ -1931,6 +2053,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     refund: refundTable,
     webhookEvent: webhookEventTable,
     reconciliationIssue: reconciliationIssueTable,
+    delivery: deliveryTable,
     outboxEvent: outboxEventTable,
     // Supports both Prisma `$transaction` forms this codebase uses: the
     // array form (a list of already-constructed operations, awaited
@@ -1976,6 +2099,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     refunds,
     webhookEvents,
     reconciliationIssues,
+    deliveries,
     outboxEvents,
     prisma,
   };

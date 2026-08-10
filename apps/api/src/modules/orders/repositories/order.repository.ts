@@ -1,5 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Order, OrderItem, OrderStatus, OrderStatusHistory, Payment } from '@prisma/client';
+import type {
+  Delivery,
+  Order,
+  OrderItem,
+  OrderStatus,
+  OrderStatusHistory,
+  Payment,
+} from '@prisma/client';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { TenantScopedRepository } from '../../../platform/tenancy/tenant-scoped.repository.js';
 
@@ -7,6 +14,8 @@ export type OrderWithRelations = Order & {
   items: OrderItem[];
   history: OrderStatusHistory[];
   payments: Payment[];
+  /** Phase 11 — null until the restaurant marks the order ready and dispatch runs. */
+  delivery: Delivery | null;
 };
 
 export interface RestaurantOrderFilters {
@@ -64,6 +73,7 @@ export class OrderRepository extends TenantScopedRepository {
         items: true,
         history: { orderBy: { createdAt: 'asc' } },
         payments: { orderBy: { createdAt: 'desc' } },
+        delivery: true,
       },
     });
   }
@@ -133,6 +143,7 @@ export class OrderRepository extends TenantScopedRepository {
         items: true,
         history: { orderBy: { createdAt: 'asc' } },
         payments: { orderBy: { createdAt: 'desc' } },
+        delivery: true,
       },
     });
   }

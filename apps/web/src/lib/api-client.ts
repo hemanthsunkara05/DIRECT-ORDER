@@ -656,6 +656,13 @@ export interface OrderTrackingView {
   history: { toStatus: string; createdAt: string }[];
   paymentStatus: string | null;
   createdAt: string;
+  delivery: {
+    status: string;
+    courierName: string | null;
+    courierPhone: string | null;
+    trackingUrl: string | null;
+    estimatedDeliveryAt: string | null;
+  } | null;
 }
 
 /**
@@ -753,6 +760,22 @@ export interface RestaurantOrderDetail {
     capturedMinor: string;
     refundedMinor: string;
     method: string | null;
+  } | null;
+  delivery: {
+    status: string;
+    provider: string;
+    providerDeliveryId: string | null;
+    courierName: string | null;
+    courierPhone: string | null;
+    trackingUrl: string | null;
+    quotedFeeMinor: string | null;
+    actualFeeMinor: string | null;
+    attemptCount: number;
+    estimatedPickupAt: string | null;
+    estimatedDeliveryAt: string | null;
+    pickedUpAt: string | null;
+    deliveredAt: string | null;
+    failureReason: string | null;
   } | null;
 }
 

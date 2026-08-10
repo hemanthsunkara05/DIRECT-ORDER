@@ -16,6 +16,7 @@ import {
 import type { FastifyRequest } from 'fastify';
 import type { Observable } from 'rxjs';
 import type {
+  Delivery,
   Order,
   OrderItem,
   OrderStatus,
@@ -226,6 +227,7 @@ type OrderDetail = Order & {
   items: OrderItem[];
   history: OrderStatusHistory[];
   payments: Payment[];
+  delivery: Delivery | null;
 };
 
 function toPublicOrderDetail(order: OrderDetail) {
@@ -273,6 +275,29 @@ function toPublicOrderDetail(order: OrderDetail) {
           capturedMinor: order.payments[0].capturedMinor.toString(),
           refundedMinor: order.payments[0].refundedMinor.toString(),
           method: order.payments[0].method,
+        }
+      : null,
+    // Restaurant-facing delivery view (docs/14-acceptance-criteria.md
+    // "restaurant delivery view") — the provider identity string
+    // (`mock`/`uber_direct`) and providerDeliveryId are useful for
+    // support/debugging and are not credentials, so unlike the customer
+    // tracking view this includes them.
+    delivery: order.delivery
+      ? {
+          status: order.delivery.status,
+          provider: order.delivery.provider,
+          providerDeliveryId: order.delivery.providerDeliveryId,
+          courierName: order.delivery.courierName,
+          courierPhone: order.delivery.courierPhone,
+          trackingUrl: order.delivery.trackingUrl,
+          quotedFeeMinor: order.delivery.quotedFeeMinor?.toString() ?? null,
+          actualFeeMinor: order.delivery.actualFeeMinor?.toString() ?? null,
+          attemptCount: order.delivery.attemptCount,
+          estimatedPickupAt: order.delivery.estimatedPickupAt,
+          estimatedDeliveryAt: order.delivery.estimatedDeliveryAt,
+          pickedUpAt: order.delivery.pickedUpAt,
+          deliveredAt: order.delivery.deliveredAt,
+          failureReason: order.delivery.failureReason,
         }
       : null,
   };

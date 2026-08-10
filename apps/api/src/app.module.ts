@@ -7,6 +7,7 @@ import { MenuModule } from './modules/menu/menu.module.js';
 import { AvailabilityModule } from './modules/availability/availability.module.js';
 import { PublicModule } from './modules/public/public.module.js';
 import { PaymentsModule } from './modules/payments/payments.module.js';
+import { DeliveryModule } from './modules/delivery/delivery.module.js';
 import { OrdersModule } from './modules/orders/orders.module.js';
 
 @Module({})
@@ -22,6 +23,7 @@ export class AppModule {
         AvailabilityModule,
         PublicModule,
         PaymentsModule,
+        DeliveryModule,
         OrdersModule,
       ],
     };

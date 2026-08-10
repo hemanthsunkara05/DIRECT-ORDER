@@ -45,6 +45,24 @@ describe('Restaurant order management (Phase 10, e2e)', () => {
     const row = ctx.db.restaurants.find((r) => r.id === restaurantId)!;
     row.status = 'ACTIVE';
     row.orderingEnabled = true;
+    // Phase 11: DeliveryDispatchService reads this on `ready()` — an
+    // operating restaurant has a pickup address on file, same as the
+    // Phase 5 onboarding flow already requires before submission.
+    ctx.db.restaurantAddresses.push({
+      id: randomUUID(),
+      restaurantId,
+      line1: '123 MG Road',
+      line2: null,
+      locality: null,
+      city: 'Bengaluru',
+      state: 'Karnataka',
+      postalCode: '560001',
+      latitude: null,
+      longitude: null,
+      landmark: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
     await mutate(ctx, 'put', '/api/v1/restaurant/hours', owner.cookie)
       .send({
         days: Array.from({ length: 7 }, (_, dayOfWeek) => ({

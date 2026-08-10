@@ -77,6 +77,22 @@ export const EnvSchema = z.object({
   ORDER_PAYMENT_TTL_MINUTES: z.coerce.number().int().positive().default(30),
   // BR-31: a cart expires after this many hours of inactivity.
   CART_TTL_HOURS: z.coerce.number().int().positive().default(24),
+
+  // Phase 11: delivery. `mock` (default) simulates the full delivery
+  // lifecycle including failures, for the same reason PAYMENT_PROVIDER
+  // defaults to mock — RISK-3 (docs/15-ambiguities-and-risks.md):
+  // "Uber Direct self-serve access in Bengaluru unconfirmed... never
+  // claim production delivery when mocked." `uber_direct` is the real
+  // adapter, wired and unit-tested but genuinely unverified end-to-end
+  // without real credentials and network access.
+  DELIVERY_PROVIDER: z.enum(['uber_direct', 'mock']).default('mock'),
+  UBER_DIRECT_CLIENT_ID: z.string().optional(),
+  UBER_DIRECT_CLIENT_SECRET: z.string().optional(),
+  UBER_DIRECT_WEBHOOK_SECRET: z.string().optional(),
+  // Uber Direct scopes every delivery API call under a per-organization
+  // customer id (`/customers/{customer_id}/deliveries`) — not just an
+  // API key pair, unlike Razorpay. Required by UberDirectProvider only.
+  UBER_DIRECT_CUSTOMER_ID: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

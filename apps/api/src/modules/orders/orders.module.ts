@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { IdentityModule } from '../identity/identity.module.js';
 import { PublicModule } from '../public/public.module.js';
 import { PaymentsModule } from '../payments/payments.module.js';
+import { DeliveryModule } from '../delivery/delivery.module.js';
 import { OrderStateModule } from './order-state.module.js';
 import { CustomerRepository } from './repositories/customer.repository.js';
 import { CartRepository } from './repositories/cart.repository.js';
@@ -29,10 +30,13 @@ import { RestaurantOrderController } from './controllers/restaurant-order.contro
  * circular. `OrderExpiryScheduler` is listed as a provider but injected
  * nowhere: Nest still instantiates it and calls its `OnModuleInit`
  * hook, which is all it needs to start its own in-process timer (same
- * self-starting shape as `OutboxService`).
+ * self-starting shape as `OutboxService`). `DeliveryModule` (Phase 11)
+ * provides `DeliveryDispatchService` (dispatch-on-ready, injected into
+ * `RestaurantOrderService`) — see that module's own doc comment for why
+ * the import direction only ever goes this way, never the reverse.
  */
 @Module({
-  imports: [OrderStateModule, PublicModule, PaymentsModule, IdentityModule],
+  imports: [OrderStateModule, PublicModule, PaymentsModule, DeliveryModule, IdentityModule],
   controllers: [
     CartController,
     CheckoutController,

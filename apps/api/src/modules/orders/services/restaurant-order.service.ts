@@ -4,6 +4,7 @@ import { AuditService } from '../../../platform/audit/audit.service.js';
 import { assertTenantResourceFound } from '../../../platform/authorization/tenant-resource.js';
 import { PaymentRepository } from '../../payments/repositories/payment.repository.js';
 import { RefundService } from '../../payments/services/refund.service.js';
+import { DeliveryDispatchService } from '../../delivery/services/delivery-dispatch.service.js';
 import {
   OrderRepository,
   type OrderWithRelations,
@@ -39,6 +40,7 @@ export class RestaurantOrderService {
     @Inject(OrderStateService) private readonly orderState: OrderStateService,
     @Inject(PaymentRepository) private readonly payments: PaymentRepository,
     @Inject(RefundService) private readonly refunds: RefundService,
+    @Inject(DeliveryDispatchService) private readonly deliveryDispatch: DeliveryDispatchService,
     @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
@@ -137,11 +139,26 @@ export class RestaurantOrderService {
     });
   }
 
+  /**
+   * docs/14-acceptance-criteria.md: "Marking ready dispatches exactly
+   * one delivery." Dispatch is only ever attempted when THIS call is
+   * the one that actually applied the transition (`result.applied`) —
+   * same structural-exactly-once reasoning as `reject()`'s refund call
+   * above, and the real backstop either way is
+   * `DeliveryRepository.createIfNotExists`'s `@@unique([orderId])`, not
+   * this check.
+   */
   async ready(restaurantId: string, orderId: string, actorId: string): Promise<TransitionResult> {
     await this.detail(restaurantId, orderId, actorId);
-    return this.orderState.transition(orderId, 'READY_FOR_PICKUP', {
+    const result = await this.orderState.transition(orderId, 'READY_FOR_PICKUP', {
       type: 'RESTAURANT_USER',
       id: actorId,
     });
+
+    if (result.applied) {
+      await this.deliveryDispatch.dispatch(result.order);
+    }
+
+    return result;
   }
 }

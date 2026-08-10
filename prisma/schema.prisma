@@ -144,6 +144,23 @@ enum RefundStatus {
   FAILED
 }
 
+/// docs/03-state-machines.md §7.4. A delivery failure never corrupts
+/// payment records — this status is entirely independent of
+/// `PaymentStatus`/`RefundStatus`.
+enum DeliveryStatus {
+  PENDING_CREATION
+  CREATED
+  CREATION_FAILED
+  SEARCHING_COURIER
+  COURIER_ASSIGNED
+  AT_PICKUP
+  PICKED_UP
+  NO_COURIER_FOUND
+  DELIVERED
+  CANCELLED
+  FAILED
+}
+
 enum WebhookEventStatus {
   RECEIVED
   PROCESSED
@@ -705,6 +722,7 @@ model Order {
   items      OrderItem[]
   history    OrderStatusHistory[]
   payments   Payment[]
+  delivery   Delivery?
 
   @@unique([orderNumber])
   @@unique([restaurantId, idempotencyKey])
@@ -818,6 +836,49 @@ model Refund {
   @@unique([providerRefundId])
   @@index([orderId])
   @@map("refunds")
+}
+
+/// One per order (docs/02-database-schema.md §6.4, docs/03-state-
+/// machines.md §7.4): `@@unique([orderId])` is the primary defence
+/// against a duplicate dispatch — "mark ready" twice must create
+/// exactly one delivery, and the second attempt hits this constraint
+/// rather than a second row. `idempotencyKey` is separate from that
+/// constraint and is what gets passed to the provider's own API, so a
+/// retried provider call is itself idempotent on their side too (same
+/// pattern as `Payment`/`Refund`). Delivery webhooks reuse the existing
+/// `WebhookEvent` idempotency anchor (`provider` = `'mock_delivery'` /
+/// `'uber_direct'`) rather than a second, parallel table — one webhook
+/// processing pattern for every provider callback in the system, not
+/// two independently-maintained copies of it.
+model Delivery {
+  id                  String         @id @default(uuid(7)) @db.Uuid
+  orderId             String         @map("order_id") @db.Uuid
+  provider            String
+  providerDeliveryId  String?        @map("provider_delivery_id")
+  status              DeliveryStatus
+  pickupAddress       Json           @map("pickup_address")
+  dropoffAddress      Json           @map("dropoff_address")
+  courierName         String?        @map("courier_name")
+  courierPhone        String?        @map("courier_phone")
+  trackingUrl         String?        @map("tracking_url")
+  quotedFeeMinor      BigInt?        @map("quoted_fee_minor")
+  actualFeeMinor      BigInt?        @map("actual_fee_minor")
+  idempotencyKey      String         @map("idempotency_key")
+  attemptCount        Int            @default(0) @map("attempt_count")
+  estimatedPickupAt   DateTime?      @map("estimated_pickup_at") @db.Timestamptz
+  estimatedDeliveryAt DateTime?      @map("estimated_delivery_at") @db.Timestamptz
+  pickedUpAt          DateTime?      @map("picked_up_at") @db.Timestamptz
+  deliveredAt         DateTime?      @map("delivered_at") @db.Timestamptz
+  cancellationReason  String?        @map("cancellation_reason")
+  failureReason       String?        @map("failure_reason")
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@unique([orderId])
+  @@unique([provider, providerDeliveryId])
+  @@map("deliveries")
 }
 
 /// The idempotency anchor for every provider callback (docs/01 §5.6).

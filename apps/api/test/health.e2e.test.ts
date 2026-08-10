@@ -42,6 +42,7 @@ const TEST_ENV: Env = {
   PAYMENT_PROVIDER: 'mock',
   ORDER_PAYMENT_TTL_MINUTES: 30,
   CART_TTL_HOURS: 24,
+  DELIVERY_PROVIDER: 'mock',
 };
 
 class ControllablePrismaStub {

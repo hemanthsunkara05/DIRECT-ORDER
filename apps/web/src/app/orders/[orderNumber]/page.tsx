@@ -20,6 +20,20 @@ const STATUS_LABEL: Record<string, string> = {
   CANCELLED: 'Cancelled',
 };
 
+const DELIVERY_STATUS_LABEL: Record<string, string> = {
+  PENDING_CREATION: 'Arranging delivery…',
+  CREATED: 'Delivery arranged',
+  CREATION_FAILED: 'Could not arrange delivery — the restaurant has been notified',
+  SEARCHING_COURIER: 'Looking for a courier',
+  COURIER_ASSIGNED: 'Courier assigned',
+  AT_PICKUP: 'Courier is at the restaurant',
+  PICKED_UP: 'Picked up by courier',
+  NO_COURIER_FOUND: 'No courier available right now',
+  DELIVERED: 'Delivered',
+  CANCELLED: 'Delivery cancelled',
+  FAILED: 'Delivery failed',
+};
+
 /**
  * `GET /public/orders/:orderNumber?token=` +
  * `POST /public/orders/:orderNumber/verify-payment` (docs/04-api-
@@ -169,6 +183,31 @@ export default function OrderTrackingPage() {
         <p className="text-sm text-slate-700">{order.customerName}</p>
         <p className="text-sm text-slate-500">{formatAddress(order.deliveryAddress)}</p>
       </section>
+
+      {order.delivery && (
+        <section className="rounded-lg border border-slate-200 p-4">
+          <h2 className="mb-2 text-sm font-semibold">Delivery</h2>
+          <p className="text-sm text-slate-700">
+            {DELIVERY_STATUS_LABEL[order.delivery.status] ?? order.delivery.status}
+          </p>
+          {order.delivery.courierName && (
+            <p className="mt-1 text-sm text-slate-500">
+              Courier: {order.delivery.courierName}
+              {order.delivery.courierPhone ? ` · ${order.delivery.courierPhone}` : ''}
+            </p>
+          )}
+          {order.delivery.trackingUrl && (
+            <a
+              href={order.delivery.trackingUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-block text-sm text-indigo-600 underline"
+            >
+              Track delivery
+            </a>
+          )}
+        </section>
+      )}
 
       <section className="rounded-lg border border-slate-200 p-4">
         <h2 className="mb-2 text-sm font-semibold">Status history</h2>

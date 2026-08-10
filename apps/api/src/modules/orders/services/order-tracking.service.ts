@@ -21,6 +21,14 @@ export interface OrderTrackingView {
   history: { toStatus: string; createdAt: string }[];
   paymentStatus: string | null;
   createdAt: string;
+  /** Phase 11 — null until the restaurant marks the order ready and dispatch runs. Deliberately a minimal, customer-safe subset: no provider name/ids, no fees (docs/14-acceptance-criteria.md: "Provider credentials appear in no API response"). */
+  delivery: {
+    status: string;
+    courierName: string | null;
+    courierPhone: string | null;
+    trackingUrl: string | null;
+    estimatedDeliveryAt: string | null;
+  } | null;
 }
 
 /**
@@ -68,5 +76,14 @@ function toView(order: OrderWithRelations): OrderTrackingView {
     })),
     paymentStatus: latestPayment?.status ?? null,
     createdAt: order.createdAt.toISOString(),
+    delivery: order.delivery
+      ? {
+          status: order.delivery.status,
+          courierName: order.delivery.courierName,
+          courierPhone: order.delivery.courierPhone,
+          trackingUrl: order.delivery.trackingUrl,
+          estimatedDeliveryAt: order.delivery.estimatedDeliveryAt?.toISOString() ?? null,
+        }
+      : null,
   };
 }

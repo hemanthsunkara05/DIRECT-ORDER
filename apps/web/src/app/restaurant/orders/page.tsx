@@ -11,8 +11,8 @@ import {
 import { ProtectedRoute } from '@/lib/auth/protected-route';
 import { useSession } from '@/lib/auth/session-context';
 
-/** The actionable queue (docs/04-api-specification.md §8.5) — not a full historical ledger; a restaurant reviewing past DELIVERED/REJECTED/CANCELLED orders is a reporting concern for a later phase. */
-const QUEUE_STATUSES = ['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP'];
+/** The actionable queue (docs/04-api-specification.md §8.5) — not a full historical ledger; a restaurant reviewing past DELIVERED/REJECTED/CANCELLED orders is a reporting concern for a later phase. OUT_FOR_DELIVERY stays in the queue (Phase 11) — still active, and a DELIVERY_FAILED alert needs somewhere for staff to see it. */
+const QUEUE_STATUSES = ['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'OUT_FOR_DELIVERY'];
 const POLL_INTERVAL_MS = 15_000; // docs/04 §8.5: "If the stream is unavailable the dashboard falls back to polling every 15s"
 
 const STATUS_LABEL: Record<string, string> = {
@@ -20,6 +20,22 @@ const STATUS_LABEL: Record<string, string> = {
   ACCEPTED: 'Accepted',
   PREPARING: 'Preparing',
   READY_FOR_PICKUP: 'Ready for pickup',
+  OUT_FOR_DELIVERY: 'Out for delivery',
+  DELIVERED: 'Delivered',
+};
+
+const DELIVERY_STATUS_LABEL: Record<string, string> = {
+  PENDING_CREATION: 'Arranging delivery…',
+  CREATED: 'Delivery arranged',
+  CREATION_FAILED: 'Could not arrange delivery',
+  SEARCHING_COURIER: 'Looking for a courier',
+  COURIER_ASSIGNED: 'Courier assigned',
+  AT_PICKUP: 'Courier is at the restaurant',
+  PICKED_UP: 'Picked up by courier',
+  NO_COURIER_FOUND: 'No courier available',
+  DELIVERED: 'Delivered',
+  CANCELLED: 'Delivery cancelled',
+  FAILED: 'Delivery failed',
 };
 
 export default function OrdersPage() {
@@ -260,6 +276,29 @@ function OrderDashboard() {
               <span>Total</span>
               <span>{formatINR(BigInt(detail.payableTotalMinor))}</span>
             </div>
+
+            {detail.delivery && (
+              <div className="rounded-md border border-slate-100 bg-slate-50 p-3 text-sm">
+                <p className="font-medium">
+                  Delivery:{' '}
+                  {DELIVERY_STATUS_LABEL[detail.delivery.status] ?? detail.delivery.status}
+                </p>
+                {detail.delivery.provider === 'mock_delivery' && (
+                  <p className="mt-1 text-xs text-amber-700">
+                    Mock delivery provider — not production-enabled.
+                  </p>
+                )}
+                {detail.delivery.courierName && (
+                  <p className="mt-1 text-slate-600">
+                    Courier: {detail.delivery.courierName}
+                    {detail.delivery.courierPhone ? ` · ${detail.delivery.courierPhone}` : ''}
+                  </p>
+                )}
+                {detail.delivery.failureReason && (
+                  <p className="mt-1 text-red-700">{detail.delivery.failureReason}</p>
+                )}
+              </div>
+            )}
 
             {actionError && <p className="text-sm text-red-600">{actionError}</p>}
 
