@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { toMinor } from '@direct-order/money';
 import {
   ApiError,
@@ -79,10 +80,95 @@ function RestaurantProfileEditor() {
         </p>
       </div>
 
+      <OrderingLinkSection slug={profile.slug} />
       <ProfileSection restaurantId={restaurantId} profile={profile} onSaved={setProfile} />
       <BrandingSection restaurantId={restaurantId} branding={branding} onSaved={setBranding} />
       <SettingsSection restaurantId={restaurantId} settings={settings} onSaved={setSettings} />
     </main>
+  );
+}
+
+/**
+ * The ordering link is `{origin}/r/{slug}` — `slug` is permanent by design
+ * (docs/15-ambiguities-and-risks.md: printed QR codes can't be recalled, so
+ * slugs are never reassigned once created, and no endpoint exists to change
+ * one). The QR code is generated fresh in the browser every render rather
+ * than stored anywhere: encoding the same URL always produces the same QR
+ * code, so "never regenerated" falls out of that determinism for free —
+ * there is nothing to keep in sync or invalidate.
+ */
+function OrderingLinkSection({ slug }: { slug: string }) {
+  const [origin, setOrigin] = useState<string | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+
+  const link = origin ? `${origin}/r/${slug}` : null;
+
+  useEffect(() => {
+    if (!link) return;
+    let cancelled = false;
+    QRCode.toDataURL(link, { width: 320, margin: 2 })
+      .then((dataUrl) => {
+        if (!cancelled) setQrDataUrl(dataUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setError('Could not generate the QR code.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [link]);
+
+  async function handleCopy() {
+    if (!link) return;
+    await navigator.clipboard.writeText(link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className="flex flex-col gap-4 border-t border-slate-200 pt-8">
+      <div>
+        <h2 className="text-sm font-semibold text-slate-900">Ordering link & QR code</h2>
+        <p className="text-xs text-slate-500">
+          Permanent — tied to your restaurant&apos;s URL slug, which never changes. Safe to print on
+          packaging, table cards, or share on social media; this same link and QR code will always
+          be used.
+        </p>
+      </div>
+
+      {link && (
+        <div className="flex flex-col gap-2">
+          <span className="break-all font-mono text-sm text-slate-700">{link}</span>
+          <button type="button" onClick={() => void handleCopy()} className="btn-secondary w-fit">
+            {copied ? 'Copied!' : 'Copy link'}
+          </button>
+        </div>
+      )}
+
+      {error && <p className="text-sm text-red-600">{error}</p>}
+
+      {qrDataUrl && (
+        <div className="flex flex-col items-start gap-3">
+          {/* eslint-disable-next-line @next/next/no-img-element -- a data: URL generated client-side, next/image cannot optimize it and doesn't need to. */}
+          <img
+            src={qrDataUrl}
+            alt={`QR code linking to ${link}`}
+            width={200}
+            height={200}
+            className="rounded-md border border-slate-200"
+          />
+          <a href={qrDataUrl} download={`${slug}-qr-code.png`} className="btn-secondary w-fit">
+            Download QR code
+          </a>
+        </div>
+      )}
+    </div>
   );
 }
 

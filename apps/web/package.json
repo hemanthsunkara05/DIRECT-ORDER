@@ -14,12 +14,14 @@
     "@direct-order/contracts": "workspace:*",
     "@direct-order/money": "workspace:*",
     "next": "^15.1.4",
+    "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@direct-order/config": "workspace:*",
     "@playwright/test": "^1.49.1",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.4",
     "@types/react-dom": "^19.0.2",
     "autoprefixer": "^10.4.20",
