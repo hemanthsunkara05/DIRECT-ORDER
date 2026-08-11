@@ -2,13 +2,15 @@ import { z } from 'zod';
 
 /**
  * `POST /public/checkout` (docs/04-api-specification.md §8.3).
- * `couponCode`/`redeemLoyaltyPoints` are omitted for the same reason
- * `QuoteCartDto` omits them — no Promotion/Loyalty tables yet
- * (steps 6-7 of the mandated sequence are deferred, documented in
- * CheckoutService). `deliveryAddress` is stored verbatim as an
- * `Order.deliveryAddress` Json snapshot — structurally validated here,
- * not geocoded/verified (DELIVERY_AREA_UNSUPPORTED needs real
- * geo/distance tooling, Phase 11+, same as DISTANCE_BASED delivery fee).
+ * `redeemLoyaltyPoints` is omitted for the same reason `QuoteCartDto`
+ * omits it — no `LoyaltyLedger` table yet (Phase 16). `couponCode`
+ * (Phase 14) is validated and RE-reserved here under a fresh lock
+ * (BR-86) even when the same code was already checked at quote time —
+ * see `CheckoutService`'s own doc comment. `deliveryAddress` is stored
+ * verbatim as an `Order.deliveryAddress` Json snapshot — structurally
+ * validated here, not geocoded/verified (DELIVERY_AREA_UNSUPPORTED
+ * needs real geo/distance tooling, Phase 11+, same as DISTANCE_BASED
+ * delivery fee).
  */
 export const CheckoutDto = z.object({
   cartId: z.string().uuid(),
@@ -26,6 +28,7 @@ export const CheckoutDto = z.object({
     latitude: z.number().min(-90).max(90).optional(),
     longitude: z.number().min(-180).max(180).optional(),
   }),
+  couponCode: z.string().trim().min(1).max(50).optional(),
   // BR-2/BR-20: never authoritative — comparison-only, see step 9.
   expectedTotalMinor: z.coerce.bigint().positive().optional(),
 });

@@ -1,13 +1,19 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { RestaurantSettings } from '@prisma/client';
+import type { Promotion, RestaurantSettings } from '@prisma/client';
 import { calculatePricing, type PricingBreakdown } from '@direct-order/money';
 import type { Env } from '../../../platform/config/env.schema.js';
 import { APP_CONFIG } from '../../../platform/config/config.module.js';
-import { NotFoundError } from '../../../platform/errors/app-error.js';
+import { NotFoundError, AppError } from '../../../platform/errors/app-error.js';
+import { PrismaService } from '../../../platform/database/prisma.service.js';
 import {
   AvailabilityService,
   type AvailabilityReason,
 } from '../../availability/availability.service.js';
+import {
+  couponInvalidError,
+  PromotionEligibilityService,
+} from '../../promotions/services/promotion-eligibility.service.js';
+import { PromotionRepository } from '../../promotions/repositories/promotion.repository.js';
 import {
   PublicRestaurantRepository,
   type RestaurantWithPublicRelations,
@@ -19,7 +25,10 @@ export type CartIssue =
   | { code: 'RESTAURANT_UNAVAILABLE'; reason: AvailabilityReason }
   | { code: 'ITEM_UNAVAILABLE'; itemId: string }
   | { code: 'PRICE_CHANGED'; itemId: string; oldPriceMinor: string; newPriceMinor: string }
-  | { code: 'BELOW_MINIMUM_ORDER'; minimumMinor: string; subtotalMinor: string };
+  | { code: 'BELOW_MINIMUM_ORDER'; minimumMinor: string; subtotalMinor: string }
+  /** BR-95 anti-enumeration: a nonexistent code, an inactive/expired/archived one, a wrong-restaurant one, and one that fails its own min-order all collapse into this same issue — never distinguished. */
+  | { code: 'COUPON_INVALID' }
+  | { code: 'COUPON_EXHAUSTED' };
 
 export interface QuoteResult {
   valid: boolean;
@@ -31,14 +40,16 @@ export interface QuoteResult {
  * `POST /public/checkout/quote` — "authoritative pricing"
  * (docs/04-api-specification.md §8.3). Runs the pricing-relevant
  * subset of the mandated checkout sequence (§8.3's numbered steps
- * 2–5, 8): availability, live item state, price-drift detection,
- * minimum order, then the pricing engine — without steps 1 (cart
- * lookup, no persisted cart exists yet), 6–7 (coupon/loyalty
- * reservation, no Promotion/Loyalty tables yet), or 9–12 (order
- * creation, Phase 9). Phase 9's real checkout endpoint will call this
- * same validation shape before creating an order, so "quote total
- * exactly matches what checkout will charge" holds by construction —
- * one function, not two independently-maintained copies.
+ * 2–6, 8): availability, live item state, price-drift detection,
+ * minimum order, a coupon preview (Phase 14 — see this class's own
+ * "couponCode resolution" paragraph below), then the pricing engine —
+ * without step 1 (cart lookup, no persisted cart exists yet), step 7
+ * (loyalty reservation, no LoyaltyLedger table yet, Phase 16), or
+ * 9–12 (order creation, Phase 9). Phase 9's real checkout endpoint
+ * calls this same validation shape before creating an order, so "quote
+ * total exactly matches what checkout will charge" holds by
+ * construction — one function, not two independently-maintained
+ * copies.
  *
  * Issues are returned in the response body (200), not as a single
  * fatal error — `docs/13-implementation-phases.md`'s "server-side cart
@@ -48,14 +59,28 @@ export interface QuoteResult {
  * actually blocks proceeding; the breakdown is still computed from
  * whatever items passed validation, so the frontend can show "here's
  * your total once you fix the flagged items."
+ *
+ * `couponCode` resolution here (Phase 14) is the "validated in the
+ * cart" half of BR-86 — a lightweight, NON-locking preview: it checks
+ * everything `PromotionEligibilityService.validateCore` covers plus a
+ * best-effort (not authoritative) usage-headroom read, but never
+ * reserves anything and never checks per-customer/first-order limits
+ * (no customer identity exists yet at this endpoint — `QuoteCartDto`
+ * has no customer field). The authoritative "re-validated at checkout"
+ * half, including the real row lock and identity-based checks, is
+ * `PromotionReservationService`, called from `CheckoutService` inside
+ * the order-creation transaction.
  */
 @Injectable()
 export class CheckoutQuoteService {
   constructor(
     @Inject(APP_CONFIG) private readonly env: Env,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(PublicRestaurantRepository) private readonly restaurants: PublicRestaurantRepository,
     @Inject(PublicMenuRepository) private readonly menu: PublicMenuRepository,
     @Inject(AvailabilityService) private readonly availability: AvailabilityService,
+    @Inject(PromotionRepository) private readonly promotions: PromotionRepository,
+    @Inject(PromotionEligibilityService) private readonly eligibility: PromotionEligibilityService,
   ) {}
 
   async quote(input: QuoteCartInput): Promise<QuoteResult> {
@@ -63,7 +88,7 @@ export class CheckoutQuoteService {
     if (!restaurant || restaurant.status === 'DRAFT' || restaurant.status === 'PENDING_APPROVAL') {
       throw new NotFoundError('Restaurant not found.');
     }
-    return this.runQuote(restaurant, input.items);
+    return this.runQuote(restaurant, input.items, input.couponCode);
   }
 
   /**
@@ -77,17 +102,19 @@ export class CheckoutQuoteService {
   async quoteByRestaurantId(
     restaurantId: string,
     items: QuoteCartInput['items'],
+    couponCode?: string,
   ): Promise<QuoteResult> {
     const restaurant = await this.restaurants.findById(restaurantId);
     if (!restaurant || restaurant.status === 'DRAFT' || restaurant.status === 'PENDING_APPROVAL') {
       throw new NotFoundError('Restaurant not found.');
     }
-    return this.runQuote(restaurant, items);
+    return this.runQuote(restaurant, items, couponCode);
   }
 
   private async runQuote(
     restaurant: RestaurantWithPublicRelations,
     items: QuoteCartInput['items'],
+    couponCode?: string,
   ): Promise<QuoteResult> {
     const issues: CartIssue[] = [];
 
@@ -134,24 +161,84 @@ export class CheckoutQuoteService {
 
     const hasValidItems = validLines.length > 0;
     const settings = restaurant.settings;
+    const packagingFeeMinor = hasValidItems ? (settings?.packagingFeeMinor ?? 0n) : 0n;
+    const deliveryFeeMinor = hasValidItems ? resolveDeliveryFeeMinor(settings) : 0n;
+    const platformFeeBps = hasValidItems ? this.env.PLATFORM_FEE_BPS : 0;
 
-    const breakdown = calculatePricing({
+    const baseBreakdown = calculatePricing({
       items: validLines,
-      packagingFeeMinor: hasValidItems ? (settings?.packagingFeeMinor ?? 0n) : 0n,
-      deliveryFeeMinor: hasValidItems ? resolveDeliveryFeeMinor(settings) : 0n,
-      platformFeeBps: hasValidItems ? this.env.PLATFORM_FEE_BPS : 0,
+      packagingFeeMinor,
+      deliveryFeeMinor,
+      platformFeeBps,
     });
 
     const minOrderAmountMinor = settings?.minOrderAmountMinor ?? 0n;
-    if (hasValidItems && breakdown.itemsSubtotalMinor < minOrderAmountMinor) {
+    if (hasValidItems && baseBreakdown.itemsSubtotalMinor < minOrderAmountMinor) {
       issues.push({
         code: 'BELOW_MINIMUM_ORDER',
         minimumMinor: minOrderAmountMinor.toString(),
-        subtotalMinor: breakdown.itemsSubtotalMinor.toString(),
+        subtotalMinor: baseBreakdown.itemsSubtotalMinor.toString(),
       });
     }
 
+    let promotion: Promotion | null = null;
+    if (couponCode && hasValidItems) {
+      try {
+        promotion = await this.resolveCoupon(
+          couponCode,
+          restaurant.id,
+          baseBreakdown.itemsSubtotalMinor,
+        );
+      } catch (err) {
+        issues.push(
+          err instanceof AppError && err.code === 'COUPON_EXHAUSTED'
+            ? { code: 'COUPON_EXHAUSTED' }
+            : { code: 'COUPON_INVALID' },
+        );
+      }
+    }
+
+    const breakdown = promotion
+      ? calculatePricing({
+          items: validLines,
+          packagingFeeMinor,
+          deliveryFeeMinor,
+          platformFeeBps,
+          promotion: this.eligibility.toPricingDiscountInput(promotion, deliveryFeeMinor),
+        })
+      : baseBreakdown;
+
     return { valid: issues.length === 0, issues, breakdown };
+  }
+
+  /**
+   * Non-locking preview only — see this class's own doc comment.
+   * `usageLimitTotal` gets a best-effort read here purely for early UX
+   * feedback ("this coupon looks exhausted"); it is NOT the
+   * authoritative check, which happens under a real lock in
+   * `PromotionReservationService` at actual checkout.
+   */
+  private async resolveCoupon(
+    couponCode: string,
+    restaurantId: string,
+    itemsSubtotalMinor: bigint,
+  ): Promise<Promotion> {
+    const promotion = await this.promotions.findByActiveCode(couponCode);
+    if (!promotion) {
+      throw couponInvalidError();
+    }
+    this.eligibility.validateCore(promotion, { restaurantId, itemsSubtotalMinor });
+
+    if (promotion.usageLimitTotal !== null) {
+      const activeCount = await this.prisma.promotionRedemption.count({
+        where: { promotionId: promotion.id, status: { in: ['RESERVED', 'CONFIRMED'] } },
+      });
+      if (activeCount >= promotion.usageLimitTotal) {
+        throw new AppError('COUPON_EXHAUSTED', 409, 'This coupon has reached its usage limit.');
+      }
+    }
+
+    return promotion;
   }
 }
 

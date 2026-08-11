@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AvailabilityModule } from '../availability/availability.module.js';
+import { PromotionsModule } from '../promotions/promotions.module.js';
 import { PublicRestaurantRepository } from './repositories/public-restaurant.repository.js';
 import { PublicMenuRepository } from './repositories/public-menu.repository.js';
 import { PublicRestaurantService } from './services/public-restaurant.service.js';
@@ -11,10 +12,13 @@ import { PublicCheckoutController } from './controllers/public-checkout.controll
  * Phase 7 (restaurant/menu), Phase 8 (checkout quote) — all
  * unauthenticated, no IdentityModule import, no AuthGuard anywhere in
  * this module. Imports AvailabilityModule to reuse `isAcceptingOrders()`
- * rather than re-deriving availability logic.
+ * rather than re-deriving availability logic, and (Phase 14)
+ * PromotionsModule so `CheckoutQuoteService` can resolve a coupon code
+ * through the same `PromotionRepository`/`PromotionEligibilityService`
+ * `CheckoutService`/`AdminModule` also use, rather than a second copy.
  */
 @Module({
-  imports: [AvailabilityModule],
+  imports: [AvailabilityModule, PromotionsModule],
   controllers: [PublicRestaurantController, PublicCheckoutController],
   providers: [
     PublicRestaurantRepository,

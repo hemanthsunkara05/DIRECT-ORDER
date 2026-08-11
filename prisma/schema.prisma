@@ -123,6 +123,18 @@ enum OrderStatus {
   CANCELLED
 }
 
+enum PromotionType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  FREE_DELIVERY
+}
+
+enum PromotionRedemptionStatus {
+  RESERVED
+  CONFIRMED
+  RELEASED
+}
+
 /// docs/03-state-machines.md §7.2. A payment's status is a field
 /// separate from the order's — never merged (domain model note).
 enum PaymentStatus {
@@ -412,6 +424,7 @@ model Restaurant {
   closurePeriods ClosurePeriod[]
   carts          Cart[]
   orders         Order[]
+  promotions     Promotion[]
 
   @@index([status])
   @@map("restaurants")
@@ -705,8 +718,9 @@ model Customer {
   createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz
 
-  carts  Cart[]
-  orders Order[]
+  carts               Cart[]
+  orders              Order[]
+  promotionRedemptions PromotionRedemption[]
 
   @@index([phone])
   @@map("customers")
@@ -807,12 +821,19 @@ model Order {
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
-  restaurant Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
-  customer   Customer             @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  items      OrderItem[]
-  history    OrderStatusHistory[]
-  payments   Payment[]
-  delivery   Delivery?
+  restaurant           Restaurant            @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  customer             Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  promotion            Promotion?            @relation(fields: [promotionId], references: [id], onDelete: Restrict)
+  items                OrderItem[]
+  history              OrderStatusHistory[]
+  payments             Payment[]
+  delivery             Delivery?
+  /// Many-to-one on the schema side (`orderId` is not itself `@unique` —
+  /// only the composite `(promotionId, orderId)` is, per docs/01 §5.8),
+  /// even though BR-93 (at most one promotion per order) means this is
+  /// always zero or one row in practice, enforced at the application
+  /// layer, not the database.
+  promotionRedemptions PromotionRedemption[]
 
   @@unique([orderNumber])
   @@unique([restaurantId, idempotencyKey])
@@ -969,6 +990,112 @@ model Delivery {
   @@unique([orderId])
   @@unique([provider, providerDeliveryId])
   @@map("deliveries")
+}
+
+/// docs/01 §5.8. `code` is required in this phase — "Customer coupon
+/// entry" is the named frontend requirement (docs/13-implementation-
+/// phases.md, Phase 14); `code: null` ("automatic" promotions the
+/// domain model leaves room for) has no resolver built and is
+/// deliberately deferred, not silently half-supported. `restaurantId:
+/// null` means platform-wide (docs/01 §5.8) — enforced via the
+/// `promotions:platform` permission (only ADMIN_OPERATIONS+ hold it;
+/// `promotions:write`, which MANAGER/OWNER hold, only ever lets a
+/// restaurant write ITS OWN `restaurantId`), not by any DB constraint.
+/// `usage_count` is deliberately NOT a column here — PromotionRedemption
+/// is the derived, race-safe source of truth (see its own doc comment).
+model Promotion {
+  id                    String        @id @default(uuid(7)) @db.Uuid
+  restaurantId          String?       @map("restaurant_id") @db.Uuid
+  code                  String
+  name                  String
+  type                  PromotionType
+  /// PERCENTAGE: whole-number percent (1-100). FIXED_AMOUNT/FREE_DELIVERY: minor-unit amount (FREE_DELIVERY's value is advisory only — the actual discount is resolved against the order's real delivery fee at redemption time, never this stored value, so it can never exceed the fee actually charged).
+  value                 Int
+  minOrderMinor         BigInt?       @map("min_order_minor")
+  maxDiscountMinor      BigInt?       @map("max_discount_minor")
+  startsAt              DateTime?     @map("starts_at") @db.Timestamptz
+  endsAt                DateTime?     @map("ends_at") @db.Timestamptz
+  usageLimitTotal       Int?          @map("usage_limit_total")
+  usageLimitPerCustomer Int?          @map("usage_limit_per_customer")
+  firstOrderOnly        Boolean       @default(false) @map("first_order_only")
+  isActive              Boolean       @default(true) @map("is_active")
+  createdByUserId       String        @map("created_by_user_id") @db.Uuid
+  archivedAt            DateTime?     @map("archived_at") @db.Timestamptz
+  createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  restaurant  Restaurant?            @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  redemptions PromotionRedemption[]
+  orders      Order[]
+
+  @@index([restaurantId])
+  // docs/01 §5.8: "unique code where active and non-archived" is a
+  // correctness constraint (two simultaneously-active promotions must
+  // never share a lookup code), not a query-performance nicety — unlike
+  // several earlier phases' plain-index-standing-in-for-partial-index
+  // calls, this one is expressed as a REAL partial unique index via a
+  // hand-written follow-up migration (docs/02-database-schema.md §6.1:
+  // "add raw-SQL migrations for anything Prisma cannot express"), not
+  // approximated. See migration `..._phase14_promotions_code_index`.
+  @@map("promotions")
+}
+
+/// docs/01 §5.8, docs/03-state-machines.md §7.7's "Redemption sub-state".
+/// The concurrency-safe usage record AND the reservation itself — the
+/// same row serves both purposes, exactly like `WebhookEvent` is both
+/// the idempotency anchor and the audit record for a webhook.
+/// RESERVED (checkout, same transaction as Order creation) →
+/// CONFIRMED (payment captured, ORDER_PLACED) or RELEASED (payment
+/// failed/expired, ORDER_PAYMENT_FAILED/ORDER_EXPIRED) — driven by
+/// `PromotionOutboxConsumer` registering with `OutboxService`
+/// (Phase 12's `registerConsumer()` runtime hook), not a second poller.
+/// BR-90: a CONFIRMED redemption is never released by a later
+/// cancellation — cancellation has no edge to RELEASED at all.
+///
+/// Per-customer and first-order limits are enforced against
+/// `customerPhone`, NOT `customerId` — `customerId` points at a fresh
+/// `Customer` row `CheckoutService` creates on EVERY checkout (guest
+/// checkout has no durable identity, AMB-2), so it can never recognise
+/// a repeat customer. `customerPhone` (E.164-normalised, BR-26) is the
+/// only signal that survives across a guest's separate orders, so it
+/// is denormalised onto this row (the same call `Order.customerPhone`
+/// already makes) and is what `PromotionReservationService` actually
+/// queries for both limits. `customerId` is kept for referential/audit
+/// consistency with docs/01 §5.8's documented field list, not dropped.
+model PromotionRedemption {
+  id            String                     @id @default(uuid(7)) @db.Uuid
+  promotionId   String                     @map("promotion_id") @db.Uuid
+  customerId    String                     @map("customer_id") @db.Uuid
+  customerPhone String                     @map("customer_phone")
+  orderId       String?                    @map("order_id") @db.Uuid
+  status        PromotionRedemptionStatus  @default(RESERVED)
+  discountMinor BigInt                     @map("discount_minor")
+  reservedAt    DateTime                   @default(now()) @map("reserved_at") @db.Timestamptz
+  expiresAt     DateTime?                  @map("expires_at") @db.Timestamptz
+  confirmedAt   DateTime?                  @map("confirmed_at") @db.Timestamptz
+
+  promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Restrict)
+  customer  Customer  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  order     Order?    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  // docs/01 §5.8: unique (promotion_id, order_id) — NULLs never collide
+  // under Postgres unique-constraint semantics, so this is safe even
+  // while order_id is briefly unset; in this codebase's actual checkout
+  // flow (docs/04 §8.3 step 10) the Order row always exists in the same
+  // transaction before this row is created, so order_id is set from
+  // the start in practice.
+  @@unique([promotionId, orderId])
+  // Per-customer/total-usage limits are enforced by locking the
+  // Promotion row (`SELECT ... FOR UPDATE`, docs/02 §6.3) and counting
+  // through THIS index inside that same lock — not a partial unique
+  // index on (promotion_id, customer_phone). A unique index can only
+  // ever express "at most 1"; `usage_limit_per_customer` is an
+  // arbitrary integer, so the lock-then-count pattern this codebase
+  // already uses for Refund's INV-6 and the total-usage check here is
+  // the one mechanism that correctly generalises to both.
+  @@index([promotionId, status])
+  @@index([promotionId, customerPhone, status])
+  @@map("promotion_redemptions")
 }
 
 /// The idempotency anchor for every provider callback (docs/01 §5.6).

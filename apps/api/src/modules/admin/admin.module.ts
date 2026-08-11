@@ -6,6 +6,7 @@ import { ReconciliationIssueRepository } from '../payments/repositories/reconcil
 import { RestaurantRepository } from '../restaurants/repositories/restaurant.repository.js';
 import { NotificationRepository } from '../notifications/repositories/notification.repository.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
+import { PromotionsModule } from '../promotions/promotions.module.js';
 import { AdminQueryRepository } from './repositories/admin-query.repository.js';
 import { RestaurantStateService } from './services/restaurant-state.service.js';
 import { AdminUserService } from './services/admin-user.service.js';
@@ -17,6 +18,7 @@ import { AdminPaymentsController } from './controllers/admin-payments.controller
 import { AdminOperationsController } from './controllers/admin-operations.controller.js';
 import { AdminAuditController } from './controllers/admin-audit.controller.js';
 import { AdminOverviewController } from './controllers/admin-overview.controller.js';
+import { AdminPromotionsController } from './controllers/admin-promotions.controller.js';
 
 /**
  * Phase 13 (Admin panel). `AdminUserRepository` itself is NOT provided
@@ -38,7 +40,13 @@ import { AdminOverviewController } from './controllers/admin-overview.controller
  * the only correct option once a provider is stateful.
  */
 @Module({
-  imports: [IdentityModule, OrderStateModule, PaymentsModule, NotificationsModule],
+  imports: [
+    IdentityModule,
+    OrderStateModule,
+    PaymentsModule,
+    NotificationsModule,
+    PromotionsModule,
+  ],
   controllers: [
     AdminRestaurantsController,
     AdminUsersController,
@@ -47,6 +55,7 @@ import { AdminOverviewController } from './controllers/admin-overview.controller
     AdminOperationsController,
     AdminAuditController,
     AdminOverviewController,
+    AdminPromotionsController,
   ],
   providers: [
     AdminQueryRepository,

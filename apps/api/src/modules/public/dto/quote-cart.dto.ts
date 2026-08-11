@@ -4,18 +4,19 @@ import { z } from 'zod';
  * `POST /public/checkout/quote` (docs/04-api-specification.md §8.3).
  * Deliberately narrower than the endpoint's eventual full documented
  * shape ("cart, address, coupon, loyalty intent") — `restaurantSlug`
- * plus `items` is everything the pricing engine and cart-validation
- * logic actually need today. `couponCode`/`redeemLoyaltyPoints` are
- * left out rather than accepted-and-silently-ignored: there is no
- * Promotion or LoyaltyLedger table yet (Phase 14/16), so a field that
- * can never do anything is worse than an absent one. `address` is
- * omitted for the same reason — the only delivery-fee mode this phase
- * can actually compute (FLAT/FREE) doesn't need it; DISTANCE_BASED
- * falls back to the flat fee until real distance/geo tooling exists
- * (Phase 11+). A persisted, cartId-addressable cart (`POST
- * /public/carts`, BR-31's 24h TTL) is Phase 9's concern, once checkout
- * actually needs a cart reference that survives a payment redirect —
- * this endpoint takes cart contents directly instead.
+ * plus `items` (plus `couponCode`, as of Phase 14) is everything the
+ * pricing engine and cart-validation logic actually need today.
+ * `redeemLoyaltyPoints` is still left out rather than
+ * accepted-and-silently-ignored: there is no `LoyaltyLedger` table yet
+ * (Phase 16), so a field that can never do anything is worse than an
+ * absent one. `address` is omitted for the same reason — the only
+ * delivery-fee mode this phase can actually compute (FLAT/FREE)
+ * doesn't need it; DISTANCE_BASED falls back to the flat fee until real
+ * distance/geo tooling exists (Phase 11+). A persisted,
+ * cartId-addressable cart (`POST /public/carts`, BR-31's 24h TTL) is
+ * Phase 9's concern, once checkout actually needs a cart reference that
+ * survives a payment redirect — this endpoint takes cart contents
+ * directly instead.
  */
 export const QuoteCartDto = z.object({
   restaurantSlug: z.string().trim().min(1),
@@ -32,6 +33,7 @@ export const QuoteCartDto = z.object({
     )
     .min(1, 'Cart must contain at least one item.')
     .max(100),
+  couponCode: z.string().trim().min(1).max(50).optional(),
 });
 
 export type QuoteCartInput = z.infer<typeof QuoteCartDto>;

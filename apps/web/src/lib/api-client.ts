@@ -295,6 +295,60 @@ export const restaurantApi = {
     }),
 };
 
+// ── Promotions (Phase 14) ──────────────────────────────────────────────
+
+export interface Promotion {
+  id: string;
+  restaurantId: string | null;
+  code: string;
+  name: string;
+  type: 'PERCENTAGE' | 'FIXED_AMOUNT' | 'FREE_DELIVERY';
+  value: number;
+  minOrderMinor: string | null;
+  maxDiscountMinor: string | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  usageLimitTotal: number | null;
+  usageLimitPerCustomer: number | null;
+  firstOrderOnly: boolean;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface PromotionCreateInput {
+  code: string;
+  name: string;
+  type: 'PERCENTAGE' | 'FIXED_AMOUNT' | 'FREE_DELIVERY';
+  value: number;
+  minOrderMinor?: string;
+  maxDiscountMinor?: string;
+  usageLimitTotal?: number;
+  usageLimitPerCustomer?: number;
+  firstOrderOnly?: boolean;
+}
+
+export const promotionsApi = {
+  list: (restaurantId?: string) =>
+    request<Promotion[]>('/restaurant/promotions', {
+      method: 'GET',
+      ...restaurantHeaders(restaurantId),
+    }),
+
+  create: (input: PromotionCreateInput, restaurantId?: string) =>
+    request<Promotion>('/restaurant/promotions', {
+      method: 'POST',
+      body: JSON.stringify(input),
+      ...restaurantHeaders(restaurantId),
+    }),
+
+  setActive: (id: string, isActive: boolean, restaurantId?: string) =>
+    request<Promotion>(`/restaurant/promotions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ isActive }),
+      ...restaurantHeaders(restaurantId),
+    }),
+};
+
 // ── Staff (Phase 5) ──────────────────────────────────────────────────
 
 export interface StaffMember {
@@ -567,7 +621,9 @@ export type CartIssue =
   | { code: 'RESTAURANT_UNAVAILABLE'; reason: string }
   | { code: 'ITEM_UNAVAILABLE'; itemId: string }
   | { code: 'PRICE_CHANGED'; itemId: string; oldPriceMinor: string; newPriceMinor: string }
-  | { code: 'BELOW_MINIMUM_ORDER'; minimumMinor: string; subtotalMinor: string };
+  | { code: 'BELOW_MINIMUM_ORDER'; minimumMinor: string; subtotalMinor: string }
+  | { code: 'COUPON_INVALID' }
+  | { code: 'COUPON_EXHAUSTED' };
 
 export interface QuoteLineItem {
   itemId: string;
@@ -601,6 +657,7 @@ export const checkoutApi = {
   quote: (input: {
     restaurantSlug: string;
     items: { itemId: string; quantity: number; unitPriceMinorAtAdd: string }[];
+    couponCode?: string;
   }) =>
     request<QuoteResult>('/public/checkout/quote', { method: 'POST', body: JSON.stringify(input) }),
 };
@@ -678,6 +735,7 @@ export const orderApi = {
       guestToken: string;
       customer: { name: string; phone: string; email?: string };
       deliveryAddress: DeliveryAddressInput;
+      couponCode?: string;
       expectedTotalMinor?: string;
     },
     idempotencyKey: string,

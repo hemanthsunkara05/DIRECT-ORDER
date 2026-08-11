@@ -80,6 +80,9 @@ function AccountDetails() {
                       <Link href="/restaurant/profile" className="underline">
                         Profile
                       </Link>
+                      <Link href="/restaurant/promotions" className="underline">
+                        Promotions
+                      </Link>
                       <Link href="/restaurant/staff" className="underline">
                         Staff
                       </Link>

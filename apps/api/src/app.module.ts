@@ -10,6 +10,7 @@ import { PaymentsModule } from './modules/payments/payments.module.js';
 import { DeliveryModule } from './modules/delivery/delivery.module.js';
 import { OrdersModule } from './modules/orders/orders.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
+import { PromotionsModule } from './modules/promotions/promotions.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 
 @Module({})
@@ -28,6 +29,7 @@ export class AppModule {
         DeliveryModule,
         OrdersModule,
         NotificationsModule,
+        PromotionsModule,
         AdminModule,
       ],
     };

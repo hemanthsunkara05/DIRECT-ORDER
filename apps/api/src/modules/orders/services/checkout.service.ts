@@ -20,6 +20,7 @@ import { hashToken } from './cart.service.js';
 import { generateOrderNumber } from '../order-number.js';
 import { serializeBreakdown, type SerializedPricingBreakdown } from '../serialize-breakdown.js';
 import type { CheckoutInput } from '../dto/checkout.dto.js';
+import { PromotionReservationService } from '../../promotions/services/promotion-reservation.service.js';
 
 export interface CheckoutResponseBody {
   orderNumber: string;
@@ -44,9 +45,14 @@ const MAX_ORDER_NUMBER_ATTEMPTS = 5;
  * in the project. Steps 2-5 and 8 are NOT re-implemented here: they are
  * `CheckoutQuoteService.quoteByRestaurantId` (already exercised, on its
  * own, by `/public/checkout/quote`), so quote and checkout agree on
- * price and validity by construction — one function, not two. Steps 6-7
- * (coupon/loyalty reservation) are skipped, same as the quote endpoint —
- * no Promotion/Loyalty tables exist yet (Phase 14/16).
+ * price and validity by construction — one function, not two. Step 6
+ * (coupon reservation, Phase 14) happens in two halves: a non-locking
+ * preview inside that SAME `quoteByRestaurantId` call (so "re-validated
+ * at checkout", BR-86, is a fresh call, not a reused page-load quote),
+ * then the authoritative, LOCKED re-check inside `createOrderAttempt`'s
+ * transaction (`PromotionReservationService.checkAndLock`), in the same
+ * transaction as Order creation. Step 7 (loyalty reservation) is still
+ * skipped — no LoyaltyLedger table exists yet (Phase 16).
  *
  * Idempotency (docs/04 §8.2: "A replay returns the original response
  * with 200, never a duplicate resource"): the `Order` row's
@@ -80,6 +86,7 @@ export class CheckoutService {
     @Inject(OrderRepository) private readonly orders: OrderRepository,
     @Inject(OutboxService) private readonly outbox: OutboxService,
     @Inject(PAYMENT_PROVIDER) private readonly paymentProvider: PaymentProvider,
+    @Inject(PromotionReservationService) private readonly promotions: PromotionReservationService,
   ) {}
 
   async checkout(input: CheckoutInput, idempotencyKey: string): Promise<CheckoutResponseBody> {
@@ -109,7 +116,8 @@ export class CheckoutService {
       throw new AppError('CART_EMPTY', 409, 'Cart is empty.');
     }
 
-    // Steps 2-5, 8: availability, live items, price drift, min order, pricing.
+    // Steps 2-6, 8: availability, live items, price drift, min order,
+    // coupon preview, pricing.
     const quote = await this.quoteService.quoteByRestaurantId(
       cart.restaurantId,
       cart.items.map((item) => ({
@@ -117,6 +125,7 @@ export class CheckoutService {
         quantity: item.quantity,
         unitPriceMinorAtAdd: item.unitPriceMinorAtAdd,
       })),
+      input.couponCode,
     );
     if (!quote.valid) {
       throwForIssues(quote.issues);
@@ -185,6 +194,7 @@ export class CheckoutService {
         cart.id,
         baseFields,
         quote.breakdown.payableTotalMinor,
+        quote.breakdown.promotionDiscountMinor,
       );
     } catch (error) {
       if (isUniqueConstraintViolation(error)) {
@@ -244,6 +254,7 @@ export class CheckoutService {
     cartId: string,
     baseFields: OrderBaseFields,
     payableTotalMinor: bigint,
+    promotionDiscountMinor: bigint,
   ): Promise<Order & { payments: { id: string }[] }> {
     let lastError: unknown;
     for (let attempt = 0; attempt < MAX_ORDER_NUMBER_ATTEMPTS; attempt++) {
@@ -259,12 +270,28 @@ export class CheckoutService {
             },
           });
 
+          // Step 6's authoritative half — locked, re-validated fresh
+          // under the transaction (BR-86). Aborting here (throw) rolls
+          // back the customer create above too; no order is ever left
+          // half-created on a rejected coupon.
+          let checkedCoupon: { promotionId: string; couponCode: string } | null = null;
+          if (input.couponCode) {
+            checkedCoupon = await this.promotions.checkAndLock(tx, {
+              couponCode: input.couponCode,
+              restaurantId: baseFields.restaurantId,
+              itemsSubtotalMinor: BigInt(baseFields.itemsSubtotalMinor),
+              customerPhone: input.customer.phone,
+            });
+          }
+
           const created = await tx.order.create({
             data: {
               ...baseFields,
               orderNumber,
               customerId: customer.id,
               status: 'PENDING_PAYMENT',
+              promotionId: checkedCoupon?.promotionId,
+              couponCode: checkedCoupon?.couponCode,
               history: {
                 create: [
                   {
@@ -286,6 +313,21 @@ export class CheckoutService {
                   },
                 ],
               },
+              ...(checkedCoupon
+                ? {
+                    promotionRedemptions: {
+                      create: [
+                        {
+                          promotionId: checkedCoupon.promotionId,
+                          customerId: customer.id,
+                          customerPhone: input.customer.phone,
+                          status: 'RESERVED',
+                          discountMinor: promotionDiscountMinor,
+                        },
+                      ],
+                    },
+                  }
+                : {}),
             },
             include: { payments: true },
           });
@@ -359,6 +401,15 @@ function throwForIssues(issues: CartIssue[]): never {
       "This order is below the restaurant's minimum order amount.",
       [{ field: 'subtotal', message: `Minimum is ${belowMinimum.minimumMinor}.` }],
     );
+  }
+
+  // BR-95 anti-enumeration: the same generic message regardless of why
+  // the code is invalid — see CheckoutQuoteService's CartIssue doc comment.
+  if (issues.some((issue) => issue.code === 'COUPON_INVALID')) {
+    throw new AppError('COUPON_INVALID', 409, 'This coupon code is not valid for this order.');
+  }
+  if (issues.some((issue) => issue.code === 'COUPON_EXHAUSTED')) {
+    throw new AppError('COUPON_EXHAUSTED', 409, 'This coupon has reached its usage limit.');
   }
 
   throw new AppError('CART_INVALID', 409, 'This cart failed validation.');

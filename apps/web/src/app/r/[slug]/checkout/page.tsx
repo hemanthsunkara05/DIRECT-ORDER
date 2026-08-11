@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatINR } from '@direct-order/money';
-import { ApiError, cartApi, orderApi } from '@/lib/api-client';
+import { ApiError, cartApi, checkoutApi, orderApi } from '@/lib/api-client';
 import { fetchPublicRestaurant, type PublicRestaurant } from '@/lib/public-api';
 
 interface CartItem {
@@ -50,6 +50,12 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
   const [city, setCity] = useState('');
   const [postalCode, setPostalCode] = useState('');
 
+  const [couponCode, setCouponCode] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
+  const [couponDiscountMinor, setCouponDiscountMinor] = useState<string | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [checkingCoupon, setCheckingCoupon] = useState(false);
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Stable for the lifetime of this page instance — a double-click on
@@ -81,6 +87,50 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
     0n,
   );
 
+  /**
+   * A preview only (`POST /public/checkout/quote`, non-locking — see
+   * that endpoint's own doc comment) — the coupon is re-validated and
+   * actually reserved server-side at real checkout regardless of what
+   * this preview said, so a coupon that looked valid here can still be
+   * rejected on submit (e.g. someone else claimed the last use in the
+   * meantime); `checkoutErrorMessage` below handles that case too.
+   */
+  async function handleApplyCoupon() {
+    if (!slug || !couponCode.trim()) return;
+    setCheckingCoupon(true);
+    setCouponError(null);
+    try {
+      const result = await checkoutApi.quote({
+        restaurantSlug: slug,
+        items: cart.map((c) => ({
+          itemId: c.itemId,
+          quantity: c.quantity,
+          unitPriceMinorAtAdd: c.priceMinor,
+        })),
+        couponCode: couponCode.trim(),
+      });
+      const couponIssue = result.issues.find(
+        (issue) => issue.code === 'COUPON_INVALID' || issue.code === 'COUPON_EXHAUSTED',
+      );
+      if (couponIssue?.code === 'COUPON_EXHAUSTED') {
+        setCouponError('This coupon has reached its usage limit.');
+        setAppliedCoupon(null);
+        setCouponDiscountMinor(null);
+      } else if (couponIssue) {
+        setCouponError('This coupon code is not valid for this order.');
+        setAppliedCoupon(null);
+        setCouponDiscountMinor(null);
+      } else {
+        setAppliedCoupon(couponCode.trim());
+        setCouponDiscountMinor(result.breakdown.promotionDiscountMinor);
+      }
+    } catch {
+      setCouponError('Could not check this coupon. Please try again.');
+    } finally {
+      setCheckingCoupon(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!slug || submitting) return;
@@ -103,6 +153,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
           guestToken,
           customer: { name, phone, email: email || undefined },
           deliveryAddress: { line1, city, postalCode },
+          couponCode: appliedCoupon ?? undefined,
         },
         idempotencyKey,
       );
@@ -167,9 +218,39 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
           <span>Subtotal</span>
           <span>{formatINR(subtotalMinor)}</span>
         </div>
+        {appliedCoupon && couponDiscountMinor && (
+          <div className="mt-1 flex items-center justify-between text-sm text-emerald-700">
+            <span>Coupon {appliedCoupon}</span>
+            <span>−{formatINR(BigInt(couponDiscountMinor))}</span>
+          </div>
+        )}
         <p className="mt-1 text-xs text-slate-400">
           Fees, tax, and the final total are computed server-side at checkout.
         </p>
+
+        <div className="mt-3 flex gap-2 border-t border-slate-100 pt-3">
+          <input
+            type="text"
+            value={couponCode}
+            onChange={(e) => {
+              setCouponCode(e.target.value.toUpperCase());
+              setAppliedCoupon(null);
+              setCouponDiscountMinor(null);
+              setCouponError(null);
+            }}
+            placeholder="Coupon code"
+            className="input flex-1"
+          />
+          <button
+            type="button"
+            disabled={checkingCoupon || !couponCode.trim()}
+            onClick={() => void handleApplyCoupon()}
+            className="btn-secondary disabled:cursor-not-allowed"
+          >
+            {checkingCoupon ? 'Checking…' : appliedCoupon ? 'Applied' : 'Apply'}
+          </button>
+        </div>
+        {couponError && <p className="mt-1 text-xs text-red-600">{couponError}</p>}
       </section>
 
       <form onSubmit={(e) => void handleSubmit(e)} className="flex flex-col gap-4">
@@ -261,6 +342,10 @@ function checkoutErrorMessage(err: ApiError): string {
       return 'One or more prices changed since you added them. Please go back and review your cart.';
     case 'MIN_ORDER_NOT_MET':
       return "Your order is below this restaurant's minimum order amount.";
+    case 'COUPON_INVALID':
+      return 'This coupon code is not valid for this order. Please remove it and try again.';
+    case 'COUPON_EXHAUSTED':
+      return 'This coupon has reached its usage limit since you applied it. Please remove it and try again.';
     case 'CART_NOT_FOUND':
     case 'CART_EMPTY':
       return 'Your cart could not be found. Please go back and try again.';

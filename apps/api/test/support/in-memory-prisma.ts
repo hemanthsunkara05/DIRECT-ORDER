@@ -439,6 +439,40 @@ export interface AdminUserRow {
   updatedAt: Date;
 }
 
+export interface PromotionRow {
+  id: string;
+  restaurantId: string | null;
+  code: string;
+  name: string;
+  type: 'PERCENTAGE' | 'FIXED_AMOUNT' | 'FREE_DELIVERY';
+  value: number;
+  minOrderMinor: bigint | null;
+  maxDiscountMinor: bigint | null;
+  startsAt: Date | null;
+  endsAt: Date | null;
+  usageLimitTotal: number | null;
+  usageLimitPerCustomer: number | null;
+  firstOrderOnly: boolean;
+  isActive: boolean;
+  createdByUserId: string;
+  archivedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface PromotionRedemptionRow {
+  id: string;
+  promotionId: string;
+  customerId: string;
+  customerPhone: string;
+  orderId: string | null;
+  status: 'RESERVED' | 'CONFIRMED' | 'RELEASED';
+  discountMinor: bigint;
+  reservedAt: Date;
+  expiresAt: Date | null;
+  confirmedAt: Date | null;
+}
+
 export interface OutboxEventRow {
   id: string;
   eventType: string;
@@ -528,6 +562,8 @@ export interface InMemoryPrisma {
   notifications: NotificationRow[];
   notificationPreferences: NotificationPreferenceRow[];
   adminUsers: AdminUserRow[];
+  promotions: PromotionRow[];
+  promotionRedemptions: PromotionRedemptionRow[];
   prisma: PrismaService;
 }
 
@@ -562,6 +598,24 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   const notifications: NotificationRow[] = [];
   const notificationPreferences: NotificationPreferenceRow[] = [];
   const adminUsers: AdminUserRow[] = [];
+  const promotions: PromotionRow[] = [];
+  const promotionRedemptions: PromotionRedemptionRow[] = [];
+
+  // Phase 14: real Postgres serializes concurrent claimants against the
+  // SAME promotion via `SELECT ... FOR UPDATE`; this fake has no real
+  // database engine to provide that. Chaining every interactive
+  // `$transaction` callback onto this queue serializes them ALL
+  // globally instead — coarser than real Postgres (which only blocks on
+  // the specific locked row), but a safe strengthening: every
+  // transaction body in this codebase already assumes it runs "as if"
+  // isolated, and this makes that literally true rather than an
+  // accident of Node's microtask scheduling. Without it,
+  // PromotionReservationService's lock-count-insert sequence (and
+  // RefundService's/OrderStateService's equivalents) would be genuinely
+  // racy under `Promise.all`-driven concurrent test calls — found while
+  // building Phase 14's "N+1 concurrent claims on a limit-N coupon
+  // yield exactly N" test.
+  let transactionQueue: Promise<unknown> = Promise.resolve();
 
   const user = {
     create: ({ data }: { data: Partial<UserRow> }) => {
@@ -1472,6 +1526,13 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     currency: string;
     idempotencyKey: string;
   }
+  interface OrderNestedPromotionRedemptionCreate {
+    promotionId: string;
+    customerId: string;
+    customerPhone: string;
+    status: string;
+    discountMinor: bigint;
+  }
   interface OrderCreateData {
     orderNumber: string;
     restaurantId: string;
@@ -1489,11 +1550,14 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     loyaltyDiscountMinor: bigint;
     payableTotalMinor: bigint;
     pricingBreakdown: unknown;
+    promotionId?: string;
+    couponCode?: string;
     idempotencyKey: string;
     accessTokenHash: string;
     items?: { create: OrderNestedItemCreate[] };
     history?: { create: OrderNestedHistoryCreate[] };
     payments?: { create: OrderNestedPaymentCreate[] };
+    promotionRedemptions?: { create: OrderNestedPromotionRedemptionCreate[] };
   }
   type OrderWhere =
     | { id: string }
@@ -1513,16 +1577,19 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     id?: string;
     restaurantId?: string;
     orderNumber?: string;
+    customerPhone?: string;
     status?: string | { in: string[] };
     createdAt?: { lt?: Date; gte?: Date };
   }
 
-  /** Backs the expiry scheduler's scan (`status`, `createdAt.lt`), Phase 10's restaurant order queue/detail (`restaurantId`, `status.in`, `id`), and Phase 13's admin cross-tenant search (`orderNumber`, `createdAt.gte` for "today"). */
+  /** Backs the expiry scheduler's scan (`status`, `createdAt.lt`), Phase 10's restaurant order queue/detail (`restaurantId`, `status.in`, `id`), Phase 13's admin cross-tenant search (`orderNumber`, `createdAt.gte` for "today"), and Phase 14's first-order-only eligibility check (`customerPhone`, `status`, optional `restaurantId`). */
   function matchOrderList(where: OrderListWhere) {
     return (o: OrderRow) => {
       if (where.id !== undefined && o.id !== where.id) return false;
       if (where.restaurantId !== undefined && o.restaurantId !== where.restaurantId) return false;
       if (where.orderNumber !== undefined && o.orderNumber !== where.orderNumber) return false;
+      if (where.customerPhone !== undefined && o.customerPhone !== where.customerPhone)
+        return false;
       if (where.createdAt?.gte && o.createdAt.getTime() < where.createdAt.gte.getTime())
         return false;
       if (where.status !== undefined) {
@@ -1612,8 +1679,8 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         payableTotalMinor: data.payableTotalMinor,
         currency: 'INR',
         pricingBreakdown: data.pricingBreakdown,
-        promotionId: null,
-        couponCode: null,
+        promotionId: data.promotionId ?? null,
+        couponCode: data.couponCode ?? null,
         appliedLoyaltyPoints: 0,
         idempotencyKey: data.idempotencyKey,
         accessTokenHash: data.accessTokenHash,
@@ -1680,6 +1747,21 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         payments.push(paymentRow);
         return paymentRow;
       });
+
+      for (const redemption of data.promotionRedemptions?.create ?? []) {
+        promotionRedemptions.push({
+          id: randomUUID(),
+          promotionId: redemption.promotionId,
+          customerId: redemption.customerId,
+          customerPhone: redemption.customerPhone,
+          orderId: row.id,
+          status: redemption.status as PromotionRedemptionRow['status'],
+          discountMinor: redemption.discountMinor,
+          reservedAt: new Date(),
+          expiresAt: null,
+          confirmedAt: null,
+        });
+      }
 
       const result: OrderRow & { payments?: PaymentRow[] } = { ...row };
       if (include?.payments) result.payments = createdPayments;
@@ -2469,6 +2551,173 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     },
   };
 
+  interface PromotionCreateData {
+    restaurantId: string | null;
+    code: string;
+    name: string;
+    type: PromotionRow['type'];
+    value: number;
+    minOrderMinor?: bigint;
+    maxDiscountMinor?: bigint;
+    startsAt?: Date;
+    endsAt?: Date;
+    usageLimitTotal?: number;
+    usageLimitPerCustomer?: number;
+    firstOrderOnly?: boolean;
+    createdByUserId: string;
+  }
+  interface PromotionWhere {
+    id?: string;
+    code?: string;
+    isActive?: boolean;
+    archivedAt?: null;
+    restaurantId?: string | null;
+  }
+  function matchPromotion(where: PromotionWhere) {
+    return (p: PromotionRow) => {
+      if (where.id !== undefined && p.id !== where.id) return false;
+      if (where.code !== undefined && p.code !== where.code) return false;
+      if (where.isActive !== undefined && p.isActive !== where.isActive) return false;
+      if (where.archivedAt === null && p.archivedAt !== null) return false;
+      if (where.restaurantId !== undefined && p.restaurantId !== where.restaurantId) return false;
+      return true;
+    };
+  }
+  const promotionTable = {
+    create: ({ data }: { data: PromotionCreateData }) => {
+      const row: PromotionRow = {
+        id: randomUUID(),
+        restaurantId: data.restaurantId,
+        code: data.code,
+        name: data.name,
+        type: data.type,
+        value: data.value,
+        minOrderMinor: data.minOrderMinor ?? null,
+        maxDiscountMinor: data.maxDiscountMinor ?? null,
+        startsAt: data.startsAt ?? null,
+        endsAt: data.endsAt ?? null,
+        usageLimitTotal: data.usageLimitTotal ?? null,
+        usageLimitPerCustomer: data.usageLimitPerCustomer ?? null,
+        firstOrderOnly: data.firstOrderOnly ?? false,
+        isActive: true,
+        createdByUserId: data.createdByUserId,
+        archivedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      promotions.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { id: string } }) => {
+      return Promise.resolve(promotions.find((p) => p.id === where.id) ?? null);
+    },
+    findUniqueOrThrow: ({ where }: { where: { id: string } }) => {
+      const row = promotions.find((p) => p.id === where.id);
+      if (!row) throw new Error(`promotion ${where.id} not found`);
+      return Promise.resolve(row);
+    },
+    findFirst: ({ where }: { where: PromotionWhere }) => {
+      return Promise.resolve(promotions.find(matchPromotion(where)) ?? null);
+    },
+    findMany: ({
+      where,
+      orderBy,
+      cursor,
+      skip,
+      take,
+    }: {
+      where: PromotionWhere;
+      orderBy?: { createdAt: 'asc' | 'desc' };
+      cursor?: { id: string };
+      skip?: number;
+      take?: number;
+    }) => {
+      let matches = promotions.filter(matchPromotion(where));
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      if (cursor) {
+        const cursorIndex = matches.findIndex((p) => p.id === cursor.id);
+        matches = cursorIndex === -1 ? [] : matches.slice(cursorIndex + (skip ?? 0));
+      }
+      if (take !== undefined) matches = matches.slice(0, take);
+      return Promise.resolve(matches);
+    },
+    update: ({ where, data }: { where: { id: string }; data: Partial<PromotionRow> }) => {
+      const row = promotions.find((p) => p.id === where.id);
+      if (!row) throw new Error(`promotion ${where.id} not found`);
+      Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
+      return Promise.resolve(row);
+    },
+  };
+
+  interface PromotionRedemptionWhere {
+    promotionId?: string;
+    customerPhone?: string;
+    orderId?: string;
+    status?: string | { in: string[] };
+  }
+  function matchPromotionRedemption(where: PromotionRedemptionWhere) {
+    return (r: PromotionRedemptionRow) => {
+      if (where.promotionId !== undefined && r.promotionId !== where.promotionId) return false;
+      if (where.customerPhone !== undefined && r.customerPhone !== where.customerPhone)
+        return false;
+      if (where.orderId !== undefined && r.orderId !== where.orderId) return false;
+      if (where.status !== undefined) {
+        const matches =
+          typeof where.status === 'string'
+            ? r.status === where.status
+            : where.status.in.includes(r.status);
+        if (!matches) return false;
+      }
+      return true;
+    };
+  }
+  const promotionRedemptionTable = {
+    create: ({
+      data,
+    }: {
+      data: Omit<PromotionRedemptionRow, 'id' | 'reservedAt' | 'expiresAt' | 'confirmedAt'> &
+        Partial<Pick<PromotionRedemptionRow, 'expiresAt'>>;
+    }) => {
+      const row: PromotionRedemptionRow = {
+        id: randomUUID(),
+        promotionId: data.promotionId,
+        customerId: data.customerId,
+        customerPhone: data.customerPhone,
+        orderId: data.orderId ?? null,
+        status: data.status,
+        discountMinor: data.discountMinor,
+        reservedAt: new Date(),
+        expiresAt: data.expiresAt ?? null,
+        confirmedAt: null,
+      };
+      promotionRedemptions.push(row);
+      return Promise.resolve(row);
+    },
+    count: ({ where }: { where: PromotionRedemptionWhere }) => {
+      return Promise.resolve(promotionRedemptions.filter(matchPromotionRedemption(where)).length);
+    },
+    findMany: ({ where }: { where: PromotionRedemptionWhere }) => {
+      return Promise.resolve(promotionRedemptions.filter(matchPromotionRedemption(where)));
+    },
+    updateMany: ({
+      where,
+      data,
+    }: {
+      where: PromotionRedemptionWhere;
+      data: Partial<PromotionRedemptionRow>;
+    }) => {
+      const matches = promotionRedemptions.filter(matchPromotionRedemption(where));
+      for (const row of matches) {
+        Object.assign(row, omitUndefined(data));
+      }
+      return Promise.resolve({ count: matches.length });
+    },
+  };
+
   const prisma = {
     user,
     session,
@@ -2498,20 +2747,45 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     notification: notificationTable,
     notificationPreference: notificationPreferenceTable,
     adminUser: adminUserTable,
+    promotion: promotionTable,
+    promotionRedemption: promotionRedemptionTable,
     // Supports both Prisma `$transaction` forms this codebase uses: the
     // array form (a list of already-constructed operations, awaited
     // together — see session.repository.ts) and the interactive
     // callback form (`async (tx) => {...}` — see restaurant.service.ts).
     // For the callback form, `tx` is just `prisma` itself: this fake has
-    // no real transactional isolation to provide, so there is nothing
-    // extra a distinct `tx` object would add.
+    // no real transactional isolation to provide EXCEPT for the global
+    // serialization below, added for Phase 14 — see `transactionQueue`'s
+    // own doc comment for why.
     $transaction: (
       arg: Promise<unknown>[] | ((tx: PrismaService) => Promise<unknown>),
     ): Promise<unknown> => {
       if (typeof arg === 'function') {
-        return arg(prisma);
+        const result = transactionQueue.then(() => arg(prisma));
+        transactionQueue = result.then(
+          () => undefined,
+          () => undefined,
+        );
+        return result;
       }
       return Promise.all(arg);
+    },
+    // The only real `$queryRaw` caller today: PromotionReservationService's
+    // row-lock query (`SELECT id FROM promotions WHERE code = ${code}
+    // AND is_active = true AND archived_at IS NULL FOR UPDATE`) — not a
+    // general SQL interpreter, deliberately: it recognises this one
+    // shape by its single interpolated value (the normalised code) and
+    // answers with the same WHERE-clause semantics the real query has.
+    // A literal row lock is unnecessary to simulate here — the
+    // serialized `$transaction` above is this fake's actual
+    // concurrency-safety mechanism (real Postgres's `FOR UPDATE` only
+    // blocks other transactions from proceeding past their own lock
+    // attempt; globally serializing callbacks achieves the same
+    // observable effect for every test in this suite).
+    $queryRaw: (_strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]> => {
+      const code = values[0] as string;
+      const match = promotions.find((p) => p.code === code && p.isActive && !p.archivedAt);
+      return Promise.resolve(match ? [{ id: match.id }] : []);
     },
     ping: () => Promise.resolve(),
   } as unknown as PrismaService;
@@ -2547,6 +2821,8 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     notifications,
     notificationPreferences,
     adminUsers,
+    promotions,
+    promotionRedemptions,
     prisma,
   };
 }
