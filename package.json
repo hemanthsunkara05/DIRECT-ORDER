@@ -19,11 +19,12 @@
     "format:check": "prettier --check .",
     "test": "pnpm run build:packages && pnpm --recursive run test",
     "test:e2e": "pnpm --filter=./apps/web run test:e2e",
+    "postinstall": "prisma generate --schema prisma/schema.prisma",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "db:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
-    "db:grants": "tsx scripts/db-grants.ts",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:grants": "tsx --env-file=.env scripts/db-grants.ts",
+    "db:seed": "tsx --env-file=.env prisma/seed.ts"
   },
   "devDependencies": {
     "@direct-order/config": "workspace:*",
