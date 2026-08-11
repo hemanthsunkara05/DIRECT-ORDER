@@ -40,6 +40,10 @@ export const TEST_ENV: Env = {
   ORDER_PAYMENT_TTL_MINUTES: 30,
   CART_TTL_HOURS: 24,
   DELIVERY_PROVIDER: 'mock',
+  SMS_PROVIDER: 'console',
+  WHATSAPP_PROVIDER: 'console',
+  EMAIL_PROVIDER: 'console',
+  EMAIL_FROM: 'noreply@direct-order.local',
 };
 
 export interface TestApp {

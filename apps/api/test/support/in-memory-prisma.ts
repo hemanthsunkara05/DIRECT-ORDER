@@ -253,6 +253,7 @@ export interface CustomerRow {
   phone: string;
   email: string | null;
   status: 'ACTIVE' | 'DISABLED';
+  marketingConsentAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -440,6 +441,39 @@ export interface OutboxEventRow {
   processedAt: Date | null;
 }
 
+export interface NotificationRow {
+  id: string;
+  outboxEventId: string;
+  type: string;
+  category: string;
+  recipientType: string;
+  recipientId: string;
+  channel: string;
+  title: string;
+  body: string;
+  contactAddress: string | null;
+  status: string;
+  readAt: Date | null;
+  attempts: number;
+  nextAttemptAt: Date | null;
+  lastError: string | null;
+  providerMessageId: string | null;
+  sentAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface NotificationPreferenceRow {
+  id: string;
+  recipientType: string;
+  recipientId: string;
+  category: string;
+  channel: string;
+  enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 /** Simulates a Prisma P2002 unique-constraint-violation error — the shape `isUniqueConstraintViolation` (platform/database/prisma-errors.ts) checks for. */
 function prismaUniqueError(target: string[]): Error {
   const error = new Error(
@@ -481,6 +515,8 @@ export interface InMemoryPrisma {
   reconciliationIssues: ReconciliationIssueRow[];
   deliveries: DeliveryRow[];
   outboxEvents: OutboxEventRow[];
+  notifications: NotificationRow[];
+  notificationPreferences: NotificationPreferenceRow[];
   prisma: PrismaService;
 }
 
@@ -512,6 +548,8 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   const reconciliationIssues: ReconciliationIssueRow[] = [];
   const deliveries: DeliveryRow[] = [];
   const outboxEvents: OutboxEventRow[] = [];
+  const notifications: NotificationRow[] = [];
+  const notificationPreferences: NotificationPreferenceRow[] = [];
 
   const user = {
     create: ({ data }: { data: Partial<UserRow> }) => {
@@ -1239,6 +1277,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         userId: null,
         email: null,
         status: 'ACTIVE',
+        marketingConsentAt: null,
         createdAt: new Date(),
         updatedAt: new Date(),
         ...omitUndefined(data),
@@ -2029,6 +2068,235 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     },
   };
 
+  type NotificationWhere = {
+    id?: string;
+    status?: string | { in: string[] };
+    recipientType?: string;
+    recipientId?: string;
+    channel?: string;
+    nextAttemptAt?: null | { lte: Date };
+    readAt?: null;
+    OR?: ({ nextAttemptAt: null } | { nextAttemptAt: { lte: Date } })[];
+  };
+  const matchNotification = (where: NotificationWhere) => (n: NotificationRow) => {
+    if (where.id !== undefined && n.id !== where.id) return false;
+    if (where.status !== undefined) {
+      const matches =
+        typeof where.status === 'string'
+          ? n.status === where.status
+          : where.status.in.includes(n.status);
+      if (!matches) return false;
+    }
+    if (where.recipientType !== undefined && n.recipientType !== where.recipientType) return false;
+    if (where.recipientId !== undefined && n.recipientId !== where.recipientId) return false;
+    if (where.channel !== undefined && n.channel !== where.channel) return false;
+    if (where.readAt === null && n.readAt !== null) return false;
+    if (where.OR) {
+      const matchesOr = where.OR.some((clause) =>
+        clause.nextAttemptAt === null
+          ? n.nextAttemptAt === null
+          : n.nextAttemptAt !== null &&
+            n.nextAttemptAt.getTime() <= clause.nextAttemptAt.lte.getTime(),
+      );
+      if (!matchesOr) return false;
+    }
+    return true;
+  };
+
+  const notificationTable = {
+    create: ({
+      data,
+    }: {
+      data: {
+        outboxEventId: string;
+        type: string;
+        category: string;
+        recipientType: string;
+        recipientId: string;
+        channel: string;
+        title: string;
+        body: string;
+        contactAddress?: string | null;
+        status?: string;
+      };
+    }) => {
+      if (
+        notifications.some(
+          (n) =>
+            n.outboxEventId === data.outboxEventId &&
+            n.recipientType === data.recipientType &&
+            n.recipientId === data.recipientId &&
+            n.channel === data.channel,
+        )
+      ) {
+        throw prismaUniqueError(['outboxEventId', 'recipientType', 'recipientId', 'channel']);
+      }
+      const row: NotificationRow = {
+        id: randomUUID(),
+        outboxEventId: data.outboxEventId,
+        type: data.type,
+        category: data.category,
+        recipientType: data.recipientType,
+        recipientId: data.recipientId,
+        channel: data.channel,
+        title: data.title,
+        body: data.body,
+        contactAddress: data.contactAddress ?? null,
+        status: data.status ?? 'PENDING',
+        readAt: null,
+        attempts: 0,
+        nextAttemptAt: null,
+        lastError: null,
+        providerMessageId: null,
+        sentAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      notifications.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { id: string } }) => {
+      return Promise.resolve(notifications.find((n) => n.id === where.id) ?? null);
+    },
+    findFirst: ({ where }: { where: NotificationWhere }) => {
+      return Promise.resolve(notifications.find(matchNotification(where)) ?? null);
+    },
+    findMany: ({
+      where,
+      orderBy,
+      take,
+      cursor,
+      skip,
+    }: {
+      where: NotificationWhere;
+      orderBy?: { createdAt?: 'asc' | 'desc'; updatedAt?: 'asc' | 'desc' };
+      take?: number;
+      cursor?: { id: string };
+      skip?: number;
+    }) => {
+      let matches = notifications.filter(matchNotification(where));
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      } else if (orderBy?.updatedAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      }
+      if (cursor) {
+        const cursorIndex = matches.findIndex((n) => n.id === cursor.id);
+        matches = cursorIndex === -1 ? [] : matches.slice(cursorIndex + (skip ?? 0));
+      }
+      if (take !== undefined) matches = matches.slice(0, take);
+      return Promise.resolve(matches);
+    },
+    count: ({ where }: { where: NotificationWhere }) => {
+      return Promise.resolve(notifications.filter(matchNotification(where)).length);
+    },
+    update: ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: Omit<Partial<NotificationRow>, 'attempts'> & { attempts?: { increment: number } };
+    }) => {
+      const row = notifications.find((n) => n.id === where.id);
+      if (!row) throw new Error(`notification ${where.id} not found`);
+      if (data.attempts) {
+        row.attempts += data.attempts.increment;
+      }
+      const { attempts: _attempts, ...rest } = data;
+      Object.assign(row, omitUndefined(rest), { updatedAt: new Date() });
+      return Promise.resolve(row);
+    },
+    updateMany: ({ where, data }: { where: NotificationWhere; data: Partial<NotificationRow> }) => {
+      const matches = notifications.filter(matchNotification(where));
+      for (const row of matches) {
+        Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
+      }
+      return Promise.resolve({ count: matches.length });
+    },
+  };
+
+  const notificationPreferenceTable = {
+    findMany: ({ where }: { where: { recipientType: string; recipientId: string } }) => {
+      return Promise.resolve(
+        notificationPreferences.filter(
+          (p) => p.recipientType === where.recipientType && p.recipientId === where.recipientId,
+        ),
+      );
+    },
+    findUnique: ({
+      where,
+    }: {
+      where: {
+        recipientType_recipientId_category_channel: {
+          recipientType: string;
+          recipientId: string;
+          category: string;
+          channel: string;
+        };
+      };
+    }) => {
+      const key = where.recipientType_recipientId_category_channel;
+      return Promise.resolve(
+        notificationPreferences.find(
+          (p) =>
+            p.recipientType === key.recipientType &&
+            p.recipientId === key.recipientId &&
+            p.category === key.category &&
+            p.channel === key.channel,
+        ) ?? null,
+      );
+    },
+    upsert: ({
+      where,
+      create,
+      update,
+    }: {
+      where: {
+        recipientType_recipientId_category_channel: {
+          recipientType: string;
+          recipientId: string;
+          category: string;
+          channel: string;
+        };
+      };
+      create: {
+        recipientType: string;
+        recipientId: string;
+        category: string;
+        channel: string;
+        enabled: boolean;
+      };
+      update: { enabled: boolean };
+    }) => {
+      const key = where.recipientType_recipientId_category_channel;
+      const existing = notificationPreferences.find(
+        (p) =>
+          p.recipientType === key.recipientType &&
+          p.recipientId === key.recipientId &&
+          p.category === key.category &&
+          p.channel === key.channel,
+      );
+      if (existing) {
+        Object.assign(existing, update, { updatedAt: new Date() });
+        return Promise.resolve(existing);
+      }
+      const row: NotificationPreferenceRow = {
+        id: randomUUID(),
+        recipientType: create.recipientType,
+        recipientId: create.recipientId,
+        category: create.category,
+        channel: create.channel,
+        enabled: create.enabled,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      notificationPreferences.push(row);
+      return Promise.resolve(row);
+    },
+  };
+
   const prisma = {
     user,
     session,
@@ -2055,6 +2323,8 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     reconciliationIssue: reconciliationIssueTable,
     delivery: deliveryTable,
     outboxEvent: outboxEventTable,
+    notification: notificationTable,
+    notificationPreference: notificationPreferenceTable,
     // Supports both Prisma `$transaction` forms this codebase uses: the
     // array form (a list of already-constructed operations, awaited
     // together — see session.repository.ts) and the interactive
@@ -2101,6 +2371,8 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     reconciliationIssues,
     deliveries,
     outboxEvents,
+    notifications,
+    notificationPreferences,
     prisma,
   };
 }

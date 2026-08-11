@@ -187,6 +187,41 @@ enum OutboxStatus {
   FAILED
 }
 
+/// docs/08-search-and-notifications.md §14.2.
+enum NotificationChannel {
+  IN_APP
+  SMS
+  WHATSAPP
+  EMAIL
+  PUSH
+}
+
+/// docs/08 §14.3. TRANSACTIONAL and SECURITY are never disableable —
+/// enforced in `NotificationPreferenceService`, not just documented here.
+enum NotificationCategory {
+  SECURITY
+  TRANSACTIONAL
+  ACCOUNT
+  MARKETING
+}
+
+/// Mirrors `OrderActorType`'s shape (order-state.service.ts) — a
+/// notification recipient is always one of these, resolved from the
+/// triggering domain event, never client-supplied (BR-148).
+enum NotificationRecipientType {
+  CUSTOMER
+  RESTAURANT_USER
+  ADMIN
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  DEAD_LETTERED
+  SUPPRESSED
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Identity
 // ─────────────────────────────────────────────────────────────────
@@ -606,14 +641,20 @@ model ClosurePeriod {
 /// code path that ever sets it yet, so a real FK/back-relation to User
 /// would be unused scaffolding, not a working feature.
 model Customer {
-  id        String         @id @default(uuid(7)) @db.Uuid
-  userId    String?        @map("user_id") @db.Uuid
-  fullName  String         @map("full_name")
-  phone     String
-  email     String?
-  status    CustomerStatus @default(ACTIVE)
-  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+  id                 String         @id @default(uuid(7)) @db.Uuid
+  userId             String?        @map("user_id") @db.Uuid
+  fullName           String         @map("full_name")
+  phone              String
+  email              String?
+  status             CustomerStatus @default(ACTIVE)
+  /// BR-129 (Phase 12): account/order creation is explicitly NOT consent —
+  /// this is set only by a future, dedicated opt-in action. `null` means
+  /// no consent on record; `NotificationService` must never send a
+  /// MARKETING-category notification while this is null, regardless of
+  /// any NotificationPreference row.
+  marketingConsentAt DateTime?      @map("marketing_consent_at") @db.Timestamptz
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz
 
   carts  Cart[]
   orders Order[]
@@ -955,9 +996,98 @@ model OutboxEvent {
   createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz
   processedAt  DateTime?    @map("processed_at") @db.Timestamptz
 
+  notifications Notification[]
+
   @@index([status, createdAt])
   @@index([restaurantId, id])
   @@map("outbox_events")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Notifications (Phase 12)
+// ─────────────────────────────────────────────────────────────────
+
+/// Per-recipient, per-channel delivery record (docs/01-domain-model.md
+/// §5.13, docs/02-database-schema.md §6.3). Deliberately no separate
+/// `NotificationEvent` table — `OutboxEvent` already IS "the domain
+/// event record" this system produces (id, type, payload, created_at),
+/// the same reuse call Phase 11 made for `WebhookEvent`: one event-log
+/// table, not two independently-maintained copies of the concept.
+///
+/// `@@unique([outboxEventId, recipientType, recipientId, channel])` is
+/// THE guarantee against duplicate sends (docs/14.1: "Deduplication is
+/// structural... duplicate events cannot produce duplicate messages") —
+/// `NotificationService` always attempts an insert per (recipient,
+/// channel) and lets the constraint decide, never a separate existence
+/// check first.
+///
+/// Retry/backoff/dead-lettering (Phase 12's acceptance criteria) runs
+/// on `attempts`/`nextAttemptAt` via the same lightweight in-process
+/// poller pattern already used everywhere else in this codebase
+/// (`OutboxService`'s own relay, `OrderExpiryScheduler`) — NOT the real
+/// BullMQ queue docs/07-events-and-jobs.md §12 and this project's own
+/// README describe for this phase. That migration is real, valuable
+/// future work, not done here (this sandbox-honesty tradeoff mirrors
+/// every other "in-memory fake instead of live infra" call made before
+/// Docker became available, just applied to queueing instead of the
+/// database) — see PHASE_REPORTS.md's Phase 12 entry for the reasoning.
+model Notification {
+  id                String                    @id @default(uuid(7)) @db.Uuid
+  outboxEventId     String                    @map("outbox_event_id") @db.Uuid
+  type              String
+  category          NotificationCategory
+  recipientType     NotificationRecipientType @map("recipient_type")
+  recipientId       String                    @map("recipient_id") @db.Uuid
+  channel           NotificationChannel
+  title             String
+  body              String
+  /// Phone (E.164) or email address at the time of send — `null` for
+  /// IN_APP. Snapshotted here, not re-looked-up from Customer/User at
+  /// retry time: a recipient changing their phone number between the
+  /// first failed attempt and a later retry must not silently redirect
+  /// an in-flight notification to a different number.
+  contactAddress    String?                   @map("contact_address")
+  status            NotificationStatus        @default(PENDING)
+  readAt            DateTime?                 @map("read_at") @db.Timestamptz
+  attempts          Int                       @default(0)
+  nextAttemptAt     DateTime?                 @map("next_attempt_at") @db.Timestamptz
+  lastError         String?                   @map("last_error")
+  providerMessageId String?                   @map("provider_message_id")
+  sentAt            DateTime?                 @map("sent_at") @db.Timestamptz
+  createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime                  @updatedAt @map("updated_at") @db.Timestamptz
+
+  outboxEvent OutboxEvent @relation(fields: [outboxEventId], references: [id])
+
+  @@unique([outboxEventId, recipientType, recipientId, channel])
+  // Substitutes for docs/02 §6.3's two partial indexes (`WHERE read_at
+  // IS NULL AND channel = 'IN_APP'`, `WHERE status = 'PENDING'`) —
+  // Prisma's schema DSL has no partial-index attribute; a plain index
+  // over the same leading columns is the correct, if less-optimized,
+  // equivalent at pilot scale (same call Phase 11's `Delivery` model
+  // made for its own partial unique index, documented there).
+  @@index([recipientType, recipientId, createdAt(sort: Desc)])
+  @@index([status, nextAttemptAt])
+  @@map("notifications")
+}
+
+/// docs/01 §5.13. TRANSACTIONAL/SECURITY rows may exist but are never
+/// honored as "disabled" — `NotificationPreferenceService` rejects any
+/// attempt to write `enabled: false` for those two categories before
+/// this table is ever touched, so the enforcement point is the service,
+/// not "does a row happen to exist."
+model NotificationPreference {
+  id            String                    @id @default(uuid(7)) @db.Uuid
+  recipientType NotificationRecipientType @map("recipient_type")
+  recipientId   String                    @map("recipient_id") @db.Uuid
+  category      NotificationCategory
+  channel       NotificationChannel
+  enabled       Boolean                   @default(true)
+  createdAt     DateTime                  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime                  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([recipientType, recipientId, category, channel])
+  @@map("notification_preferences")
 }
 
 // ─────────────────────────────────────────────────────────────────

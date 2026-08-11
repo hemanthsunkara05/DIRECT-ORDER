@@ -93,6 +93,21 @@ export const EnvSchema = z.object({
   // customer id (`/customers/{customer_id}/deliveries`) — not just an
   // API key pair, unlike Razorpay. Required by UberDirectProvider only.
   UBER_DIRECT_CUSTOMER_ID: z.string().optional(),
+
+  // Phase 12: notifications. `console` (default for every channel) logs
+  // the message instead of calling a real provider — safe for local dev
+  // and every automated test, same reasoning as every other mock-first
+  // provider in this codebase. The real adapters (MSG91/Gupshup/Resend)
+  // are correct against each provider's documented API but genuinely
+  // unverified end-to-end without real credentials and network access.
+  SMS_PROVIDER: z.enum(['msg91', 'console']).default('console'),
+  MSG91_AUTH_KEY: z.string().optional(),
+  MSG91_SENDER_ID: z.string().optional(),
+  WHATSAPP_PROVIDER: z.enum(['gupshup', 'console']).default('console'),
+  GUPSHUP_API_KEY: z.string().optional(),
+  EMAIL_PROVIDER: z.enum(['resend', 'console']).default('console'),
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().email().default('noreply@direct-order.local'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

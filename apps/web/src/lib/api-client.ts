@@ -870,3 +870,68 @@ export const restaurantOrdersApi = {
     return `${API_BASE_URL}/api/v1/restaurant/orders/stream${qs ? `?${qs}` : ''}`;
   },
 };
+
+// ── Notifications (Phase 12) ──────────────────────────────────────────
+
+export interface NotificationItem {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export type NotificationCategory = 'SECURITY' | 'TRANSACTIONAL' | 'ACCOUNT' | 'MARKETING';
+export type NotificationChannel = 'IN_APP' | 'SMS' | 'WHATSAPP' | 'EMAIL';
+
+export interface NotificationPreferenceRow {
+  category: NotificationCategory;
+  channel: NotificationChannel;
+  enabled: boolean;
+  disableable: boolean;
+}
+
+/**
+ * `/me/notifications*` (docs/04-api-specification.md §8.7, Phase 12).
+ * Every recipient here is the authenticated restaurant user — there is
+ * no customer-facing notification centre yet (AMB-2: guest checkout is
+ * still the pilot default, so no registered customer session exists to
+ * authenticate one against).
+ */
+export const notificationsApi = {
+  list: (params: { cursor?: string; limit?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.cursor) query.set('cursor', params.cursor);
+    if (params.limit) query.set('limit', String(params.limit));
+    const qs = query.toString();
+    return requestPage<NotificationItem>(`/me/notifications${qs ? `?${qs}` : ''}`, {
+      method: 'GET',
+    });
+  },
+
+  unreadCount: () =>
+    request<{ count: number }>('/me/notifications/unread-count', { method: 'GET' }),
+
+  markRead: (id: string) => post<{ read: boolean }>(`/me/notifications/${id}/read`, {}),
+
+  markAllRead: () => post<{ updated: number }>('/me/notifications/read-all', {}),
+
+  listPreferences: () =>
+    request<{ preferences: NotificationPreferenceRow[] }>('/me/notification-preferences', {
+      method: 'GET',
+    }),
+
+  updatePreference: (input: {
+    category: NotificationCategory;
+    channel: NotificationChannel;
+    enabled: boolean;
+  }) =>
+    request<{ category: string; channel: string; enabled: boolean }>(
+      '/me/notification-preferences',
+      {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      },
+    ),
+};

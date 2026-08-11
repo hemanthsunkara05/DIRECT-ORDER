@@ -89,6 +89,17 @@ export class RefundService {
       });
     });
 
+    // Universal rule 4 (docs/03 §7): emitted after commit, never inside
+    // the transaction. Phase 12's notification catalogue maps this to
+    // REFUND_INITIATED (docs/07-events-and-jobs.md §11.2) — added in
+    // that phase; this call site previously only emitted on completion.
+    await this.outbox.record('REFUND_INITIATED', {
+      refundId: refund.id,
+      paymentId: refund.paymentId,
+      orderId: refund.orderId,
+      amountMinor: refund.amountMinor.toString(),
+    });
+
     // Provider call outside the transaction — never hold a DB
     // transaction open across network I/O.
     await this.submitToProvider(refund);

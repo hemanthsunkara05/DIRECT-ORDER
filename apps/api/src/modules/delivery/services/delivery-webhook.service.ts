@@ -3,6 +3,7 @@ import type { Delivery, DeliveryStatus } from '@prisma/client';
 import type { Logger } from 'pino';
 import { PINO_LOGGER } from '../../../platform/logging/logging.tokens.js';
 import { AppError } from '../../../platform/errors/app-error.js';
+import { OutboxService } from '../../../platform/outbox/outbox.service.js';
 import { WebhookEventRepository } from '../../payments/repositories/webhook-event.repository.js';
 import { OrderRepository } from '../../orders/repositories/order.repository.js';
 import { OrderStateService } from '../../orders/services/order-state.service.js';
@@ -65,6 +66,7 @@ export class DeliveryWebhookService {
     @Inject(DeliveryRepository) private readonly deliveries: DeliveryRepository,
     @Inject(OrderRepository) private readonly orders: OrderRepository,
     @Inject(OrderStateService) private readonly orderState: OrderStateService,
+    @Inject(OutboxService) private readonly outbox: OutboxService,
     @Inject(PINO_LOGGER) private readonly logger: Logger,
   ) {}
 
@@ -171,6 +173,20 @@ export class DeliveryWebhookService {
       deliveredAt: status.status === 'DELIVERED' ? (status.deliveredAt ?? new Date()) : undefined,
       failureReason: status.failureReason,
     });
+
+    // Phase 12's notification catalogue maps this to DELIVERY_ASSIGNED
+    // (docs/07-events-and-jobs.md §11.2: `DELIVERY_COURIER_ASSIGNED`) —
+    // only on the actual first transition into COURIER_ASSIGNED, never
+    // on a replay/no-op, so a customer is never notified twice for the
+    // same courier assignment.
+    if (status.status === 'COURIER_ASSIGNED' && currentRank < DELIVERY_RANK.COURIER_ASSIGNED) {
+      await this.outbox.record('DELIVERY_COURIER_ASSIGNED', {
+        deliveryId: delivery.id,
+        orderId: delivery.orderId,
+        courierName: status.courierName ?? null,
+        courierPhone: status.courierPhone ?? null,
+      });
+    }
 
     await this.coupleOrderState(delivery.orderId, status.status);
   }

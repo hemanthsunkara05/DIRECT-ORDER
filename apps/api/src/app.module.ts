@@ -9,6 +9,7 @@ import { PublicModule } from './modules/public/public.module.js';
 import { PaymentsModule } from './modules/payments/payments.module.js';
 import { DeliveryModule } from './modules/delivery/delivery.module.js';
 import { OrdersModule } from './modules/orders/orders.module.js';
+import { NotificationsModule } from './modules/notifications/notifications.module.js';
 
 @Module({})
 export class AppModule {
@@ -25,6 +26,7 @@ export class AppModule {
         PaymentsModule,
         DeliveryModule,
         OrdersModule,
+        NotificationsModule,
       ],
     };
   }
