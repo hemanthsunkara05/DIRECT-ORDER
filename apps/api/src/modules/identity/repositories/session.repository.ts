@@ -83,4 +83,9 @@ export class SessionRepository {
       data: { revokedAt: new Date(), revokedReason: reason },
     });
   }
+
+  /** Phase 13: marks THIS session as having completed MFA — see AuthorizationGuard's own doc comment for why this is per-session, not per-user. */
+  async markMfaVerified(id: string): Promise<void> {
+    await this.prisma.session.update({ where: { id }, data: { mfaVerifiedAt: new Date() } });
+  }
 }

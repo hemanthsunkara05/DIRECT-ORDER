@@ -48,4 +48,22 @@ export class UserRepository {
   async recordLogin(id: string): Promise<void> {
     await this.prisma.user.update({ where: { id }, data: { lastLoginAt: new Date() } });
   }
+
+  /** `POST /admin/users/:id/disable` (Phase 13) — a DISABLED user is rejected on their very next request regardless of a still-valid access token (`AuthGuard` re-checks `user.status` live, never the JWT alone). */
+  async setStatus(id: string, status: 'ACTIVE' | 'DISABLED'): Promise<void> {
+    await this.prisma.user.update({ where: { id }, data: { status } });
+  }
+
+  /** Phase 13, step 1 of enrollment: store the pending secret, `mfaEnabledAt` stays null until a code against it is actually proven (`confirmMfa`). */
+  async setPendingMfaSecret(id: string, secret: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id },
+      data: { mfaSecret: secret, mfaEnabledAt: null },
+    });
+  }
+
+  /** Phase 13, step 2: only ever called after `TotpService.verify()` has already succeeded against the pending secret. */
+  async confirmMfaEnabled(id: string): Promise<void> {
+    await this.prisma.user.update({ where: { id }, data: { mfaEnabledAt: new Date() } });
+  }
 }

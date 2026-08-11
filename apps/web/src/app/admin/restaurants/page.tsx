@@ -1,0 +1,139 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { AdminGuard } from '@/lib/auth/admin-guard';
+import { ApiError, adminApi, type AdminRestaurant } from '@/lib/api-client';
+import { AdminNav } from '../admin-nav';
+
+export default function AdminRestaurantsPage() {
+  return (
+    <AdminGuard>
+      <RestaurantsDashboard />
+    </AdminGuard>
+  );
+}
+
+function formatError(err: unknown): string {
+  if (err instanceof ApiError) return err.body.message;
+  return 'Something went wrong.';
+}
+
+function RestaurantsDashboard() {
+  const [restaurants, setRestaurants] = useState<AdminRestaurant[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const page = await adminApi.restaurants.list();
+      setRestaurants(page.items);
+      setError(null);
+    } catch (err) {
+      setError(formatError(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function handleApprove(id: string) {
+    setBusyId(id);
+    try {
+      await adminApi.restaurants.approve(id);
+      await load();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleSuspend(id: string) {
+    const reason = window.prompt('Reason for suspending this restaurant:');
+    if (!reason || !reason.trim()) return;
+    setBusyId(id);
+    try {
+      await adminApi.restaurants.suspend(id, reason.trim());
+      await load();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleReinstate(id: string) {
+    setBusyId(id);
+    try {
+      await adminApi.restaurants.reinstate(id);
+      await load();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <main className="mx-auto max-w-4xl p-6">
+      <h1 className="mb-2 text-xl font-semibold">Restaurants</h1>
+      <AdminNav />
+
+      {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
+
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="border-b border-slate-200 text-xs text-slate-400">
+            <th className="py-2">Name</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {restaurants?.map((r) => (
+            <tr key={r.id} className="border-b border-slate-100">
+              <td className="py-2">{r.name}</td>
+              <td>{r.status}</td>
+              <td className="flex gap-2 py-2">
+                {r.status === 'PENDING_APPROVAL' && (
+                  <button
+                    type="button"
+                    disabled={busyId === r.id}
+                    onClick={() => void handleApprove(r.id)}
+                    className="text-indigo-600 underline disabled:cursor-not-allowed"
+                  >
+                    Approve
+                  </button>
+                )}
+                {r.status === 'ACTIVE' && (
+                  <button
+                    type="button"
+                    disabled={busyId === r.id}
+                    onClick={() => void handleSuspend(r.id)}
+                    className="text-red-600 underline disabled:cursor-not-allowed"
+                  >
+                    Suspend
+                  </button>
+                )}
+                {r.status === 'SUSPENDED' && (
+                  <button
+                    type="button"
+                    disabled={busyId === r.id}
+                    onClick={() => void handleReinstate(r.id)}
+                    className="text-indigo-600 underline disabled:cursor-not-allowed"
+                  >
+                    Reinstate
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {restaurants !== null && restaurants.length === 0 && (
+        <p className="mt-4 text-sm text-slate-500">No restaurants.</p>
+      )}
+    </main>
+  );
+}

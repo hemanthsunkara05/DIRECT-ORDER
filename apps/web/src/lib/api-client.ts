@@ -935,3 +935,127 @@ export const notificationsApi = {
       },
     ),
 };
+
+// ── MFA (Phase 13) ─────────────────────────────────────────────────
+
+export const mfaApi = {
+  enroll: () => post<{ secret: string; otpauthUri: string }>('/auth/mfa/enroll', {}),
+  confirmEnrollment: (code: string) =>
+    post<{ status: string }>('/auth/mfa/enroll/confirm', { code }),
+  verify: (code: string) => post<{ status: string }>('/auth/mfa/verify', { code }),
+};
+
+// ── Admin panel (Phase 13) ───────────────────────────────────────────
+
+export interface AdminRestaurant {
+  id: string;
+  slug: string;
+  name: string;
+  status: 'DRAFT' | 'PENDING_APPROVAL' | 'ACTIVE' | 'SUSPENDED' | 'CLOSED' | 'REJECTED';
+  orderingEnabled: boolean;
+  createdAt: string;
+}
+
+export interface AdminUserSummary {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  fullName: string;
+  status: 'ACTIVE' | 'DISABLED';
+  createdAt: string;
+}
+
+export interface AdminOrderSummary {
+  id: string;
+  orderNumber: string;
+  restaurantId: string;
+  status: string;
+  customerName: string;
+  payableTotalMinor: string;
+  createdAt: string;
+}
+
+export interface AdminPaymentSummary {
+  id: string;
+  orderId: string;
+  provider: string;
+  providerOrderId: string | null;
+  providerPaymentId: string | null;
+  status: string;
+  amountMinor: string;
+  capturedMinor: string;
+  refundedMinor: string;
+  currency: string;
+  method: string | null;
+  createdAt: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  actorType: string;
+  actorId: string | null;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  restaurantId: string | null;
+  reason: string | null;
+  createdAt: string;
+}
+
+function qs(params: Record<string, string | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) query.set(key, value);
+  }
+  const s = query.toString();
+  return s ? `?${s}` : '';
+}
+
+export const adminApi = {
+  overview: () =>
+    request<{
+      restaurantsByStatus: Record<string, number>;
+      ordersToday: number;
+      activeAdmins: number;
+    }>('/admin/overview', { method: 'GET' }),
+
+  health: () =>
+    request<{
+      database: { status: string; error?: string };
+      redis: { status: string; error?: string };
+    }>('/admin/health', { method: 'GET' }),
+
+  restaurants: {
+    list: (params: { status?: string; search?: string; cursor?: string } = {}) =>
+      requestPage<AdminRestaurant>(`/admin/restaurants${qs(params)}`, { method: 'GET' }),
+    approve: (id: string) =>
+      post<{ id: string; status: string }>(`/admin/restaurants/${id}/approve`, {}),
+    suspend: (id: string, reason: string) =>
+      post<{ id: string; status: string }>(`/admin/restaurants/${id}/suspend`, { reason }),
+    reinstate: (id: string) =>
+      post<{ id: string; status: string }>(`/admin/restaurants/${id}/reinstate`, {}),
+  },
+
+  users: {
+    list: (params: { search?: string; cursor?: string } = {}) =>
+      requestPage<AdminUserSummary>(`/admin/users${qs(params)}`, { method: 'GET' }),
+    disable: (id: string) => post<{ status: string }>(`/admin/users/${id}/disable`, {}),
+  },
+
+  orders: {
+    list: (params: { status?: string; restaurantId?: string; cursor?: string } = {}) =>
+      requestPage<AdminOrderSummary>(`/admin/orders${qs(params)}`, { method: 'GET' }),
+    cancel: (id: string, reason: string) =>
+      post<{ status: string; applied: boolean }>(`/admin/orders/${id}/cancel`, { reason }),
+  },
+
+  payments: {
+    list: (params: { status?: string; cursor?: string } = {}) =>
+      requestPage<AdminPaymentSummary>(`/admin/payments${qs(params)}`, { method: 'GET' }),
+  },
+
+  auditLogs: {
+    list: (params: { actorType?: string; entityType?: string; cursor?: string } = {}) =>
+      requestPage<AuditLogEntry>(`/admin/audit-logs${qs(params)}`, { method: 'GET' }),
+  },
+};

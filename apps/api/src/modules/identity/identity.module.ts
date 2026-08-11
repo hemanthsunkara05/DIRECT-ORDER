@@ -11,6 +11,8 @@ import { OtpService } from './services/otp.service.js';
 import { AuthNotifierService } from './services/auth-notifier.service.js';
 import { LoginThrottleService } from './services/login-throttle.service.js';
 import { AuthService } from './services/auth.service.js';
+import { TotpService } from './services/totp.service.js';
+import { MfaService } from './services/mfa.service.js';
 import { AuthGuard } from './guards/auth.guard.js';
 import { AuthController } from './controllers/auth.controller.js';
 import { RateLimitGuard } from '../../platform/rate-limit/rate-limit.guard.js';
@@ -43,6 +45,8 @@ import { RateLimitGuard } from '../../platform/rate-limit/rate-limit.guard.js';
     AuthNotifierService,
     LoginThrottleService,
     AuthService,
+    TotpService,
+    MfaService,
     AuthGuard,
     { provide: APP_GUARD, useClass: RateLimitGuard },
   ],

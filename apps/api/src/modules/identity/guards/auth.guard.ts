@@ -1,15 +1,22 @@
 import { Inject, Injectable, type CanActivate, type ExecutionContext } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import type { User } from '@prisma/client';
+import type { Session, User } from '@prisma/client';
 import { UnauthenticatedError } from '../../../platform/errors/app-error.js';
 import { ACCESS_TOKEN_COOKIE } from '../auth.constants.js';
 import { UserRepository } from '../repositories/user.repository.js';
 import { SessionRepository } from '../repositories/session.repository.js';
 import { TokenService } from '../services/token.service.js';
 
-/** Augments Fastify's request with the principal AuthGuard resolved, read back by @CurrentUser(). */
+/**
+ * Augments Fastify's request with the principal AuthGuard resolved,
+ * read back by @CurrentUser(). `session` (Phase 13) is the live Session
+ * row this same request already fetched to authenticate — exposed so
+ * `AuthorizationGuard`'s admin branch can check `session.mfaVerifiedAt`
+ * without a second, redundant database read.
+ */
 export interface AuthenticatedRequest extends FastifyRequest {
   user?: User;
+  session?: Session;
 }
 
 /**
@@ -66,6 +73,7 @@ export class AuthGuard implements CanActivate {
     }
 
     request.user = user;
+    request.session = session;
     return true;
   }
 }

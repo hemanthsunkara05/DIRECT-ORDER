@@ -17,6 +17,7 @@
  * then, only to populate realistic tenant-scoped data for manual
  * inspection and future phases' isolation tests.
  */
+import * as argon2 from 'argon2';
 import { PrismaClient } from '@prisma/client';
 
 const appDatabaseUrl = process.env.APP_DATABASE_URL;
@@ -128,10 +129,65 @@ async function seedRestaurant(spec: SeedRestaurant): Promise<void> {
   console.log(`[seed] ${spec.name} (${spec.slug}): owner + ${spec.additionalStaff.length} staff`);
 }
 
+/**
+ * Bootstraps the platform's first SUPER_ADMIN (Phase 13). There is
+ * deliberately no HTTP endpoint that creates an AdminUser — docs/04-
+ * api-specification.md §8.7 has no such route, only
+ * `POST /admin/users/:id/disable`, and self-service admin creation
+ * would be a real privilege-escalation hole anyway (docs/05
+ * §9.1). Seeding is the same bootstrap mechanism every other "who
+ * creates the very first one" problem in this codebase uses (there is
+ * no chicken here to lay the first egg).
+ *
+ * MFA is enrolled directly (`mfaSecret`/`mfaEnabledAt` set, bypassing
+ * the normal enroll → confirm HTTP flow) with a FIXED, documented
+ * secret so this account is actually usable for local testing without
+ * scanning a QR code — never a real production credential, and a real
+ * deployment must never seed this data (`db:seed` is dev/pilot tooling,
+ * documented as such since Phase 2).
+ */
+const DEMO_ADMIN_EMAIL = 'admin@direct-order.local';
+const DEMO_ADMIN_PASSWORD = 'correct-horse-battery-staple-admin';
+/** Base32, RFC 4648 alphabet only (A–Z, 2–7) — decodes to arbitrary bytes used as the TOTP HMAC key; the string itself has no other meaning. */
+const DEMO_ADMIN_MFA_SECRET = 'DIRECTORDERSUPERADMINMFASECRET';
+
+async function seedSuperAdmin(): Promise<void> {
+  const passwordHash = await argon2.hash(DEMO_ADMIN_PASSWORD, {
+    type: argon2.argon2id,
+    memoryCost: 65536,
+    timeCost: 3,
+    parallelism: 4,
+  });
+
+  const user = await prisma.user.upsert({
+    where: { email: DEMO_ADMIN_EMAIL },
+    update: {},
+    create: {
+      email: DEMO_ADMIN_EMAIL,
+      fullName: 'Platform Admin',
+      passwordHash,
+      emailVerifiedAt: new Date(),
+      mfaSecret: DEMO_ADMIN_MFA_SECRET,
+      mfaEnabledAt: new Date(),
+    },
+  });
+
+  await prisma.adminUser.upsert({
+    where: { userId: user.id },
+    update: {},
+    create: { userId: user.id, role: 'SUPER_ADMIN' },
+  });
+
+  console.log(
+    `[seed] Super admin: ${DEMO_ADMIN_EMAIL} / ${DEMO_ADMIN_PASSWORD} (MFA secret: ${DEMO_ADMIN_MFA_SECRET} — dev/pilot only, never seed this in a real deployment)`,
+  );
+}
+
 async function main(): Promise<void> {
   for (const spec of RESTAURANTS) {
     await seedRestaurant(spec);
   }
+  await seedSuperAdmin();
   console.log(`[seed] Done. ${RESTAURANTS.length} restaurants seeded.`);
 }
 

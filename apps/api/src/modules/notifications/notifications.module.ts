@@ -97,5 +97,10 @@ import { NotificationCenterController } from './controllers/notification-center.
     NotificationDispatchService,
     NotificationRetryScheduler,
   ],
+  // NotificationDispatchService.attemptSend() is Phase 13's manual-retry
+  // action (`POST /admin/notifications/:id/retry`) — exported so
+  // AdminModule can reuse it directly rather than re-implementing the
+  // same send-and-record-outcome path a second time.
+  exports: [NotificationDispatchService],
 })
 export class NotificationsModule {}

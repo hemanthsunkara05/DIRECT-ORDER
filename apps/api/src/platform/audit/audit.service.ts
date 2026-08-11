@@ -75,6 +75,26 @@ export class AuditService {
     return this.paginate({ restaurantId }, options);
   }
 
+  /** `GET /admin/audit-logs` (Phase 13, SUPER_ADMIN-only, read-only — see this class's own doc comment for why there is no corresponding write method). */
+  async findAll(
+    options: {
+      limit?: number;
+      cursor?: string;
+      actorType?: string;
+      entityType?: string;
+      restaurantId?: string;
+    } = {},
+  ): Promise<Page<AuditLog>> {
+    return this.paginate(
+      {
+        ...(options.actorType ? { actorType: options.actorType } : {}),
+        ...(options.entityType ? { entityType: options.entityType } : {}),
+        ...(options.restaurantId ? { restaurantId: options.restaurantId } : {}),
+      },
+      options,
+    );
+  }
+
   private async paginate(
     where: Prisma.AuditLogWhereInput,
     options: { limit?: number; cursor?: string },

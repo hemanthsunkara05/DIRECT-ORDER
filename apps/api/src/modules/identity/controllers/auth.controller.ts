@@ -11,14 +11,16 @@ import { RestaurantMembershipRepository } from '../../../platform/authorization/
 import { ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE } from '../auth.constants.js';
 import { AuthService } from '../services/auth.service.js';
 import type { SessionContext } from '../services/session.service.js';
-import { AuthGuard } from '../guards/auth.guard.js';
+import { AuthGuard, type AuthenticatedRequest } from '../guards/auth.guard.js';
 import { CurrentUser } from '../decorators/current-user.decorator.js';
+import { MfaService } from '../services/mfa.service.js';
 import { RegisterDto } from '../dto/register.dto.js';
 import { LoginDto } from '../dto/login.dto.js';
 import { PasswordForgotDto } from '../dto/password-forgot.dto.js';
 import { PasswordResetDto } from '../dto/password-reset.dto.js';
 import { OtpRequestDto } from '../dto/otp-request.dto.js';
 import { OtpVerifyDto } from '../dto/otp-verify.dto.js';
+import { MfaCodeDto } from '../dto/mfa-code.dto.js';
 
 const DAY_SECONDS = 86_400;
 
@@ -28,10 +30,10 @@ const DAY_SECONDS = 86_400;
  * service's discriminated-union result into an HTTP response — no
  * business logic lives here.
  *
- * Deliberately NOT implemented in this phase (see AuthService's doc
- * comment and the Phase 3 report): `/auth/mfa/verify` (admin MFA is
- * Phase 13) and `/auth/invitations/accept` (staff invitations are
- * Phase 5) — both require entities this phase does not yet create.
+ * `/auth/mfa/{enroll,enroll/confirm,verify}` (Phase 13) added once
+ * `admin_users` existed for MFA to actually gate — see MfaService and
+ * AuthorizationGuard's own doc comments for the enrollment/verification
+ * and enforcement halves respectively.
  */
 @Controller('auth')
 export class AuthController {
@@ -40,6 +42,7 @@ export class AuthController {
     @Inject(APP_CONFIG) private readonly env: Env,
     @Inject(RestaurantMembershipRepository)
     private readonly memberships: RestaurantMembershipRepository,
+    @Inject(MfaService) private readonly mfa: MfaService,
   ) {}
 
   @Post('register')
@@ -169,6 +172,57 @@ export class AuthController {
         onboardingStatus: m.restaurant.onboardingStatus,
       })),
     });
+  }
+
+  /**
+   * TOTP enrollment/verification (Phase 13). Every admin principal
+   * requires MFA (docs/01 §5.2's AdminUser constraint) — but enrollment
+   * itself has no permission gate: any authenticated user can enroll,
+   * matching how MFA is a property of the ACCOUNT, not a privilege.
+   * `AuthorizationGuard` is what actually refuses admin-permissioned
+   * routes for a session that hasn't verified MFA — see its own doc
+   * comment.
+   */
+  @Post('mfa/enroll')
+  @UseGuards(AuthGuard)
+  @HttpCode(200)
+  async enrollMfa(@CurrentUser() user: User) {
+    const enrollment = await this.mfa.enroll(user);
+    return ok(enrollment);
+  }
+
+  @Post('mfa/enroll/confirm')
+  @UseGuards(AuthGuard)
+  @RateLimit({ limit: 10, windowSeconds: 900 })
+  @HttpCode(200)
+  async confirmMfaEnrollment(
+    @CurrentUser() user: User,
+    @Req() request: AuthenticatedRequest,
+    @Body() body: unknown,
+  ) {
+    const input = MfaCodeDto.parse(body);
+    const confirmed = await this.mfa.confirmEnrollment(user, request.session!.id, input.code);
+    if (!confirmed) {
+      throw new ValidationError('The code is invalid or does not match a pending enrollment.');
+    }
+    return ok({ status: 'ok' });
+  }
+
+  @Post('mfa/verify')
+  @UseGuards(AuthGuard)
+  @RateLimit({ limit: 10, windowSeconds: 900 })
+  @HttpCode(200)
+  async verifyMfa(
+    @CurrentUser() user: User,
+    @Req() request: AuthenticatedRequest,
+    @Body() body: unknown,
+  ) {
+    const input = MfaCodeDto.parse(body);
+    const verified = await this.mfa.verify(user, request.session!.id, input.code);
+    if (!verified) {
+      throw new ValidationError('The code is invalid or MFA is not enrolled for this account.');
+    }
+    return ok({ status: 'ok' });
   }
 
   private setSessionCookies(reply: FastifyReply, accessToken: string, refreshToken: string): void {

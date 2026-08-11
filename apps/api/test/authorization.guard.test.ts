@@ -1,9 +1,10 @@
 import type { ExecutionContext } from '@nestjs/common';
 import type { Reflector } from '@nestjs/core';
-import type { RestaurantStaff, User } from '@prisma/client';
+import type { AdminUser, RestaurantStaff, Session, User } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { AuthorizationGuard } from '../src/platform/authorization/authorization.guard.js';
 import type { RestaurantMembershipRepository } from '../src/platform/authorization/restaurant-membership.repository.js';
+import type { AdminUserRepository } from '../src/platform/authorization/admin-user.repository.js';
 import { PERMISSIONS_KEY } from '../src/platform/authorization/permissions.decorator.js';
 import { TENANT_SCOPED_KEY } from '../src/platform/authorization/tenant-scoped.decorator.js';
 import type { AuthenticatedRequest } from '../src/modules/identity/guards/auth.guard.js';
@@ -14,8 +15,22 @@ const USER_ID = 'user-1';
 const RESTAURANT_A = '11111111-1111-1111-1111-111111111111';
 const RESTAURANT_B = '22222222-2222-2222-2222-222222222222';
 
-function fakeUser(): User {
-  return { id: USER_ID } as User;
+function fakeUser(overrides: Partial<User> = {}): User {
+  return { id: USER_ID, mfaEnabledAt: null, ...overrides } as User;
+}
+
+function fakeSession(overrides: Partial<Session> = {}): Session {
+  return { id: 'session-1', userId: USER_ID, mfaVerifiedAt: null, ...overrides } as Session;
+}
+
+function fakeAdminUser(overrides: Partial<AdminUser> = {}): AdminUser {
+  return {
+    id: 'admin-1',
+    userId: USER_ID,
+    role: 'ADMIN_OPERATIONS',
+    status: 'ACTIVE',
+    ...overrides,
+  } as AdminUser;
 }
 
 function fakeMembership(overrides: Partial<RestaurantStaff> = {}): RestaurantStaff {
@@ -58,9 +73,12 @@ function createHarness(metadata: { tenantScoped?: boolean; permissions?: string[
     findActiveByUser: vi.fn(),
     find: vi.fn(),
   } as unknown as RestaurantMembershipRepository;
+  const adminUsers = {
+    findByUserId: vi.fn().mockResolvedValue(null),
+  } as unknown as AdminUserRepository;
   const audit = { record: vi.fn().mockResolvedValue(undefined) } as unknown as AuditService;
-  const guard = new AuthorizationGuard(createReflector(metadata), memberships, audit);
-  return { guard, memberships, audit };
+  const guard = new AuthorizationGuard(createReflector(metadata), memberships, adminUsers, audit);
+  return { guard, memberships, adminUsers, audit };
 }
 
 describe('AuthorizationGuard', () => {
@@ -77,11 +95,87 @@ describe('AuthorizationGuard', () => {
     );
   });
 
-  it('@Permissions() without @TenantScoped() always denies — no admin principal type exists yet', async () => {
-    const { guard } = createHarness({ permissions: ['audit:read'] });
-    await expect(guard.canActivate(createContext({ user: fakeUser() }))).rejects.toThrow(
-      ForbiddenError,
-    );
+  describe('@Permissions() without @TenantScoped() — admin resolution (Phase 13)', () => {
+    it('denies when the user has no AdminUser row at all', async () => {
+      const { guard, adminUsers } = createHarness({ permissions: ['audit:read'] });
+      (adminUsers.findByUserId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      await expect(
+        guard.canActivate(createContext({ user: fakeUser(), session: fakeSession() })),
+      ).rejects.toThrow(ForbiddenError);
+    });
+
+    it('denies a DISABLED AdminUser the same as no row at all', async () => {
+      const { guard, adminUsers } = createHarness({ permissions: ['audit:read'] });
+      (adminUsers.findByUserId as ReturnType<typeof vi.fn>).mockResolvedValue(
+        fakeAdminUser({ status: 'DISABLED' }),
+      );
+      await expect(
+        guard.canActivate(
+          createContext({
+            user: fakeUser({ mfaEnabledAt: new Date() }),
+            session: fakeSession({ mfaVerifiedAt: new Date() }),
+          }),
+        ),
+      ).rejects.toThrow(ForbiddenError);
+    });
+
+    it('denies an active admin who has not enrolled MFA at all, even with every permission', async () => {
+      const { guard, adminUsers } = createHarness({ permissions: ['audit:read'] });
+      (adminUsers.findByUserId as ReturnType<typeof vi.fn>).mockResolvedValue(
+        fakeAdminUser({ role: 'SUPER_ADMIN' }),
+      );
+      await expect(
+        guard.canActivate(
+          createContext({ user: fakeUser({ mfaEnabledAt: null }), session: fakeSession() }),
+        ),
+      ).rejects.toThrow(ForbiddenError);
+    });
+
+    it('denies an admin who enrolled MFA but has not verified it for THIS session', async () => {
+      const { guard, adminUsers } = createHarness({ permissions: ['audit:read'] });
+      (adminUsers.findByUserId as ReturnType<typeof vi.fn>).mockResolvedValue(
+        fakeAdminUser({ role: 'SUPER_ADMIN' }),
+      );
+      await expect(
+        guard.canActivate(
+          createContext({
+            user: fakeUser({ mfaEnabledAt: new Date() }),
+            session: fakeSession({ mfaVerifiedAt: null }),
+          }),
+        ),
+      ).rejects.toThrow(ForbiddenError);
+    });
+
+    it('denies when MFA is enrolled+verified but the resolved admin role does not hold the required permission', async () => {
+      const { guard, adminUsers } = createHarness({ permissions: ['audit:read'] });
+      (adminUsers.findByUserId as ReturnType<typeof vi.fn>).mockResolvedValue(
+        fakeAdminUser({ role: 'SUPPORT' }), // audit:read is SUPER_ADMIN-only
+      );
+      await expect(
+        guard.canActivate(
+          createContext({
+            user: fakeUser({ mfaEnabledAt: new Date() }),
+            session: fakeSession({ mfaVerifiedAt: new Date() }),
+          }),
+        ),
+      ).rejects.toThrow(ForbiddenError);
+    });
+
+    it('allows and attaches request.admin when the role holds the permission and MFA is verified for this session', async () => {
+      const { guard, adminUsers } = createHarness({ permissions: ['audit:read'] });
+      (adminUsers.findByUserId as ReturnType<typeof vi.fn>).mockResolvedValue(
+        fakeAdminUser({ role: 'SUPER_ADMIN' }),
+      );
+      const request = {
+        user: fakeUser({ mfaEnabledAt: new Date() }),
+        session: fakeSession({ mfaVerifiedAt: new Date() }),
+        headers: {},
+      } as AuthenticatedRequest;
+      await expect(guard.canActivate(createContext(request))).resolves.toBe(true);
+      expect(
+        (request as unknown as { admin: { role: string; adminUserId: string } }).admin,
+      ).toEqual({ adminUserId: 'admin-1', role: 'SUPER_ADMIN' });
+    });
   });
 
   describe('tenant resolution — no X-Restaurant-Id header', () => {

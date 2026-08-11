@@ -254,6 +254,7 @@ model User {
   staffMembersInvited   RestaurantStaff[] @relation("StaffInvitedBy")
   staffInvitationsSent  StaffInvitation[] @relation("InvitationSentBy")
   closurePeriodsCreated ClosurePeriod[]   @relation("ClosurePeriodCreatedBy")
+  adminUser             AdminUser?
 
   @@map("users")
 }
@@ -280,6 +281,15 @@ model Session {
   /// revoke (logout, password change) from a security event.
   revokedReason    String?   @map("revoked_reason")
   rotatedFromId    String?   @map("rotated_from_id") @db.Uuid
+  /// Phase 13: set only once a valid TOTP code has been verified for
+  /// THIS session (`POST /auth/mfa/verify`) — never copied from a prior
+  /// session on rotation. `AuthGuard` already re-fetches the live
+  /// Session row on every request (never trusts the JWT alone, per this
+  /// model's own established pattern), so `AuthorizationGuard`'s admin
+  /// branch checking this column is immediately effective on the very
+  /// next request, the same "revocation takes effect now, not at token
+  /// expiry" guarantee logout/reuse-detection already rely on.
+  mfaVerifiedAt    DateTime? @map("mfa_verified_at") @db.Timestamptz
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -288,6 +298,45 @@ model Session {
   @@index([familyId])
   @@index([expiresAt])
   @@map("sessions")
+}
+
+/// docs/05-authorization-matrix.md §9.1: "Admin roles are not ordered" —
+/// deliberately a flat enum, not a numeric level, mirroring
+/// `permission.catalogue.ts`'s `AdminRole` union exactly (kept as the
+/// single source of truth for the matrix itself; this enum only needs
+/// to match its string values).
+enum AdminRole {
+  SUPPORT
+  ADMIN_OPERATIONS
+  ADMIN_FINANCE
+  SUPER_ADMIN
+}
+
+enum AdminUserStatus {
+  ACTIVE
+  DISABLED
+}
+
+/// docs/01-domain-model.md §5.2 (AdminUser): "Platform-staff role
+/// assignment, kept separate from restaurant membership so admin
+/// privilege can never be acquired through restaurant paths." MFA is
+/// enforced at the API (`AuthorizationGuard`), not just documented here
+/// — see that guard's own doc comment. The "at least one active
+/// SUPER_ADMIN" invariant is enforced at the service layer
+/// (`AdminUserService`), the same "documented in the model, enforced in
+/// the service" split `LastOwnerError` already established for
+/// restaurant OWNERs.
+model AdminUser {
+  id        String          @id @default(uuid(7)) @db.Uuid
+  userId    String          @unique @map("user_id") @db.Uuid
+  role      AdminRole
+  status    AdminUserStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime        @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("admin_users")
 }
 
 enum OtpPurpose {

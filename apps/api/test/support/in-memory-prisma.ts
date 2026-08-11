@@ -65,6 +65,7 @@ interface SessionRow {
   revokedAt: Date | null;
   revokedReason: string | null;
   rotatedFromId: string | null;
+  mfaVerifiedAt: Date | null;
   createdAt: Date;
 }
 
@@ -429,6 +430,15 @@ export interface DeliveryRow {
   updatedAt: Date;
 }
 
+export interface AdminUserRow {
+  id: string;
+  userId: string;
+  role: string;
+  status: 'ACTIVE' | 'DISABLED';
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface OutboxEventRow {
   id: string;
   eventType: string;
@@ -517,6 +527,7 @@ export interface InMemoryPrisma {
   outboxEvents: OutboxEventRow[];
   notifications: NotificationRow[];
   notificationPreferences: NotificationPreferenceRow[];
+  adminUsers: AdminUserRow[];
   prisma: PrismaService;
 }
 
@@ -550,6 +561,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   const outboxEvents: OutboxEventRow[] = [];
   const notifications: NotificationRow[] = [];
   const notificationPreferences: NotificationPreferenceRow[] = [];
+  const adminUsers: AdminUserRow[] = [];
 
   const user = {
     create: ({ data }: { data: Partial<UserRow> }) => {
@@ -588,6 +600,47 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
       return Promise.resolve(row);
     },
+    /** `GET /admin/users` (Phase 13) — the one platform-wide, non-restaurant-scoped user search this codebase needs. */
+    findMany: ({
+      where,
+      orderBy,
+      cursor,
+      skip,
+      take,
+    }: {
+      where?: {
+        OR?: {
+          fullName?: { contains: string; mode?: string };
+          email?: { contains: string; mode?: string };
+        }[];
+      };
+      orderBy?: { createdAt: 'asc' | 'desc' };
+      cursor?: { id: string };
+      skip?: number;
+      take?: number;
+    }) => {
+      let matches = users.filter((u) => {
+        if (!where?.OR) return true;
+        return where.OR.some((clause) => {
+          if (clause.fullName)
+            return u.fullName.toLowerCase().includes(clause.fullName.contains.toLowerCase());
+          if (clause.email)
+            return (u.email ?? '').toLowerCase().includes(clause.email.contains.toLowerCase());
+          return false;
+        });
+      });
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      if (cursor) {
+        const cursorIndex = matches.findIndex((u) => u.id === cursor.id);
+        matches = cursorIndex === -1 ? [] : matches.slice(cursorIndex + (skip ?? 0));
+      }
+      if (take !== undefined) matches = matches.slice(0, take);
+      return Promise.resolve(matches);
+    },
   };
 
   const session = {
@@ -598,6 +651,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         revokedAt: null,
         revokedReason: null,
         rotatedFromId: null,
+        mfaVerifiedAt: null,
         createdAt: new Date(),
         ...omitUndefined(data),
       } as SessionRow;
@@ -714,7 +768,54 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       auditLogs.push(row);
       return Promise.resolve(row);
     },
-    findMany: () => Promise.resolve([]),
+    /**
+     * Was an unconditional `() => []` stub — never actually filtered,
+     * paginated, or returned real data. That went unnoticed because
+     * nothing exercised `AuditService.findByEntity`/`findByActor`/
+     * `findByRestaurant` through a real HTTP path with real data until
+     * Phase 13's `GET /admin/audit-logs`. A real, previously-latent gap
+     * in this test fake, not application code.
+     */
+    findMany: ({
+      where,
+      orderBy,
+      cursor,
+      skip,
+      take,
+    }: {
+      where?: {
+        actorType?: string;
+        actorId?: string;
+        entityType?: string;
+        entityId?: string;
+        restaurantId?: string;
+      };
+      orderBy?: { createdAt: 'asc' | 'desc' };
+      cursor?: { id: string };
+      skip?: number;
+      take?: number;
+    }) => {
+      let matches = auditLogs.filter((a) => {
+        if (where?.actorType !== undefined && a.actorType !== where.actorType) return false;
+        if (where?.actorId !== undefined && a.actorId !== where.actorId) return false;
+        if (where?.entityType !== undefined && a.entityType !== where.entityType) return false;
+        if (where?.entityId !== undefined && a.entityId !== where.entityId) return false;
+        if (where?.restaurantId !== undefined && a.restaurantId !== where.restaurantId)
+          return false;
+        return true;
+      });
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      if (cursor) {
+        const cursorIndex = matches.findIndex((a) => a.id === cursor.id);
+        matches = cursorIndex === -1 ? [] : matches.slice(cursorIndex + (skip ?? 0));
+      }
+      if (take !== undefined) matches = matches.slice(0, take);
+      return Promise.resolve(matches);
+    },
   };
 
   type RestaurantStaffWhere = {
@@ -878,6 +979,16 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     count: ({ where }: { where: { slug?: string } }) => {
       return Promise.resolve(
         restaurants.filter((r) => where.slug === undefined || r.slug === where.slug).length,
+      );
+    },
+    /** `AdminOverviewController`'s per-status breakdown (Phase 13) — the one `groupBy` this fake needs to support. */
+    groupBy: (_args: { by: ['status']; _count: true }) => {
+      const counts = new Map<string, number>();
+      for (const r of restaurants) {
+        counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
+      }
+      return Promise.resolve(
+        [...counts.entries()].map(([status, count]) => ({ status, _count: count })),
       );
     },
   };
@@ -1401,15 +1512,19 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   interface OrderListWhere {
     id?: string;
     restaurantId?: string;
+    orderNumber?: string;
     status?: string | { in: string[] };
-    createdAt?: { lt: Date };
+    createdAt?: { lt?: Date; gte?: Date };
   }
 
-  /** Backs both the expiry scheduler's scan (`status`, `createdAt.lt`) and Phase 10's restaurant order queue/detail (`restaurantId`, `status.in`, `id`). */
+  /** Backs the expiry scheduler's scan (`status`, `createdAt.lt`), Phase 10's restaurant order queue/detail (`restaurantId`, `status.in`, `id`), and Phase 13's admin cross-tenant search (`orderNumber`, `createdAt.gte` for "today"). */
   function matchOrderList(where: OrderListWhere) {
     return (o: OrderRow) => {
       if (where.id !== undefined && o.id !== where.id) return false;
       if (where.restaurantId !== undefined && o.restaurantId !== where.restaurantId) return false;
+      if (where.orderNumber !== undefined && o.orderNumber !== where.orderNumber) return false;
+      if (where.createdAt?.gte && o.createdAt.getTime() < where.createdAt.gte.getTime())
+        return false;
       if (where.status !== undefined) {
         const matchesStatus =
           typeof where.status === 'string'
@@ -1611,6 +1726,9 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       const row = orders.find(matchOrderList(where)) ?? null;
       if (!row) return Promise.resolve(null);
       return Promise.resolve(include ? withOrderRelations(row, include) : row);
+    },
+    count: ({ where }: { where: OrderListWhere }) => {
+      return Promise.resolve(orders.filter(matchOrderList(where)).length);
     },
   };
 
@@ -2297,6 +2415,60 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     },
   };
 
+  const adminUserTable = {
+    create: ({ data }: { data: { userId: string; role: string; status?: string } }) => {
+      if (adminUsers.some((a) => a.userId === data.userId)) {
+        throw prismaUniqueError(['userId']);
+      }
+      const row: AdminUserRow = {
+        id: randomUUID(),
+        userId: data.userId,
+        role: data.role,
+        status: (data.status as AdminUserRow['status']) ?? 'ACTIVE',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      adminUsers.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { userId: string } }) => {
+      return Promise.resolve(adminUsers.find((a) => a.userId === where.userId) ?? null);
+    },
+    findMany: ({
+      orderBy,
+      take: takeCount,
+      include,
+    }: {
+      orderBy?: { createdAt: 'asc' | 'desc' };
+      take?: number;
+      include?: { user?: unknown };
+    }) => {
+      let matches = [...adminUsers];
+      if (orderBy?.createdAt === 'desc') {
+        matches = matches.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      }
+      if (takeCount !== undefined) matches = matches.slice(0, takeCount);
+      return Promise.resolve(
+        matches.map((a) => {
+          if (!include?.user) return a;
+          const u = users.find((u) => u.id === a.userId);
+          return { ...a, user: u ? { id: u.id, fullName: u.fullName, email: u.email } : null };
+        }),
+      );
+    },
+    count: ({ where }: { where: { role: string; status: string } }) => {
+      return Promise.resolve(
+        adminUsers.filter((a) => a.role === where.role && a.status === where.status).length,
+      );
+    },
+    update: ({ where, data }: { where: { id: string }; data: Partial<AdminUserRow> }) => {
+      const row = adminUsers.find((a) => a.id === where.id);
+      if (!row) throw new Error(`adminUser ${where.id} not found`);
+      Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
+      return Promise.resolve(row);
+    },
+  };
+
   const prisma = {
     user,
     session,
@@ -2325,6 +2497,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     outboxEvent: outboxEventTable,
     notification: notificationTable,
     notificationPreference: notificationPreferenceTable,
+    adminUser: adminUserTable,
     // Supports both Prisma `$transaction` forms this codebase uses: the
     // array form (a list of already-constructed operations, awaited
     // together — see session.repository.ts) and the interactive
@@ -2373,6 +2546,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     outboxEvents,
     notifications,
     notificationPreferences,
+    adminUsers,
     prisma,
   };
 }
