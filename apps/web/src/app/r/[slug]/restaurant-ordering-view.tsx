@@ -3,7 +3,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatINR } from '@direct-order/money';
-import { ApiError, checkoutApi, type CartIssue, type QuoteResult } from '@/lib/api-client';
+import {
+  ApiError,
+  checkoutApi,
+  reviewsApi,
+  type CartIssue,
+  type PublicReview,
+  type QuoteResult,
+} from '@/lib/api-client';
 import type { PublicMenu, PublicMenuItem, PublicRestaurant } from '@/lib/public-api';
 
 interface CartItem {
@@ -195,6 +202,13 @@ export function RestaurantOrderingView({
             {restaurant.branding?.tagline && (
               <p className="text-sm text-slate-500">{restaurant.branding.tagline}</p>
             )}
+            <p className="text-xs text-slate-500">
+              {restaurant.ratingAvg !== null
+                ? // Not money — a 1-5 star rating average, not a currency amount.
+                  // eslint-disable-next-line no-restricted-syntax
+                  `★ ${restaurant.ratingAvg.toFixed(1)} (${restaurant.ratingCount} review${restaurant.ratingCount === 1 ? '' : 's'})`
+                : 'No ratings yet'}
+            </p>
           </div>
         </div>
         {restaurant.description && (
@@ -259,6 +273,10 @@ export function RestaurantOrderingView({
             </ul>
           </section>
         ))}
+      </div>
+
+      <div className="px-6">
+        <Reviews slug={restaurant.slug} />
       </div>
 
       {cartCount > 0 && (
@@ -343,6 +361,37 @@ export function RestaurantOrderingView({
         </div>
       )}
     </main>
+  );
+}
+
+/** `GET /public/restaurants/:slug/reviews` (Phase 15) — display only, `authorFirstName` is already the full BR-124 allowlist the API applies. */
+function Reviews({ slug }: { slug: string }) {
+  const [reviews, setReviews] = useState<PublicReview[] | null>(null);
+
+  useEffect(() => {
+    reviewsApi
+      .listPublic(slug)
+      .then(setReviews)
+      .catch(() => setReviews([]));
+  }, [slug]);
+
+  if (!reviews || reviews.length === 0) return null;
+
+  return (
+    <section className="flex flex-col gap-3 border-t border-slate-100 pt-6">
+      <h2 className="text-lg font-semibold">Reviews</h2>
+      <ul className="flex flex-col gap-3">
+        {reviews.map((review) => (
+          <li key={review.id} className="rounded-lg border border-slate-200 p-3 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="font-medium">{'★'.repeat(review.rating)}</span>
+              <span className="text-xs text-slate-400">{review.authorFirstName}</span>
+            </div>
+            {review.body && <p className="mt-1 text-slate-600">{review.body}</p>}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

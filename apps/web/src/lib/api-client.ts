@@ -761,6 +761,49 @@ export const orderApi = {
       token,
       outcome,
     }),
+
+  /** Phase 15 — only a DELIVERED order's own guest token can submit one. */
+  submitReview: (orderNumber: string, token: string, rating: number, body?: string) =>
+    post<{ id: string; rating: number; status: string }>(`/public/orders/${orderNumber}/review`, {
+      token,
+      rating,
+      body,
+    }),
+};
+
+// ── Reviews (Phase 15) ───────────────────────────────────────────────
+
+export interface PublicReview {
+  id: string;
+  rating: number;
+  body: string | null;
+  authorFirstName: string;
+  createdAt: string;
+}
+
+export interface OwnReview {
+  id: string;
+  orderId: string;
+  rating: number;
+  body: string | null;
+  status: 'PENDING_REVIEW' | 'PUBLISHED' | 'HIDDEN' | 'REMOVED';
+  createdAt: string;
+}
+
+export const reviewsApi = {
+  listPublic: (slug: string) => get<PublicReview[]>(`/public/restaurants/${slug}/reviews`),
+
+  listOwn: (restaurantId?: string) =>
+    request<OwnReview[]>('/restaurant/reviews', {
+      method: 'GET',
+      ...restaurantHeaders(restaurantId),
+    }),
+
+  respond: (reviewId: string, body: string, restaurantId?: string) =>
+    request<{ id: string; reviewId: string; body: string }>(
+      `/restaurant/reviews/${reviewId}/response`,
+      { method: 'POST', body: JSON.stringify({ body }), ...restaurantHeaders(restaurantId) },
+    ),
 };
 
 // ── Restaurant order management (Phase 10) ────────────────────────────

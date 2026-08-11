@@ -135,6 +135,19 @@ enum PromotionRedemptionStatus {
   RELEASED
 }
 
+enum ReviewStatus {
+  PENDING_REVIEW
+  PUBLISHED
+  HIDDEN
+  REMOVED
+}
+
+enum ReviewReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
 /// docs/03-state-machines.md §7.2. A payment's status is a field
 /// separate from the order's — never merged (domain model note).
 enum PaymentStatus {
@@ -425,6 +438,7 @@ model Restaurant {
   carts          Cart[]
   orders         Order[]
   promotions     Promotion[]
+  reviews        Review[]
 
   @@index([status])
   @@map("restaurants")
@@ -718,9 +732,10 @@ model Customer {
   createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz
 
-  carts               Cart[]
-  orders              Order[]
+  carts                Cart[]
+  orders               Order[]
   promotionRedemptions PromotionRedemption[]
+  reviews              Review[]
 
   @@index([phone])
   @@map("customers")
@@ -834,6 +849,7 @@ model Order {
   /// always zero or one row in practice, enforced at the application
   /// layer, not the database.
   promotionRedemptions PromotionRedemption[]
+  review               Review?
 
   @@unique([orderNumber])
   @@unique([restaurantId, idempotencyKey])
@@ -1024,7 +1040,7 @@ model Promotion {
   createdAt             DateTime      @default(now()) @map("created_at") @db.Timestamptz
   updatedAt             DateTime      @updatedAt @map("updated_at") @db.Timestamptz
 
-  restaurant  Restaurant?            @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  restaurant  Restaurant?           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   redemptions PromotionRedemption[]
   orders      Order[]
 
@@ -1063,16 +1079,16 @@ model Promotion {
 /// queries for both limits. `customerId` is kept for referential/audit
 /// consistency with docs/01 §5.8's documented field list, not dropped.
 model PromotionRedemption {
-  id            String                     @id @default(uuid(7)) @db.Uuid
-  promotionId   String                     @map("promotion_id") @db.Uuid
-  customerId    String                     @map("customer_id") @db.Uuid
-  customerPhone String                     @map("customer_phone")
-  orderId       String?                    @map("order_id") @db.Uuid
-  status        PromotionRedemptionStatus  @default(RESERVED)
-  discountMinor BigInt                     @map("discount_minor")
-  reservedAt    DateTime                   @default(now()) @map("reserved_at") @db.Timestamptz
-  expiresAt     DateTime?                  @map("expires_at") @db.Timestamptz
-  confirmedAt   DateTime?                  @map("confirmed_at") @db.Timestamptz
+  id            String                    @id @default(uuid(7)) @db.Uuid
+  promotionId   String                    @map("promotion_id") @db.Uuid
+  customerId    String                    @map("customer_id") @db.Uuid
+  customerPhone String                    @map("customer_phone")
+  orderId       String?                   @map("order_id") @db.Uuid
+  status        PromotionRedemptionStatus @default(RESERVED)
+  discountMinor BigInt                    @map("discount_minor")
+  reservedAt    DateTime                  @default(now()) @map("reserved_at") @db.Timestamptz
+  expiresAt     DateTime?                 @map("expires_at") @db.Timestamptz
+  confirmedAt   DateTime?                 @map("confirmed_at") @db.Timestamptz
 
   promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Restrict)
   customer  Customer  @relation(fields: [customerId], references: [id], onDelete: Restrict)
@@ -1096,6 +1112,86 @@ model PromotionRedemption {
   @@index([promotionId, status])
   @@index([promotionId, customerPhone, status])
   @@map("promotion_redemptions")
+}
+
+/// docs/01 §5.11. AMB-16: reviews publish immediately (`PUBLISHED` is
+/// the entry status, not `PENDING_REVIEW` — pre-moderation is a
+/// documented future option, off by default) with reactive moderation
+/// triggered by a `ReviewReport`, not a pre-publish queue. `body` is
+/// stored verbatim, untouched by any HTML sanitizer — BR-120's
+/// "untrusted, never rendered as HTML" is enforced entirely by never
+/// once using `dangerouslySetInnerHTML` on the frontend (React escapes
+/// text content by default; the lint rule bans that API repo-wide),
+/// the exact same posture already applied to restaurant names and menu
+/// item descriptions.
+model Review {
+  id                String       @id @default(uuid(7)) @db.Uuid
+  orderId           String       @unique @map("order_id") @db.Uuid
+  customerId        String       @map("customer_id") @db.Uuid
+  restaurantId      String       @map("restaurant_id") @db.Uuid
+  rating            Int
+  body              String?
+  status            ReviewStatus @default(PUBLISHED)
+  moderatedByUserId String?      @map("moderated_by_user_id") @db.Uuid
+  moderationReason  String?      @map("moderation_reason")
+  moderatedAt       DateTime?    @map("moderated_at") @db.Timestamptz
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  order      Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  customer   Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  restaurant Restaurant      @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  response   ReviewResponse?
+  reports    ReviewReport[]
+
+  // BR-118: one review per order — the actual concurrency guarantee
+  // (docs/14-acceptance-criteria.md: "one review per order under
+  // concurrency"), not an application-level pre-check.
+  @@index([restaurantId, status, createdAt(sort: Desc)])
+  @@map("reviews")
+}
+
+/// docs/01 §5.11. `reviewId` unique — BR-122: one public response per
+/// review, enforced the same way `Review.orderId` enforces one review
+/// per order.
+model ReviewResponse {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  reviewId     String   @unique @map("review_id") @db.Uuid
+  restaurantId String   @map("restaurant_id") @db.Uuid
+  authorUserId String   @map("author_user_id") @db.Uuid
+  body         String
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@map("review_responses")
+}
+
+/// docs/01 §5.11 — the trigger for AMB-16's reactive moderation model.
+/// `reporterType` is `RESTAURANT` only in this phase — the endpoint
+/// that would let a CUSTOMER report a review needs a stable identity to
+/// dedupe against, which guest checkout (AMB-2) doesn't provide; a
+/// restaurant reporting a review about itself already has one via its
+/// existing tenant session, so that path is what's built. The schema
+/// still allows `CUSTOMER` for when that identity exists (Phase 16+).
+model ReviewReport {
+  id           String             @id @default(uuid(7)) @db.Uuid
+  reviewId     String             @map("review_id") @db.Uuid
+  reporterType String             @map("reporter_type")
+  reporterId   String             @map("reporter_id") @db.Uuid
+  reason       String
+  status       ReviewReportStatus @default(OPEN)
+  resolvedBy   String?            @map("resolved_by") @db.Uuid
+  resolvedAt   DateTime?          @map("resolved_at") @db.Timestamptz
+  createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  // Prevents report spam (docs/01 §5.11) — the same reporter cannot
+  // file a second report against the same review.
+  @@unique([reviewId, reporterType, reporterId])
+  @@index([status])
+  @@map("review_reports")
 }
 
 /// The idempotency anchor for every provider callback (docs/01 §5.6).

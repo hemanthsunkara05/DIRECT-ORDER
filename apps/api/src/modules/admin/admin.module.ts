@@ -7,10 +7,12 @@ import { RestaurantRepository } from '../restaurants/repositories/restaurant.rep
 import { NotificationRepository } from '../notifications/repositories/notification.repository.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { PromotionsModule } from '../promotions/promotions.module.js';
+import { ReviewsModule } from '../reviews/reviews.module.js';
 import { AdminQueryRepository } from './repositories/admin-query.repository.js';
 import { RestaurantStateService } from './services/restaurant-state.service.js';
 import { AdminUserService } from './services/admin-user.service.js';
 import { AdminOrderService } from './services/admin-order.service.js';
+import { AdminReviewService } from './services/admin-review.service.js';
 import { AdminRestaurantsController } from './controllers/admin-restaurants.controller.js';
 import { AdminUsersController } from './controllers/admin-users.controller.js';
 import { AdminOrdersController } from './controllers/admin-orders.controller.js';
@@ -19,6 +21,7 @@ import { AdminOperationsController } from './controllers/admin-operations.contro
 import { AdminAuditController } from './controllers/admin-audit.controller.js';
 import { AdminOverviewController } from './controllers/admin-overview.controller.js';
 import { AdminPromotionsController } from './controllers/admin-promotions.controller.js';
+import { AdminReviewsController } from './controllers/admin-reviews.controller.js';
 
 /**
  * Phase 13 (Admin panel). `AdminUserRepository` itself is NOT provided
@@ -46,6 +49,7 @@ import { AdminPromotionsController } from './controllers/admin-promotions.contro
     PaymentsModule,
     NotificationsModule,
     PromotionsModule,
+    ReviewsModule,
   ],
   controllers: [
     AdminRestaurantsController,
@@ -56,6 +60,7 @@ import { AdminPromotionsController } from './controllers/admin-promotions.contro
     AdminAuditController,
     AdminOverviewController,
     AdminPromotionsController,
+    AdminReviewsController,
   ],
   providers: [
     AdminQueryRepository,
@@ -63,6 +68,7 @@ import { AdminPromotionsController } from './controllers/admin-promotions.contro
     RestaurantStateService,
     AdminUserService,
     AdminOrderService,
+    AdminReviewService,
     ReconciliationIssueRepository,
     NotificationRepository,
   ],

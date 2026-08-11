@@ -473,6 +473,30 @@ export interface PromotionRedemptionRow {
   confirmedAt: Date | null;
 }
 
+export interface ReviewRow {
+  id: string;
+  orderId: string;
+  customerId: string;
+  restaurantId: string;
+  rating: number;
+  body: string | null;
+  status: 'PENDING_REVIEW' | 'PUBLISHED' | 'HIDDEN' | 'REMOVED';
+  moderatedByUserId: string | null;
+  moderationReason: string | null;
+  moderatedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ReviewResponseRow {
+  id: string;
+  reviewId: string;
+  restaurantId: string;
+  authorUserId: string;
+  body: string;
+  createdAt: Date;
+}
+
 export interface OutboxEventRow {
   id: string;
   eventType: string;
@@ -564,6 +588,8 @@ export interface InMemoryPrisma {
   adminUsers: AdminUserRow[];
   promotions: PromotionRow[];
   promotionRedemptions: PromotionRedemptionRow[];
+  reviews: ReviewRow[];
+  reviewResponses: ReviewResponseRow[];
   prisma: PrismaService;
 }
 
@@ -600,6 +626,8 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   const adminUsers: AdminUserRow[] = [];
   const promotions: PromotionRow[] = [];
   const promotionRedemptions: PromotionRedemptionRow[] = [];
+  const reviews: ReviewRow[] = [];
+  const reviewResponses: ReviewResponseRow[] = [];
 
   // Phase 14: real Postgres serializes concurrent claimants against the
   // SAME promotion via `SELECT ... FOR UPDATE`; this fake has no real
@@ -1452,6 +1480,12 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     },
     findUnique: ({ where }: { where: { id: string } }) => {
       return Promise.resolve(customers.find((c) => c.id === where.id) ?? null);
+    },
+    /** Batch author lookup for a page of reviews (Phase 15) — avoids an N+1. */
+    findMany: ({ where }: { where: { id?: { in: string[] } } }) => {
+      if (!where.id) return Promise.resolve([...customers]);
+      const ids = new Set(where.id.in);
+      return Promise.resolve(customers.filter((c) => ids.has(c.id)));
     },
   };
 
@@ -2718,6 +2752,128 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     },
   };
 
+  interface ReviewCreateData {
+    orderId: string;
+    customerId: string;
+    restaurantId: string;
+    rating: number;
+    body?: string;
+  }
+  interface ReviewWhere {
+    id?: string;
+    orderId?: string;
+    restaurantId?: string;
+    status?: ReviewRow['status'];
+  }
+  function matchReview(where: ReviewWhere) {
+    return (r: ReviewRow) => {
+      if (where.id !== undefined && r.id !== where.id) return false;
+      if (where.orderId !== undefined && r.orderId !== where.orderId) return false;
+      if (where.restaurantId !== undefined && r.restaurantId !== where.restaurantId) return false;
+      if (where.status !== undefined && r.status !== where.status) return false;
+      return true;
+    };
+  }
+  const reviewTable = {
+    create: ({ data }: { data: ReviewCreateData }) => {
+      if (reviews.some((r) => r.orderId === data.orderId)) {
+        throw prismaUniqueError(['orderId']);
+      }
+      const row: ReviewRow = {
+        id: randomUUID(),
+        orderId: data.orderId,
+        customerId: data.customerId,
+        restaurantId: data.restaurantId,
+        rating: data.rating,
+        body: data.body ?? null,
+        status: 'PUBLISHED',
+        moderatedByUserId: null,
+        moderationReason: null,
+        moderatedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      reviews.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { id?: string; orderId?: string } }) => {
+      if (where.id !== undefined) {
+        return Promise.resolve(reviews.find((r) => r.id === where.id) ?? null);
+      }
+      return Promise.resolve(reviews.find((r) => r.orderId === where.orderId) ?? null);
+    },
+    findFirst: ({ where }: { where: ReviewWhere }) => {
+      return Promise.resolve(reviews.find(matchReview(where)) ?? null);
+    },
+    findMany: ({
+      where,
+      orderBy,
+      cursor,
+      skip,
+      take,
+    }: {
+      where: ReviewWhere;
+      orderBy?: { createdAt: 'asc' | 'desc' };
+      cursor?: { id: string };
+      skip?: number;
+      take?: number;
+    }) => {
+      let matches = reviews.filter(matchReview(where));
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      if (cursor) {
+        const cursorIndex = matches.findIndex((r) => r.id === cursor.id);
+        matches = cursorIndex === -1 ? [] : matches.slice(cursorIndex + (skip ?? 0));
+      }
+      if (take !== undefined) matches = matches.slice(0, take);
+      return Promise.resolve(matches);
+    },
+    update: ({ where, data }: { where: { id: string }; data: Partial<ReviewRow> }) => {
+      const row = reviews.find((r) => r.id === where.id);
+      if (!row) throw new Error(`review ${where.id} not found`);
+      Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
+      return Promise.resolve(row);
+    },
+    aggregate: ({ where }: { where: ReviewWhere }) => {
+      const matches = reviews.filter(matchReview(where));
+      const sum = matches.reduce((total, r) => total + r.rating, 0);
+      return Promise.resolve({
+        _avg: { rating: matches.length === 0 ? null : sum / matches.length },
+        _count: matches.length,
+      });
+    },
+  };
+
+  interface ReviewResponseCreateData {
+    reviewId: string;
+    restaurantId: string;
+    authorUserId: string;
+    body: string;
+  }
+  const reviewResponseTable = {
+    create: ({ data }: { data: ReviewResponseCreateData }) => {
+      if (reviewResponses.some((r) => r.reviewId === data.reviewId)) {
+        throw prismaUniqueError(['reviewId']);
+      }
+      const row: ReviewResponseRow = {
+        id: randomUUID(),
+        reviewId: data.reviewId,
+        restaurantId: data.restaurantId,
+        authorUserId: data.authorUserId,
+        body: data.body,
+        createdAt: new Date(),
+      };
+      reviewResponses.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { reviewId: string } }) => {
+      return Promise.resolve(reviewResponses.find((r) => r.reviewId === where.reviewId) ?? null);
+    },
+  };
+
   const prisma = {
     user,
     session,
@@ -2749,6 +2905,8 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     adminUser: adminUserTable,
     promotion: promotionTable,
     promotionRedemption: promotionRedemptionTable,
+    review: reviewTable,
+    reviewResponse: reviewResponseTable,
     // Supports both Prisma `$transaction` forms this codebase uses: the
     // array form (a list of already-constructed operations, awaited
     // together — see session.repository.ts) and the interactive
@@ -2823,6 +2981,8 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     adminUsers,
     promotions,
     promotionRedemptions,
+    reviews,
+    reviewResponses,
     prisma,
   };
 }

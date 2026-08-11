@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { formatINR } from '@direct-order/money';
 import { ApiError, orderApi, type OrderTrackingView } from '@/lib/api-client';
+import { ReviewForm } from './review-form';
 
 const STATUS_LABEL: Record<string, string> = {
   PENDING_PAYMENT: 'Awaiting payment',
@@ -207,6 +208,10 @@ export default function OrderTrackingPage() {
             </a>
           )}
         </section>
+      )}
+
+      {order.status === 'DELIVERED' && token && (
+        <ReviewForm orderNumber={order.orderNumber} token={token} />
       )}
 
       <section className="rounded-lg border border-slate-200 p-4">

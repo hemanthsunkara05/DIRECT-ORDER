@@ -9,6 +9,8 @@ import { PaymentVerificationService } from '../../payments/services/payment-veri
 import { hashToken } from '../services/cart.service.js';
 import { OrderRepository } from '../repositories/order.repository.js';
 import { MockPaymentProvider } from '../../payments/providers/mock-payment.provider.js';
+import { SubmitReviewDto } from '../../reviews/dto/submit-review.dto.js';
+import { ReviewService } from '../../reviews/services/review.service.js';
 
 const VerifyPaymentDto = z.object({
   token: z.string().min(1),
@@ -33,6 +35,7 @@ export class OrderTrackingController {
     @Inject(PaymentVerificationService) private readonly verification: PaymentVerificationService,
     @Inject(OrderRepository) private readonly orders: OrderRepository,
     @Inject(MockPaymentProvider) private readonly mockProvider: MockPaymentProvider,
+    @Inject(ReviewService) private readonly reviews: ReviewService,
   ) {}
 
   @Get(':orderNumber')
@@ -77,6 +80,23 @@ export class OrderTrackingController {
 
     const result = this.mockProvider.simulatePaymentOutcome(payment.providerOrderId, input.outcome);
     return ok({ providerPaymentId: result.providerPaymentId });
+  }
+
+  /**
+   * `POST /public/orders/:orderNumber/review` — Phase 15. Not
+   * `POST /me/reviews` (docs/04-api-specification.md §8.4) — see
+   * `ReviewService`'s own doc comment for why the guest access token
+   * is this codebase's only real customer identity today (AMB-2).
+   */
+  @Post(':orderNumber/review')
+  @HttpCode(201)
+  async submitReview(@Param('orderNumber') orderNumber: string, @Body() body: unknown) {
+    const input = SubmitReviewDto.parse(body);
+    const review = await this.reviews.submit(orderNumber, input.token, {
+      rating: input.rating,
+      body: input.body,
+    });
+    return ok({ id: review.id, rating: review.rating, status: review.status });
   }
 
   private async assertOwnership(orderNumber: string, token: string | undefined): Promise<void> {

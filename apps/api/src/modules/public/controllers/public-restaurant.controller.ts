@@ -1,6 +1,7 @@
-import { Controller, Get, HttpCode, Inject, Param } from '@nestjs/common';
-import type { MenuCategory, MenuItem, OperatingHours } from '@prisma/client';
-import { ok } from '../../../platform/http/response-envelope.js';
+import { Controller, Get, HttpCode, Inject, Param, Query } from '@nestjs/common';
+import type { Customer, MenuCategory, MenuItem, OperatingHours, Review } from '@prisma/client';
+import { ok, okPage } from '../../../platform/http/response-envelope.js';
+import { ValidationError } from '../../../platform/errors/app-error.js';
 import type { AvailabilityDecision } from '../../availability/availability.service.js';
 import { formatTimeOfDay } from '../../availability/time-of-day.js';
 import { PublicRestaurantService } from '../services/public-restaurant.service.js';
@@ -40,6 +41,28 @@ export class PublicRestaurantController {
         items: items.filter((item) => item.categoryId === category.id).map(toPublicItem),
       })),
     });
+  }
+
+  @Get(':slug/reviews')
+  @HttpCode(200)
+  async getReviews(
+    @Param('slug') slug: string,
+    @Query('cursor') cursor?: string,
+    @Query('limit') limitRaw?: string,
+  ) {
+    const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
+    if (limitRaw !== undefined && (!Number.isFinite(limit) || limit! < 1)) {
+      throw new ValidationError('limit must be a positive integer.');
+    }
+    const page = await this.service.getReviews(slug, cursor, limit);
+    return okPage(
+      page.items.map((review) => toPublicReview(review, page.authorsById.get(review.customerId))),
+      {
+        nextCursor: page.hasMore ? (page.items.at(-1)?.id ?? null) : null,
+        hasMore: page.hasMore,
+        limit: limit ?? 20,
+      },
+    );
   }
 }
 
@@ -99,6 +122,22 @@ function toPublicRestaurant(
       closesAt: formatTimeOfDay(row.closesAt),
       isClosed: row.isClosed,
     })),
+  };
+}
+
+/**
+ * BR-124: "a minimal customer identity — never phone, email, or
+ * address." First name only, derived from `Customer.fullName` —
+ * `phone`/`email` are never read here, matching the same explicit
+ * field-allowlist discipline `toPublicRestaurant` above uses.
+ */
+function toPublicReview(review: Review, author: Customer | undefined) {
+  return {
+    id: review.id,
+    rating: review.rating,
+    body: review.body,
+    authorFirstName: author ? (author.fullName.split(' ')[0] ?? 'Guest') : 'Guest',
+    createdAt: review.createdAt,
   };
 }
 

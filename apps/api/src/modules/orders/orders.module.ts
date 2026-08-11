@@ -4,6 +4,7 @@ import { PublicModule } from '../public/public.module.js';
 import { PaymentsModule } from '../payments/payments.module.js';
 import { DeliveryModule } from '../delivery/delivery.module.js';
 import { PromotionsModule } from '../promotions/promotions.module.js';
+import { ReviewsModule } from '../reviews/reviews.module.js';
 import { OrderStateModule } from './order-state.module.js';
 import { CustomerRepository } from './repositories/customer.repository.js';
 import { CartRepository } from './repositories/cart.repository.js';
@@ -35,10 +36,11 @@ import { RestaurantOrderController } from './controllers/restaurant-order.contro
  * provides `DeliveryDispatchService` (dispatch-on-ready, injected into
  * `RestaurantOrderService`) — see that module's own doc comment for why
  * the import direction only ever goes this way, never the reverse.
- * `PromotionsModule` (Phase 14) is imported explicitly, even though
- * `PublicModule` already imports it too — Nest module imports are not
- * transitively re-exported, and `CheckoutService` injects
- * `PromotionReservationService` directly.
+ * `PromotionsModule` (Phase 14) and `ReviewsModule` (Phase 15) are
+ * both imported explicitly, even though `PublicModule` already imports
+ * them too — Nest module imports are not transitively re-exported, and
+ * `CheckoutService`/`OrderTrackingController` inject
+ * `PromotionReservationService`/`ReviewService` directly.
  */
 @Module({
   imports: [
@@ -48,6 +50,7 @@ import { RestaurantOrderController } from './controllers/restaurant-order.contro
     DeliveryModule,
     IdentityModule,
     PromotionsModule,
+    ReviewsModule,
   ],
   controllers: [
     CartController,

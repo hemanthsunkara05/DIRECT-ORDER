@@ -34,4 +34,10 @@ export class CustomerRepository {
   async findById(id: string): Promise<Customer | null> {
     return this.prisma.customer.findUnique({ where: { id } });
   }
+
+  /** Batch lookup for a page of results (e.g. review authors) — avoids an N+1 of individual findById calls. */
+  async findByIds(ids: string[]): Promise<Customer[]> {
+    if (ids.length === 0) return [];
+    return this.prisma.customer.findMany({ where: { id: { in: ids } } });
+  }
 }

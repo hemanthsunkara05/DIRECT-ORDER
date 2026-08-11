@@ -75,6 +75,9 @@ function AccountDetails() {
                   <Link href="/restaurant/notifications" className="underline">
                     Notifications
                   </Link>
+                  <Link href="/restaurant/reviews" className="underline">
+                    Reviews
+                  </Link>
                   {(m.role === 'MANAGER' || m.role === 'OWNER') && (
                     <>
                       <Link href="/restaurant/profile" className="underline">

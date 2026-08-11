@@ -11,6 +11,7 @@ import { DeliveryModule } from './modules/delivery/delivery.module.js';
 import { OrdersModule } from './modules/orders/orders.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { PromotionsModule } from './modules/promotions/promotions.module.js';
+import { ReviewsModule } from './modules/reviews/reviews.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 
 @Module({})
@@ -30,6 +31,7 @@ export class AppModule {
         OrdersModule,
         NotificationsModule,
         PromotionsModule,
+        ReviewsModule,
         AdminModule,
       ],
     };

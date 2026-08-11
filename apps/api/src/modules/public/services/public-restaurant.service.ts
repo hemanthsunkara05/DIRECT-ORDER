@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { MenuCategory, MenuItem, OperatingHours } from '@prisma/client';
+import type { Customer, MenuCategory, MenuItem, OperatingHours, Review } from '@prisma/client';
 import { NotFoundError } from '../../../platform/errors/app-error.js';
 import {
   AvailabilityService,
@@ -11,6 +11,8 @@ import {
   type RestaurantWithPublicRelations,
 } from '../repositories/public-restaurant.repository.js';
 import { PublicMenuRepository } from '../repositories/public-menu.repository.js';
+import { ReviewRepository } from '../../reviews/repositories/review.repository.js';
+import { CustomerRepository } from '../../orders/repositories/customer.repository.js';
 
 export interface PublicProfile {
   restaurant: RestaurantWithPublicRelations;
@@ -21,6 +23,12 @@ export interface PublicProfile {
 export interface PublicMenu {
   categories: MenuCategory[];
   items: MenuItem[];
+}
+
+export interface PublicReviewPage {
+  items: Review[];
+  authorsById: Map<string, Customer>;
+  hasMore: boolean;
 }
 
 /**
@@ -41,6 +49,8 @@ export class PublicRestaurantService {
     @Inject(PublicMenuRepository) private readonly menu: PublicMenuRepository,
     @Inject(OperatingHoursRepository) private readonly hours: OperatingHoursRepository,
     @Inject(AvailabilityService) private readonly availability: AvailabilityService,
+    @Inject(ReviewRepository) private readonly reviews: ReviewRepository,
+    @Inject(CustomerRepository) private readonly customers: CustomerRepository,
   ) {}
 
   async getProfile(slug: string): Promise<PublicProfile> {
@@ -59,6 +69,26 @@ export class PublicRestaurantService {
       this.menu.listItems(restaurant.id),
     ]);
     return { categories, items };
+  }
+
+  /**
+   * `GET /public/restaurants/:slug/reviews` — BR-124: the response
+   * only ever needs to expose an `authorFirstName`-shaped display
+   * name, never `Customer.phone`/`email`; returning full `Customer`
+   * rows here (keyed by id, resolved in one batch, not N+1) keeps that
+   * field-allowlisting decision at the controller, matching this
+   * file's own established "public toX() functions are explicit
+   * allowlists" convention.
+   */
+  async getReviews(slug: string, cursor?: string, limit?: number): Promise<PublicReviewPage> {
+    const restaurant = await this.findVisibleBySlug(slug);
+    const page = await this.reviews.listPublished(restaurant.id, cursor, limit);
+    const authors = await this.customers.findByIds(page.items.map((r) => r.customerId));
+    return {
+      items: page.items,
+      authorsById: new Map(authors.map((a) => [a.id, a])),
+      hasMore: page.hasMore,
+    };
   }
 
   private async findVisibleBySlug(slug: string): Promise<RestaurantWithPublicRelations> {
