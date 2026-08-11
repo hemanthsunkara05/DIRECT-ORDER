@@ -19,7 +19,7 @@
     "format:check": "prettier --check .",
     "test": "pnpm run build:packages && pnpm --recursive run test",
     "test:e2e": "pnpm --filter=./apps/web run test:e2e",
-    "postinstall": "prisma generate --schema prisma/schema.prisma",
+    "postinstall": "prisma generate --schema prisma/schema.prisma && pnpm run build:packages",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "db:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",

@@ -44,6 +44,15 @@ git clone <repo-url>
 cd PRODUCT
 pnpm install
 
+pnpm run build:packages
+# Compiles packages/money and packages/contracts to dist/ — apps/api
+# imports these as built packages, not TS source, so this must run
+# before `pnpm dev` on a fresh clone (a long-lived local checkout that
+# already has a dist/ from an earlier run won't notice this is missing;
+# a genuinely fresh clone will fail with a bare `Cannot find module
+# '@direct-order/money/dist/index.js'` from apps/api without it — the
+# `postinstall` hook only generates the Prisma client, not these).
+
 cp .env.example .env
 # Edit .env if you need non-default values. The defaults match
 # docker-compose.yml, so a fresh clone works with zero edits.
