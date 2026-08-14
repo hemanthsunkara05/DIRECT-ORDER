@@ -48,3 +48,16 @@ BEGIN
     EXECUTE 'REVOKE UPDATE, DELETE ON audit_logs FROM direct_order_app';
   END IF;
 END $$;
+
+-- loyalty_ledger (Phase 16) is append-only for the same reason
+-- audit_logs is: docs/01-domain-model.md §5.9 states its rows are
+-- "never updated or deleted" — BR-97 (the ledger is the authoritative
+-- record; the account balance is a derived cache) depends on that
+-- holding even against a bug in the application itself, not just
+-- against the application's own repository never calling update/delete.
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'loyalty_ledger') THEN
+    EXECUTE 'REVOKE UPDATE, DELETE ON loyalty_ledger FROM direct_order_app';
+  END IF;
+END $$;

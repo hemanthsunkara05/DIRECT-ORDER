@@ -33,4 +33,9 @@ export class AuthNotifierService {
       '[auth-notifier] Password reset token (Phase 3 placeholder)',
     );
   }
+
+  /** Phase 16: AMB-2's phone-OTP customer login — same placeholder treatment, not a real SMS provider call. */
+  notifyCustomerLoginCode(phone: string, code: string): void {
+    this.logger.info({ phone, code }, '[auth-notifier] Customer login code (Phase 16 placeholder)');
+  }
 }

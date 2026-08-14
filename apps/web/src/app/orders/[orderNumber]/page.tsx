@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { formatINR } from '@direct-order/money';
+import Link from 'next/link';
 import { ApiError, orderApi, type OrderTrackingView } from '@/lib/api-client';
 import { ReviewForm } from './review-form';
 
@@ -114,6 +115,14 @@ export default function OrderTrackingPage() {
           {STATUS_LABEL[order.status] ?? order.status}
         </p>
       </div>
+
+      <p className="text-sm text-slate-500">
+        Want to earn loyalty points and track your order history?{' '}
+        <Link href="/customer/login" className="text-blue-600 underline">
+          Create a free account
+        </Link>
+        .
+      </p>
 
       {order.status === 'PENDING_PAYMENT' && (
         <section className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">

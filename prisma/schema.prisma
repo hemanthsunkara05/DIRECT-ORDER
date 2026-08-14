@@ -148,6 +148,45 @@ enum ReviewReportStatus {
   DISMISSED
 }
 
+enum LoyaltyAccountStatus {
+  ACTIVE
+  DISABLED
+}
+
+/// docs/01 §5.9's exact six values — treated as a closed set. A
+/// redemption's checkout-time hold is represented by LoyaltyRedemption
+/// (RESERVED/CONFIRMED/RELEASED), not by a seventh ledger type, so a
+/// released reservation never needs a compensating ledger row — it
+/// simply never produces one, keeping every ledger row a genuine,
+/// permanent fact (BR-97, "never updated or deleted").
+enum LoyaltyLedgerType {
+  ORDER_EARN
+  REDEMPTION
+  REFUND_CLAWBACK
+  ADMIN_ADJUSTMENT
+  EXPIRATION
+  REFERRAL_REWARD
+}
+
+/// BR-102 ("reserved at checkout and confirmed on payment capture,
+/// mirroring coupons") — same three-state shape as
+/// PromotionRedemptionStatus, same RESERVED -> CONFIRMED/RELEASED
+/// transitions driven by the same ORDER_PLACED / ORDER_PAYMENT_FAILED /
+/// ORDER_EXPIRED outbox events LoyaltyOutboxConsumer subscribes to.
+enum LoyaltyRedemptionStatus {
+  RESERVED
+  CONFIRMED
+  RELEASED
+}
+
+enum ReferralStatus {
+  PENDING
+  QUALIFIED
+  REWARDED
+  EXPIRED
+  INVALIDATED
+}
+
 /// docs/03-state-machines.md §7.2. A payment's status is a field
 /// separate from the order's — never merged (domain model note).
 enum PaymentStatus {
@@ -280,6 +319,11 @@ model User {
   staffInvitationsSent  StaffInvitation[] @relation("InvitationSentBy")
   closurePeriodsCreated ClosurePeriod[]   @relation("ClosurePeriodCreatedBy")
   adminUser             AdminUser?
+  /// Phase 16: set only for a registered "lightweight optional account"
+  /// (docs/01 §5.1: "has ... optional one Customer"). A User backing a
+  /// restaurant staff member or admin has no Customer row — the two
+  /// principal kinds are not required to overlap.
+  customer              Customer?
 
   @@map("users")
 }
@@ -368,6 +412,14 @@ enum OtpPurpose {
   EMAIL_VERIFICATION
   PHONE_VERIFICATION
   PASSWORD_RESET
+  /// Phase 16: AMB-2's "lightweight optional account" — docs/01 §5.1
+  /// already documents OtpChallenge's purpose as "Phone/email
+  /// verification and customer login", so this completes a
+  /// purpose the model always anticipated rather than adding a new
+  /// concept. Same numeric-code path as PHONE_VERIFICATION (6 digits,
+  /// 5-minute expiry, 5 attempts) — OtpService branches only on
+  /// PASSWORD_RESET, so no service-layer change was needed to support it.
+  CUSTOMER_LOGIN
 }
 
 /// Unified verification/challenge mechanism (docs/01-domain-model.md
@@ -709,16 +761,17 @@ model ClosurePeriod {
 // ─────────────────────────────────────────────────────────────────
 
 /// The ordering party — may exist without a User (guest checkout,
-/// docs/01 §5.4). Phase 9 only ever creates guest rows (`userId`
-/// always null): a registered customer account (AMB-2's "lightweight
-/// optional account", phone-OTP, no password) is explicitly deferred
-/// past the pilot — see this phase's report. `userId` is a plain
-/// nullable field with no `@relation` for the same reason: there is no
-/// code path that ever sets it yet, so a real FK/back-relation to User
-/// would be unused scaffolding, not a working feature.
+/// docs/01 §5.4). `userId` set means a registered "lightweight optional
+/// account" (AMB-2: phone-OTP, no password) created via Phase 16's
+/// `POST /auth/customer/otp/verify`; `userId` null means guest — the
+/// exact "null means guest" rule docs/01 §5.4 states. AMB-2's own
+/// recommendation ("no" retroactive merge) means registering does NOT
+/// backfill or link any prior guest Customer rows sharing the same
+/// phone — a fresh row is created, deliberately orphaned from earlier
+/// guest history.
 model Customer {
   id                 String         @id @default(uuid(7)) @db.Uuid
-  userId             String?        @map("user_id") @db.Uuid
+  userId             String?        @unique @map("user_id") @db.Uuid
   fullName           String         @map("full_name")
   phone              String
   email              String?
@@ -732,12 +785,23 @@ model Customer {
   createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz
 
+  user                 User?                 @relation(fields: [userId], references: [id], onDelete: Restrict)
   carts                Cart[]
   orders               Order[]
   promotionRedemptions PromotionRedemption[]
   reviews              Review[]
+  loyaltyAccount       LoyaltyAccount?
+  loyaltyLedgerEntries LoyaltyLedger[]
+  loyaltyRedemptions   LoyaltyRedemption[]
+  referralCode         ReferralCode?
+  referralsReferred    Referral[]            @relation("Referrer")
+  referredBy           Referral?             @relation("Referred")
 
   @@index([phone])
+  // docs/01 §5.4: "unique on phone where user_id IS NOT NULL; guests
+  // may repeat" — a real partial unique index, hand-written in this
+  // phase's migration (Prisma's DSL cannot express a partial unique),
+  // same treatment as Phase 14's `promotions_active_code_key`.
   @@map("customers")
 }
 
@@ -850,6 +914,14 @@ model Order {
   /// layer, not the database.
   promotionRedemptions PromotionRedemption[]
   review               Review?
+  /// Zero or one — mirrors the promotionRedemptions comment above:
+  /// `orderId` is unique on LoyaltyRedemption itself (not just a
+  /// composite), so this is a genuine one-to-one, unlike promotions.
+  loyaltyRedemption    LoyaltyRedemption?
+  /// The referral this order QUALIFIED (BR-111: the referred customer's
+  /// first order reaching DELIVERED) — not every order has one; most
+  /// never do. See Referral.qualifyingOrderId.
+  qualifyingReferral   Referral?
 
   @@unique([orderNumber])
   @@unique([restaurantId, idempotencyKey])
@@ -1192,6 +1264,145 @@ model ReviewReport {
   @@unique([reviewId, reporterType, reporterId])
   @@index([status])
   @@map("review_reports")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Loyalty and referrals (Phase 16) — docs/01-domain-model.md §5.9-5.10,
+// docs/02-database-schema.md's loyalty_ledger/referrals DDL,
+// docs/06-business-rules.md BR-97..BR-116.
+// ─────────────────────────────────────────────────────────────────
+
+/// docs/01 §5.9. `balancePoints` is a DERIVED CACHE (BR-97: "the ledger
+/// is authoritative; the account balance is a derived cache reconciled
+/// on a schedule") — every write to this row's balance/lifetime fields
+/// happens in the SAME transaction as the LoyaltyLedger insert that
+/// justifies it; no code path may change `balancePoints` on its own.
+/// AMB-12: allowed to go negative after a clawback exceeds the current
+/// balance — never clamped at zero, and redemption is blocked while
+/// negative (enforced in LoyaltyRedemptionService, not here).
+model LoyaltyAccount {
+  id               String               @id @default(uuid(7)) @db.Uuid
+  customerId       String               @unique @map("customer_id") @db.Uuid
+  balancePoints    Int                  @default(0) @map("balance_points")
+  lifetimeEarned   Int                  @default(0) @map("lifetime_earned")
+  lifetimeRedeemed Int                  @default(0) @map("lifetime_redeemed")
+  status           LoyaltyAccountStatus @default(ACTIVE)
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime             @updatedAt @map("updated_at") @db.Timestamptz
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@map("loyalty_accounts")
+}
+
+/// docs/01 §5.9. Append-only — "rows are never updated or deleted"
+/// (BR-97). `points` is a plain signed Int (positive credit, negative
+/// debit), NOT a money type — docs/02 §6.3's reference DDL has it as
+/// `INTEGER`, not `BIGINT`. The `(type, referenceType, referenceId)`
+/// uniqueness (hand-written partial index, see this phase's migration —
+/// Prisma's DSL cannot express the `type <> 'ADMIN_ADJUSTMENT'`
+/// condition) is what makes BR-99 ("an order can never award twice")
+/// and the referral reward's BR-112 ("issued once ... through the
+/// ledger's uniqueness") true at the storage layer, not just in
+/// application logic — the same insert-and-let-the-constraint-decide
+/// pattern used throughout this codebase since Phase 9.
+model LoyaltyLedger {
+  id            String            @id @default(uuid(7)) @db.Uuid
+  customerId    String            @map("customer_id") @db.Uuid
+  type          LoyaltyLedgerType
+  points        Int
+  referenceType String?           @map("reference_type")
+  referenceId   String?           @map("reference_id") @db.Uuid
+  description   String?
+  actorType     String            @default("SYSTEM") @map("actor_type")
+  actorId       String?           @map("actor_id") @db.Uuid
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  // No relation to LoyaltyAccount here (docs/01 §5.9's field list has
+  // only customer_id, no account_id) — a repository queries this table
+  // by customerId directly.
+  @@index([customerId, createdAt(sort: Desc)])
+  @@map("loyalty_ledger")
+}
+
+/// BR-101/BR-102: "redemption locks the account row; concurrent
+/// redemptions cannot overdraw" and "reserved at checkout, confirmed on
+/// payment capture, mirroring coupons" — the exact same RESERVED ->
+/// CONFIRMED/RELEASED shape as PromotionRedemption, for the same reason:
+/// docs/01 §5.9 lists only LoyaltyAccount/LoyaltyLedger, but "mirroring
+/// coupons" is only achievable with a reservation row distinct from the
+/// (append-only, never-reversed) ledger — a RELEASED row here simply
+/// never produces a LoyaltyLedger entry, so the ledger stays a record of
+/// genuine, permanent facts only. `discountMinor` is the resolved
+/// minor-unit value of `points` at the redemption conversion rate
+/// (LoyaltyRedemptionService's own doc comment — no spec source, a
+/// code-level default same as Phase 15's Bayesian rating constants).
+model LoyaltyRedemption {
+  id            String                  @id @default(uuid(7)) @db.Uuid
+  customerId    String                  @map("customer_id") @db.Uuid
+  orderId       String?                 @unique @map("order_id") @db.Uuid
+  points        Int
+  discountMinor BigInt                  @map("discount_minor")
+  status        LoyaltyRedemptionStatus @default(RESERVED)
+  reservedAt    DateTime                @default(now()) @map("reserved_at") @db.Timestamptz
+  expiresAt     DateTime?               @map("expires_at") @db.Timestamptz
+  confirmedAt   DateTime?               @map("confirmed_at") @db.Timestamptz
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  order    Order?   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([customerId, status])
+  @@map("loyalty_redemptions")
+}
+
+/// docs/01 §5.10. One active code per customer — generated on first
+/// access to `/me/referrals` or `POST /auth/customer/otp/verify`
+/// (whichever a customer reaches first), never pre-generated for every
+/// account up front.
+model ReferralCode {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  customerId String   @unique @map("customer_id") @db.Uuid
+  code       String   @unique
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@map("referral_codes")
+}
+
+/// docs/01 §5.10. BR-108 ("at most one referrer, ever" — enforced by
+/// `@unique` on `referredCustomerId`) and BR-109 ("self-referral is
+/// blocked by a database CHECK, not only by application logic" — hand-
+/// written in this phase's migration, since Prisma's DSL cannot express
+/// CHECK constraints, same limitation documented on Order/OrderItem
+/// above) both hold at the storage layer. `referralCode` is a
+/// denormalised text snapshot of the code used at attribution time, not
+/// a foreign key — the same "survives independent of the live row"
+/// treatment PromotionRedemption gives `customerPhone`. `qualifyingOrderId`
+/// is plain `@unique` (not a hand-written partial index): Postgres
+/// unique indexes already let multiple NULLs coexist, which is exactly
+/// "unique only once qualified" without any extra work.
+model Referral {
+  referrerCustomerId String         @map("referrer_customer_id") @db.Uuid
+  id                 String         @id @default(uuid(7)) @db.Uuid
+  referredCustomerId String         @unique @map("referred_customer_id") @db.Uuid
+  referralCode       String         @map("referral_code")
+  status             ReferralStatus @default(PENDING)
+  qualifyingOrderId  String?        @unique @map("qualifying_order_id") @db.Uuid
+  attributedAt       DateTime       @default(now()) @map("attributed_at") @db.Timestamptz
+  qualifiedAt        DateTime?      @map("qualified_at") @db.Timestamptz
+  rewardedAt         DateTime?      @map("rewarded_at") @db.Timestamptz
+  expiresAt          DateTime?      @map("expires_at") @db.Timestamptz
+
+  referrer        Customer @relation("Referrer", fields: [referrerCustomerId], references: [id], onDelete: Restrict)
+  referred        Customer @relation("Referred", fields: [referredCustomerId], references: [id], onDelete: Restrict)
+  qualifyingOrder Order?   @relation(fields: [qualifyingOrderId], references: [id], onDelete: Restrict)
+
+  @@index([referrerCustomerId, status])
+  @@map("referrals")
 }
 
 /// The idempotency anchor for every provider callback (docs/01 §5.6).

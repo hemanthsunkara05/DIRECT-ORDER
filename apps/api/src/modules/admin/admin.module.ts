@@ -8,11 +8,13 @@ import { NotificationRepository } from '../notifications/repositories/notificati
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { PromotionsModule } from '../promotions/promotions.module.js';
 import { ReviewsModule } from '../reviews/reviews.module.js';
+import { LoyaltyModule } from '../loyalty/loyalty.module.js';
 import { AdminQueryRepository } from './repositories/admin-query.repository.js';
 import { RestaurantStateService } from './services/restaurant-state.service.js';
 import { AdminUserService } from './services/admin-user.service.js';
 import { AdminOrderService } from './services/admin-order.service.js';
 import { AdminReviewService } from './services/admin-review.service.js';
+import { AdminLoyaltyService } from './services/admin-loyalty.service.js';
 import { AdminRestaurantsController } from './controllers/admin-restaurants.controller.js';
 import { AdminUsersController } from './controllers/admin-users.controller.js';
 import { AdminOrdersController } from './controllers/admin-orders.controller.js';
@@ -22,6 +24,7 @@ import { AdminAuditController } from './controllers/admin-audit.controller.js';
 import { AdminOverviewController } from './controllers/admin-overview.controller.js';
 import { AdminPromotionsController } from './controllers/admin-promotions.controller.js';
 import { AdminReviewsController } from './controllers/admin-reviews.controller.js';
+import { AdminLoyaltyController } from './controllers/admin-loyalty.controller.js';
 
 /**
  * Phase 13 (Admin panel). `AdminUserRepository` itself is NOT provided
@@ -50,6 +53,7 @@ import { AdminReviewsController } from './controllers/admin-reviews.controller.j
     NotificationsModule,
     PromotionsModule,
     ReviewsModule,
+    LoyaltyModule,
   ],
   controllers: [
     AdminRestaurantsController,
@@ -61,6 +65,7 @@ import { AdminReviewsController } from './controllers/admin-reviews.controller.j
     AdminOverviewController,
     AdminPromotionsController,
     AdminReviewsController,
+    AdminLoyaltyController,
   ],
   providers: [
     AdminQueryRepository,
@@ -69,6 +74,7 @@ import { AdminReviewsController } from './controllers/admin-reviews.controller.j
     AdminUserService,
     AdminOrderService,
     AdminReviewService,
+    AdminLoyaltyService,
     ReconciliationIssueRepository,
     NotificationRepository,
   ],

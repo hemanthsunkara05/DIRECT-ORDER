@@ -9,6 +9,7 @@ export class FakeAuthNotifierService extends AuthNotifierService {
   readonly emailVerificationCodes = new Map<string, string>();
   readonly phoneVerificationCodes = new Map<string, string>();
   readonly passwordResetTokens = new Map<string, string>();
+  readonly customerLoginCodes = new Map<string, string>();
 
   constructor() {
     super(undefined as never);
@@ -24,5 +25,9 @@ export class FakeAuthNotifierService extends AuthNotifierService {
 
   override notifyPasswordResetToken(identifier: string, token: string): void {
     this.passwordResetTokens.set(identifier, token);
+  }
+
+  override notifyCustomerLoginCode(phone: string, code: string): void {
+    this.customerLoginCodes.set(phone, code);
   }
 }

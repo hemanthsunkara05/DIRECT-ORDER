@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
-import type { Order, Prisma } from '@prisma/client';
+import type { Customer, Order, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { AppError } from '../../../platform/errors/app-error.js';
 import { isUniqueConstraintViolation } from '../../../platform/database/prisma-errors.js';
@@ -16,11 +16,23 @@ import {
 } from '../../payments/providers/payment-provider.port.js';
 import { CartRepository } from '../repositories/cart.repository.js';
 import { OrderRepository } from '../repositories/order.repository.js';
+import { CustomerRepository } from '../repositories/customer.repository.js';
 import { hashToken } from './cart.service.js';
 import { generateOrderNumber } from '../order-number.js';
 import { serializeBreakdown, type SerializedPricingBreakdown } from '../serialize-breakdown.js';
 import type { CheckoutInput } from '../dto/checkout.dto.js';
 import { PromotionReservationService } from '../../promotions/services/promotion-reservation.service.js';
+import {
+  LoyaltyRedemptionService,
+  insufficientPointsError,
+  pointsToMinor,
+  minorToPoints,
+} from '../../loyalty/services/loyalty-redemption.service.js';
+
+/** Resolved by `OptionalAuthService` at the controller — `null` for every guest checkout, the common case (AMB-2: guest checkout is never blocked). */
+export interface CheckoutIdentity {
+  userId: string;
+}
 
 export interface CheckoutResponseBody {
   orderNumber: string;
@@ -51,8 +63,20 @@ const MAX_ORDER_NUMBER_ATTEMPTS = 5;
  * at checkout", BR-86, is a fresh call, not a reused page-load quote),
  * then the authoritative, LOCKED re-check inside `createOrderAttempt`'s
  * transaction (`PromotionReservationService.checkAndLock`), in the same
- * transaction as Order creation. Step 7 (loyalty reservation) is still
- * skipped — no LoyaltyLedger table exists yet (Phase 16).
+ * transaction as Order creation. Step 7 (loyalty reservation, Phase 16)
+ * follows the identical two-half shape: `redeemLoyaltyPoints` is
+ * resolved into a preliminary `loyaltyDiscountMinor` and folded into
+ * the SAME `quoteByRestaurantId` call (so the quote total already
+ * reflects it), then re-validated and locked for real inside
+ * `createOrderAttempt`'s transaction
+ * (`LoyaltyRedemptionService.checkAndLock`) — `redeemLoyaltyPoints`
+ * only has any effect when `identity` resolves to a logged-in customer
+ * (AMB-2: guests do not earn OR redeem points; a guest requesting a
+ * positive redemption gets `INSUFFICIENT_LOYALTY_POINTS`, never a
+ * silent no-op). A logged-in customer's order also reuses their
+ * PERMANENT `Customer` row (`createOrderAttempt` below) instead of
+ * creating a fresh guest row — the change that gives loyalty and
+ * referrals the cross-order continuity they need.
  *
  * Idempotency (docs/04 §8.2: "A replay returns the original response
  * with 200, never a duplicate resource"): the `Order` row's
@@ -87,9 +111,15 @@ export class CheckoutService {
     @Inject(OutboxService) private readonly outbox: OutboxService,
     @Inject(PAYMENT_PROVIDER) private readonly paymentProvider: PaymentProvider,
     @Inject(PromotionReservationService) private readonly promotions: PromotionReservationService,
+    @Inject(CustomerRepository) private readonly customers: CustomerRepository,
+    @Inject(LoyaltyRedemptionService) private readonly loyaltyRedemption: LoyaltyRedemptionService,
   ) {}
 
-  async checkout(input: CheckoutInput, idempotencyKey: string): Promise<CheckoutResponseBody> {
+  async checkout(
+    input: CheckoutInput,
+    idempotencyKey: string,
+    identity: CheckoutIdentity | null = null,
+  ): Promise<CheckoutResponseBody> {
     // Step 1: load cart, verify ownership.
     const cart = await this.carts.findByIdWithItems(input.cartId);
     if (!cart || cart.guestTokenHash !== hashToken(input.guestToken)) {
@@ -116,6 +146,21 @@ export class CheckoutService {
       throw new AppError('CART_EMPTY', 409, 'Cart is empty.');
     }
 
+    // Step 7's preliminary half: resolve the logged-in customer (if
+    // any) and fold a requested `redeemLoyaltyPoints` into the SAME
+    // quote call below, so quote and checkout agree on the total by
+    // construction (the same reasoning `couponCode` already gets).
+    // AMB-2: a guest requesting a redemption is rejected outright here
+    // — never silently ignored — rather than treated as "0 points
+    // requested" and passed through unnoticed.
+    const accountCustomer = identity ? await this.customers.findByUserId(identity.userId) : null;
+    if (input.redeemLoyaltyPoints && !accountCustomer) {
+      throw insufficientPointsError();
+    }
+    const preliminaryLoyaltyDiscountMinor = input.redeemLoyaltyPoints
+      ? pointsToMinor(input.redeemLoyaltyPoints)
+      : undefined;
+
     // Steps 2-6, 8: availability, live items, price drift, min order,
     // coupon preview, pricing.
     const quote = await this.quoteService.quoteByRestaurantId(
@@ -126,6 +171,7 @@ export class CheckoutService {
         unitPriceMinorAtAdd: item.unitPriceMinorAtAdd,
       })),
       input.couponCode,
+      preliminaryLoyaltyDiscountMinor,
     );
     if (!quote.valid) {
       throwForIssues(quote.issues);
@@ -184,6 +230,14 @@ export class CheckoutService {
       },
     };
 
+    // Step 7's authoritative half: the pricing engine may have clamped
+    // the preliminary discount down (e.g. after the promotion already
+    // consumed most of the discountable base) — the ACTUAL points to
+    // reserve/lock are derived from the ACTUAL applied discount, never
+    // the raw request, so a customer is never charged points for value
+    // they didn't receive.
+    const actualLoyaltyPoints = minorToPoints(quote.breakdown.loyaltyDiscountMinor);
+
     // Step 10: one transaction — Customer, Order (PENDING_PAYMENT),
     // OrderItems, Payment (CREATED), status history, cart conversion.
     let order: Order & { payments: { id: string }[] };
@@ -193,8 +247,9 @@ export class CheckoutService {
         idempotencyKey,
         cart.id,
         baseFields,
-        quote.breakdown.payableTotalMinor,
         quote.breakdown.promotionDiscountMinor,
+        accountCustomer,
+        actualLoyaltyPoints,
       );
     } catch (error) {
       if (isUniqueConstraintViolation(error)) {
@@ -253,22 +308,29 @@ export class CheckoutService {
     idempotencyKey: string,
     cartId: string,
     baseFields: OrderBaseFields,
-    payableTotalMinor: bigint,
     promotionDiscountMinor: bigint,
+    accountCustomer: Customer | null,
+    loyaltyPoints: number,
   ): Promise<Order & { payments: { id: string }[] }> {
     let lastError: unknown;
     for (let attempt = 0; attempt < MAX_ORDER_NUMBER_ATTEMPTS; attempt++) {
       const orderNumber = generateOrderNumber();
       try {
         return await this.prisma.$transaction(async (tx) => {
-          const customer = await tx.customer.create({
-            data: {
-              fullName: input.customer.name,
-              phone: input.customer.phone,
-              email: input.customer.email,
-              status: 'ACTIVE',
-            },
-          });
+          // A logged-in customer reuses their PERMANENT Customer row —
+          // the continuity loyalty/referrals depend on. A guest (the
+          // common case) gets a fresh row every checkout, same as
+          // every phase before this one.
+          const customer =
+            accountCustomer ??
+            (await tx.customer.create({
+              data: {
+                fullName: input.customer.name,
+                phone: input.customer.phone,
+                email: input.customer.email,
+                status: 'ACTIVE',
+              },
+            }));
 
           // Step 6's authoritative half — locked, re-validated fresh
           // under the transaction (BR-86). Aborting here (throw) rolls
@@ -284,6 +346,20 @@ export class CheckoutService {
             });
           }
 
+          // Step 7's authoritative half — same shape as the coupon
+          // check above: locked, re-validated fresh under THIS
+          // transaction, never trusting the earlier quote-time
+          // estimate. `loyaltyPoints` is already the pricing-engine-
+          // clamped final value (see `checkout()`'s own comment) — this
+          // call's job is solely the concurrency-safe balance check.
+          let checkedRedemption: { points: number; discountMinor: bigint } | null = null;
+          if (loyaltyPoints > 0) {
+            checkedRedemption = await this.loyaltyRedemption.checkAndLock(tx, {
+              customerId: customer.id,
+              points: loyaltyPoints,
+            });
+          }
+
           const created = await tx.order.create({
             data: {
               ...baseFields,
@@ -292,6 +368,7 @@ export class CheckoutService {
               status: 'PENDING_PAYMENT',
               promotionId: checkedCoupon?.promotionId,
               couponCode: checkedCoupon?.couponCode,
+              appliedLoyaltyPoints: checkedRedemption?.points ?? 0,
               history: {
                 create: [
                   {
@@ -307,7 +384,7 @@ export class CheckoutService {
                   {
                     provider: this.paymentProvider.name,
                     status: 'CREATED',
-                    amountMinor: payableTotalMinor,
+                    amountMinor: baseFields.payableTotalMinor as bigint,
                     currency: 'INR',
                     idempotencyKey: `${idempotencyKey}:payment`,
                   },
@@ -325,6 +402,18 @@ export class CheckoutService {
                           discountMinor: promotionDiscountMinor,
                         },
                       ],
+                    },
+                  }
+                : {}),
+              ...(checkedRedemption
+                ? {
+                    loyaltyRedemption: {
+                      create: {
+                        customerId: customer.id,
+                        points: checkedRedemption.points,
+                        discountMinor: checkedRedemption.discountMinor,
+                        status: 'RESERVED',
+                      },
                     },
                   }
                 : {}),

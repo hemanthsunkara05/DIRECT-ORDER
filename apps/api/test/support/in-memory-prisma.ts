@@ -497,6 +497,63 @@ export interface ReviewResponseRow {
   createdAt: Date;
 }
 
+export interface LoyaltyAccountRow {
+  id: string;
+  customerId: string;
+  balancePoints: number;
+  lifetimeEarned: number;
+  lifetimeRedeemed: number;
+  status: 'ACTIVE' | 'DISABLED';
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface LoyaltyLedgerRow {
+  id: string;
+  customerId: string;
+  type: string;
+  points: number;
+  referenceType: string | null;
+  referenceId: string | null;
+  description: string | null;
+  actorType: string;
+  actorId: string | null;
+  createdAt: Date;
+}
+
+export interface LoyaltyRedemptionRow {
+  id: string;
+  customerId: string;
+  orderId: string | null;
+  points: number;
+  discountMinor: bigint;
+  status: 'RESERVED' | 'CONFIRMED' | 'RELEASED';
+  reservedAt: Date;
+  expiresAt: Date | null;
+  confirmedAt: Date | null;
+}
+
+export interface ReferralCodeRow {
+  id: string;
+  customerId: string;
+  code: string;
+  isActive: boolean;
+  createdAt: Date;
+}
+
+export interface ReferralRow {
+  id: string;
+  referrerCustomerId: string;
+  referredCustomerId: string;
+  referralCode: string;
+  status: 'PENDING' | 'QUALIFIED' | 'REWARDED' | 'EXPIRED' | 'INVALIDATED';
+  qualifyingOrderId: string | null;
+  attributedAt: Date;
+  qualifiedAt: Date | null;
+  rewardedAt: Date | null;
+  expiresAt: Date | null;
+}
+
 export interface OutboxEventRow {
   id: string;
   eventType: string;
@@ -590,6 +647,11 @@ export interface InMemoryPrisma {
   promotionRedemptions: PromotionRedemptionRow[];
   reviews: ReviewRow[];
   reviewResponses: ReviewResponseRow[];
+  loyaltyAccounts: LoyaltyAccountRow[];
+  loyaltyLedger: LoyaltyLedgerRow[];
+  loyaltyRedemptions: LoyaltyRedemptionRow[];
+  referralCodes: ReferralCodeRow[];
+  referrals: ReferralRow[];
   prisma: PrismaService;
 }
 
@@ -628,6 +690,11 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   const promotionRedemptions: PromotionRedemptionRow[] = [];
   const reviews: ReviewRow[] = [];
   const reviewResponses: ReviewResponseRow[] = [];
+  const loyaltyAccounts: LoyaltyAccountRow[] = [];
+  const loyaltyLedger: LoyaltyLedgerRow[] = [];
+  const loyaltyRedemptions: LoyaltyRedemptionRow[] = [];
+  const referralCodes: ReferralCodeRow[] = [];
+  const referrals: ReferralRow[] = [];
 
   // Phase 14: real Postgres serializes concurrent claimants against the
   // SAME promotion via `SELECT ... FOR UPDATE`; this fake has no real
@@ -1478,7 +1545,10 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       customers.push(row);
       return Promise.resolve(row);
     },
-    findUnique: ({ where }: { where: { id: string } }) => {
+    findUnique: ({ where }: { where: { id?: string; userId?: string } }) => {
+      if (where.userId !== undefined) {
+        return Promise.resolve(customers.find((c) => c.userId === where.userId) ?? null);
+      }
       return Promise.resolve(customers.find((c) => c.id === where.id) ?? null);
     },
     /** Batch author lookup for a page of reviews (Phase 15) — avoids an N+1. */
@@ -1586,12 +1656,16 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     pricingBreakdown: unknown;
     promotionId?: string;
     couponCode?: string;
+    appliedLoyaltyPoints?: number;
     idempotencyKey: string;
     accessTokenHash: string;
     items?: { create: OrderNestedItemCreate[] };
     history?: { create: OrderNestedHistoryCreate[] };
     payments?: { create: OrderNestedPaymentCreate[] };
     promotionRedemptions?: { create: OrderNestedPromotionRedemptionCreate[] };
+    loyaltyRedemption?: {
+      create: { customerId: string; points: number; discountMinor: bigint; status: string };
+    };
   }
   type OrderWhere =
     | { id: string }
@@ -1715,7 +1789,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         pricingBreakdown: data.pricingBreakdown,
         promotionId: data.promotionId ?? null,
         couponCode: data.couponCode ?? null,
-        appliedLoyaltyPoints: 0,
+        appliedLoyaltyPoints: data.appliedLoyaltyPoints ?? 0,
         idempotencyKey: data.idempotencyKey,
         accessTokenHash: data.accessTokenHash,
         placedAt: null,
@@ -1791,6 +1865,21 @@ export function createInMemoryPrisma(): InMemoryPrisma {
           orderId: row.id,
           status: redemption.status as PromotionRedemptionRow['status'],
           discountMinor: redemption.discountMinor,
+          reservedAt: new Date(),
+          expiresAt: null,
+          confirmedAt: null,
+        });
+      }
+
+      if (data.loyaltyRedemption?.create) {
+        const redemption = data.loyaltyRedemption.create;
+        loyaltyRedemptions.push({
+          id: randomUUID(),
+          customerId: redemption.customerId,
+          orderId: row.id,
+          points: redemption.points,
+          discountMinor: redemption.discountMinor,
+          status: redemption.status as LoyaltyRedemptionRow['status'],
           reservedAt: new Date(),
           expiresAt: null,
           confirmedAt: null,
@@ -2874,6 +2963,291 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     },
   };
 
+  const loyaltyAccountTable = {
+    create: ({ data }: { data: { customerId: string } }) => {
+      const row: LoyaltyAccountRow = {
+        id: randomUUID(),
+        customerId: data.customerId,
+        balancePoints: 0,
+        lifetimeEarned: 0,
+        lifetimeRedeemed: 0,
+        status: 'ACTIVE',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      loyaltyAccounts.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { customerId: string } }) => {
+      return Promise.resolve(
+        loyaltyAccounts.find((a) => a.customerId === where.customerId) ?? null,
+      );
+    },
+    findMany: () => Promise.resolve([...loyaltyAccounts]),
+    update: ({
+      where,
+      data,
+    }: {
+      where: { customerId: string };
+      data: {
+        balancePoints?: { increment: number };
+        lifetimeEarned?: { increment: number };
+        lifetimeRedeemed?: { increment: number };
+      };
+    }) => {
+      const row = loyaltyAccounts.find((a) => a.customerId === where.customerId);
+      if (!row) throw new Error(`loyalty account for customer ${where.customerId} not found`);
+      if (data.balancePoints?.increment) row.balancePoints += data.balancePoints.increment;
+      if (data.lifetimeEarned?.increment) row.lifetimeEarned += data.lifetimeEarned.increment;
+      if (data.lifetimeRedeemed?.increment)
+        row.lifetimeRedeemed += data.lifetimeRedeemed.increment;
+      row.updatedAt = new Date();
+      return Promise.resolve(row);
+    },
+  };
+
+  interface LoyaltyLedgerWhere {
+    type?: string;
+    referenceType?: string;
+    referenceId?: string;
+    customerId?: string;
+  }
+  function matchLoyaltyLedger(where: LoyaltyLedgerWhere) {
+    return (r: LoyaltyLedgerRow) => {
+      if (where.type !== undefined && r.type !== where.type) return false;
+      if (where.referenceType !== undefined && r.referenceType !== where.referenceType)
+        return false;
+      if (where.referenceId !== undefined && r.referenceId !== where.referenceId) return false;
+      if (where.customerId !== undefined && r.customerId !== where.customerId) return false;
+      return true;
+    };
+  }
+  const loyaltyLedgerTable = {
+    // Not itself `$queryRaw`-locked in this fake — the hand-written
+    // partial unique index (`(type, referenceType, referenceId) WHERE
+    // referenceId IS NOT NULL AND type <> 'ADMIN_ADJUSTMENT'`) is what
+    // real Postgres enforces; this fake mirrors that exact predicate
+    // rather than a plain uniqueness check, so ADMIN_ADJUSTMENT rows
+    // (which legitimately repeat a customer) and null-reference rows
+    // never collide.
+    create: ({ data }: { data: Omit<LoyaltyLedgerRow, 'id' | 'createdAt'> }) => {
+      if (
+        data.referenceId !== undefined &&
+        data.referenceId !== null &&
+        data.type !== 'ADMIN_ADJUSTMENT'
+      ) {
+        const collision = loyaltyLedger.some(
+          (r) =>
+            r.type === data.type &&
+            r.referenceType === data.referenceType &&
+            r.referenceId === data.referenceId,
+        );
+        if (collision) throw prismaUniqueError(['type', 'referenceType', 'referenceId']);
+      }
+      const row: LoyaltyLedgerRow = {
+        id: randomUUID(),
+        customerId: data.customerId,
+        type: data.type,
+        points: data.points,
+        referenceType: data.referenceType ?? null,
+        referenceId: data.referenceId ?? null,
+        description: data.description ?? null,
+        actorType: data.actorType,
+        actorId: data.actorId ?? null,
+        createdAt: new Date(),
+      };
+      loyaltyLedger.push(row);
+      return Promise.resolve(row);
+    },
+    findFirst: ({ where }: { where: LoyaltyLedgerWhere }) => {
+      return Promise.resolve(loyaltyLedger.find(matchLoyaltyLedger(where)) ?? null);
+    },
+    findMany: ({
+      where,
+      orderBy,
+      cursor,
+      skip,
+      take,
+    }: {
+      where: LoyaltyLedgerWhere;
+      orderBy?: { createdAt: 'asc' | 'desc' };
+      cursor?: { id: string };
+      skip?: number;
+      take?: number;
+    }) => {
+      let matches = loyaltyLedger.filter(matchLoyaltyLedger(where));
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      if (cursor) {
+        const cursorIndex = matches.findIndex((r) => r.id === cursor.id);
+        matches = cursorIndex === -1 ? [] : matches.slice(cursorIndex + (skip ?? 0));
+      }
+      if (take !== undefined) matches = matches.slice(0, take);
+      return Promise.resolve(matches);
+    },
+    aggregate: ({ where }: { where: LoyaltyLedgerWhere }) => {
+      const matches = loyaltyLedger.filter(matchLoyaltyLedger(where));
+      const sum = matches.reduce((total, r) => total + r.points, 0);
+      return Promise.resolve({ _sum: { points: matches.length === 0 ? null : sum } });
+    },
+  };
+
+  interface LoyaltyRedemptionWhere {
+    orderId?: string;
+    customerId?: string;
+    status?: string;
+  }
+  function matchLoyaltyRedemption(where: LoyaltyRedemptionWhere) {
+    return (r: LoyaltyRedemptionRow) => {
+      if (where.orderId !== undefined && r.orderId !== where.orderId) return false;
+      if (where.customerId !== undefined && r.customerId !== where.customerId) return false;
+      if (where.status !== undefined && r.status !== where.status) return false;
+      return true;
+    };
+  }
+  const loyaltyRedemptionTable = {
+    findUnique: ({ where }: { where: { orderId: string } }) => {
+      return Promise.resolve(loyaltyRedemptions.find((r) => r.orderId === where.orderId) ?? null);
+    },
+    aggregate: ({ where }: { where: LoyaltyRedemptionWhere }) => {
+      const matches = loyaltyRedemptions.filter(matchLoyaltyRedemption(where));
+      const sum = matches.reduce((total, r) => total + r.points, 0);
+      return Promise.resolve({ _sum: { points: matches.length === 0 ? null : sum } });
+    },
+    updateMany: ({
+      where,
+      data,
+    }: {
+      where: LoyaltyRedemptionWhere;
+      data: Partial<LoyaltyRedemptionRow>;
+    }) => {
+      const matches = loyaltyRedemptions.filter(matchLoyaltyRedemption(where));
+      for (const row of matches) {
+        Object.assign(row, omitUndefined(data));
+      }
+      return Promise.resolve({ count: matches.length });
+    },
+  };
+
+  const referralCodeTable = {
+    create: ({ data }: { data: { customerId: string; code: string } }) => {
+      if (referralCodes.some((r) => r.customerId === data.customerId)) {
+        throw prismaUniqueError(['customerId']);
+      }
+      if (referralCodes.some((r) => r.code === data.code)) {
+        throw prismaUniqueError(['code']);
+      }
+      const row: ReferralCodeRow = {
+        id: randomUUID(),
+        customerId: data.customerId,
+        code: data.code,
+        isActive: true,
+        createdAt: new Date(),
+      };
+      referralCodes.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { customerId?: string; code?: string } }) => {
+      if (where.customerId !== undefined) {
+        return Promise.resolve(
+          referralCodes.find((r) => r.customerId === where.customerId) ?? null,
+        );
+      }
+      return Promise.resolve(referralCodes.find((r) => r.code === where.code) ?? null);
+    },
+  };
+
+  const referralTable = {
+    create: ({
+      data,
+    }: {
+      data: { referrerCustomerId: string; referredCustomerId: string; referralCode: string };
+    }) => {
+      if (referrals.some((r) => r.referredCustomerId === data.referredCustomerId)) {
+        throw prismaUniqueError(['referredCustomerId']);
+      }
+      // BR-109: the same self-referral CHECK real Postgres enforces —
+      // this fake has no DB constraint layer, so it is reproduced here
+      // literally rather than only in application logic.
+      if (data.referrerCustomerId === data.referredCustomerId) {
+        const error = new Error(
+          'new row for relation "referrals" violates check constraint "referrals_no_self_referral"',
+        ) as Error & { code: string };
+        error.code = 'P2010';
+        throw error;
+      }
+      const row: ReferralRow = {
+        id: randomUUID(),
+        referrerCustomerId: data.referrerCustomerId,
+        referredCustomerId: data.referredCustomerId,
+        referralCode: data.referralCode,
+        status: 'PENDING',
+        qualifyingOrderId: null,
+        attributedAt: new Date(),
+        qualifiedAt: null,
+        rewardedAt: null,
+        expiresAt: null,
+      };
+      referrals.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({
+      where,
+    }: {
+      where: { referredCustomerId?: string; qualifyingOrderId?: string };
+    }) => {
+      if (where.referredCustomerId !== undefined) {
+        return Promise.resolve(
+          referrals.find((r) => r.referredCustomerId === where.referredCustomerId) ?? null,
+        );
+      }
+      return Promise.resolve(
+        referrals.find((r) => r.qualifyingOrderId === where.qualifyingOrderId) ?? null,
+      );
+    },
+    findMany: ({
+      where,
+      orderBy,
+      cursor,
+      skip,
+      take,
+    }: {
+      where: { referrerCustomerId: string };
+      orderBy?: { attributedAt: 'asc' | 'desc' };
+      cursor?: { id: string };
+      skip?: number;
+      take?: number;
+    }) => {
+      let matches = referrals.filter((r) => r.referrerCustomerId === where.referrerCustomerId);
+      if (orderBy?.attributedAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.attributedAt.getTime() - a.attributedAt.getTime());
+      } else if (orderBy?.attributedAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.attributedAt.getTime() - b.attributedAt.getTime());
+      }
+      if (cursor) {
+        const cursorIndex = matches.findIndex((r) => r.id === cursor.id);
+        matches = cursorIndex === -1 ? [] : matches.slice(cursorIndex + (skip ?? 0));
+      }
+      if (take !== undefined) matches = matches.slice(0, take);
+      return Promise.resolve(matches);
+    },
+    update: ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: Partial<ReferralRow>;
+    }) => {
+      const row = referrals.find((r) => r.id === where.id);
+      if (!row) throw new Error(`referral ${where.id} not found`);
+      Object.assign(row, omitUndefined(data));
+      return Promise.resolve(row);
+    },
+  };
+
   const prisma = {
     user,
     session,
@@ -2907,6 +3281,11 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     promotionRedemption: promotionRedemptionTable,
     review: reviewTable,
     reviewResponse: reviewResponseTable,
+    loyaltyAccount: loyaltyAccountTable,
+    loyaltyLedger: loyaltyLedgerTable,
+    loyaltyRedemption: loyaltyRedemptionTable,
+    referralCode: referralCodeTable,
+    referral: referralTable,
     // Supports both Prisma `$transaction` forms this codebase uses: the
     // array form (a list of already-constructed operations, awaited
     // together — see session.repository.ts) and the interactive
@@ -2928,19 +3307,28 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       }
       return Promise.all(arg);
     },
-    // The only real `$queryRaw` caller today: PromotionReservationService's
+    // Two real `$queryRaw` callers today: PromotionReservationService's
     // row-lock query (`SELECT id FROM promotions WHERE code = ${code}
-    // AND is_active = true AND archived_at IS NULL FOR UPDATE`) — not a
-    // general SQL interpreter, deliberately: it recognises this one
-    // shape by its single interpolated value (the normalised code) and
-    // answers with the same WHERE-clause semantics the real query has.
-    // A literal row lock is unnecessary to simulate here — the
-    // serialized `$transaction` above is this fake's actual
-    // concurrency-safety mechanism (real Postgres's `FOR UPDATE` only
-    // blocks other transactions from proceeding past their own lock
-    // attempt; globally serializing callbacks achieves the same
-    // observable effect for every test in this suite).
-    $queryRaw: (_strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]> => {
+    // AND is_active = true AND archived_at IS NULL FOR UPDATE`) and
+    // (Phase 16) LoyaltyAccountRepository.lockByCustomerId's equivalent
+    // (`SELECT id, balance_points FROM loyalty_accounts WHERE
+    // customer_id = ${customerId} FOR UPDATE`) — not a general SQL
+    // interpreter, deliberately: each is recognised by the literal SQL
+    // text preceding its single interpolated value, and answered with
+    // the same WHERE-clause semantics the real query has. A literal row
+    // lock is unnecessary to simulate here — the serialized
+    // `$transaction` above is this fake's actual concurrency-safety
+    // mechanism (real Postgres's `FOR UPDATE` only blocks other
+    // transactions from proceeding past their own lock attempt;
+    // globally serializing callbacks achieves the same observable
+    // effect for every test in this suite).
+    $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]> => {
+      const sql = strings.join('');
+      if (sql.includes('loyalty_accounts')) {
+        const customerId = values[0] as string;
+        const match = loyaltyAccounts.find((a) => a.customerId === customerId);
+        return Promise.resolve(match ? [{ id: match.id, balance_points: match.balancePoints }] : []);
+      }
       const code = values[0] as string;
       const match = promotions.find((p) => p.code === code && p.isActive && !p.archivedAt);
       return Promise.resolve(match ? [{ id: match.id }] : []);
@@ -2983,6 +3371,11 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     promotionRedemptions,
     reviews,
     reviewResponses,
+    loyaltyAccounts,
+    loyaltyLedger,
+    loyaltyRedemptions,
+    referralCodes,
+    referrals,
     prisma,
   };
 }

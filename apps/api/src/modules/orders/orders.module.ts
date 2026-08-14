@@ -5,6 +5,7 @@ import { PaymentsModule } from '../payments/payments.module.js';
 import { DeliveryModule } from '../delivery/delivery.module.js';
 import { PromotionsModule } from '../promotions/promotions.module.js';
 import { ReviewsModule } from '../reviews/reviews.module.js';
+import { LoyaltyModule } from '../loyalty/loyalty.module.js';
 import { OrderStateModule } from './order-state.module.js';
 import { CustomerRepository } from './repositories/customer.repository.js';
 import { CartRepository } from './repositories/cart.repository.js';
@@ -40,7 +41,14 @@ import { RestaurantOrderController } from './controllers/restaurant-order.contro
  * both imported explicitly, even though `PublicModule` already imports
  * them too — Nest module imports are not transitively re-exported, and
  * `CheckoutService`/`OrderTrackingController` inject
- * `PromotionReservationService`/`ReviewService` directly.
+ * `PromotionReservationService`/`ReviewService` directly. `LoyaltyModule`
+ * (Phase 16) is imported for the same reason — `CheckoutService` injects
+ * `LoyaltyRedemptionService` directly for step 7's authoritative
+ * lock/reserve, mirroring exactly how it already uses
+ * `PromotionReservationService` for step 6. `IdentityModule`'s
+ * `OptionalAuthService` (also Phase 16) is what lets
+ * `CheckoutController` resolve a logged-in customer WITHOUT ever
+ * blocking a guest — see that controller's own doc comment.
  */
 @Module({
   imports: [
@@ -51,6 +59,7 @@ import { RestaurantOrderController } from './controllers/restaurant-order.contro
     IdentityModule,
     PromotionsModule,
     ReviewsModule,
+    LoyaltyModule,
   ],
   controllers: [
     CartController,

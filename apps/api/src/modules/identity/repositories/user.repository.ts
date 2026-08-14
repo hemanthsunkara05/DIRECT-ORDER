@@ -21,6 +21,20 @@ export class UserRepository {
     return this.prisma.user.create({ data: input });
   }
 
+  /**
+   * Phase 16: AMB-2's "lightweight optional account" — phone-OTP, no
+   * password. `phoneVerifiedAt` is set immediately (unlike `create()`
+   * above, which registers with an unverified email) because arriving
+   * here at all already required a correct `CUSTOMER_LOGIN` OTP code
+   * against this exact phone number — there is no separate
+   * verification step left to do.
+   */
+  async createCustomerAccount(input: { phone: string; fullName: string }): Promise<User> {
+    return this.prisma.user.create({
+      data: { phone: input.phone, fullName: input.fullName, phoneVerifiedAt: new Date() },
+    });
+  }
+
   async findByEmail(email: string): Promise<User | null> {
     return this.prisma.user.findUnique({ where: { email } });
   }

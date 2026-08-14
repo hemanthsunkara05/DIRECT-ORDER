@@ -78,6 +78,12 @@ export const EnvSchema = z.object({
   // BR-31: a cart expires after this many hours of inactivity.
   CART_TTL_HOURS: z.coerce.number().int().positive().default(24),
 
+  // Phase 16: loyalty. AMB-11's recommended default — points earned per
+  // ₹100 of items subtotal (fees/tax/discounts excluded). Already
+  // scaffolded in .env.example ahead of this phase, same as
+  // PLATFORM_FEE_BPS was for Phase 8.
+  LOYALTY_POINTS_PER_100_INR: z.coerce.number().int().nonnegative().default(1),
+
   // Phase 11: delivery. `mock` (default) simulates the full delivery
   // lifecycle including failures, for the same reason PAYMENT_PROVIDER
   // defaults to mock — RISK-3 (docs/15-ambiguities-and-risks.md):

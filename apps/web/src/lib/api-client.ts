@@ -736,6 +736,7 @@ export const orderApi = {
       customer: { name: string; phone: string; email?: string };
       deliveryAddress: DeliveryAddressInput;
       couponCode?: string;
+      redeemLoyaltyPoints?: number;
       expectedTotalMinor?: string;
     },
     idempotencyKey: string,
@@ -1159,4 +1160,56 @@ export const adminApi = {
     list: (params: { actorType?: string; entityType?: string; cursor?: string } = {}) =>
       requestPage<AuditLogEntry>(`/admin/audit-logs${qs(params)}`, { method: 'GET' }),
   },
+};
+
+// ── Customer account, loyalty, and referrals (Phase 16) ────────────────
+
+export interface CustomerAccount {
+  id: string;
+  phone: string;
+  fullName: string;
+  phoneVerified: boolean;
+  createdAt: string;
+  referralApplied: boolean;
+}
+
+export const customerAuthApi = {
+  requestOtp: (phone: string) => post<{ message: string }>('/auth/customer/otp/request', { phone }),
+
+  verifyOtp: (input: { phone: string; code: string; fullName?: string; referralCode?: string }) =>
+    post<CustomerAccount>('/auth/customer/otp/verify', input),
+};
+
+export interface LoyaltyBalance {
+  balancePoints: number;
+  lifetimeEarned: number;
+  lifetimeRedeemed: number;
+  status: 'ACTIVE' | 'DISABLED';
+}
+
+export interface LoyaltyLedgerEntry {
+  id: string;
+  type: string;
+  points: number;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface ReferralView {
+  status: 'PENDING' | 'QUALIFIED' | 'REWARDED' | 'EXPIRED' | 'INVALIDATED';
+  attributedAt: string;
+  qualifiedAt: string | null;
+  rewardedAt: string | null;
+}
+
+export const loyaltyApi = {
+  balance: () => get<LoyaltyBalance>('/me/loyalty'),
+
+  ledger: (params: { cursor?: string } = {}) =>
+    requestPage<LoyaltyLedgerEntry>(`/me/loyalty/ledger${qs(params)}`, { method: 'GET' }),
+
+  referrals: () =>
+    get<{ code: string; isActive: boolean; referrals: ReferralView[]; hasMore: boolean }>(
+      '/me/referrals',
+    ),
 };

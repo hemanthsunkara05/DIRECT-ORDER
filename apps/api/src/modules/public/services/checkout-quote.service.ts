@@ -44,7 +44,9 @@ export interface QuoteResult {
  * minimum order, a coupon preview (Phase 14 — see this class's own
  * "couponCode resolution" paragraph below), then the pricing engine —
  * without step 1 (cart lookup, no persisted cart exists yet), step 7
- * (loyalty reservation, no LoyaltyLedger table yet, Phase 16), or
+ * (loyalty reservation — see the `loyaltyDiscountMinor` param doc on
+ * `quoteByRestaurantId` below for why this endpoint's OWN request
+ * shape still has no loyalty field even though Phase 16 exists), or
  * 9–12 (order creation, Phase 9). Phase 9's real checkout endpoint
  * calls this same validation shape before creating an order, so "quote
  * total exactly matches what checkout will charge" holds by
@@ -98,23 +100,32 @@ export class CheckoutQuoteService {
    * as `quote()` — "one function", not two independently-maintained
    * copies, extended to a second caller shape instead of duplicated
    * for it.
+   *
+   * `loyaltyDiscountMinor` (Phase 16) is deliberately NOT part of
+   * `QuoteCartDto` / the public, unauthenticated `quote()` entry point
+   * above — resolving it needs a customer identity that endpoint never
+   * has (guests price-check too). Only `CheckoutService` ever passes
+   * it, already resolved from an authenticated customer's requested
+   * `redeemLoyaltyPoints` before calling this method.
    */
   async quoteByRestaurantId(
     restaurantId: string,
     items: QuoteCartInput['items'],
     couponCode?: string,
+    loyaltyDiscountMinor?: bigint,
   ): Promise<QuoteResult> {
     const restaurant = await this.restaurants.findById(restaurantId);
     if (!restaurant || restaurant.status === 'DRAFT' || restaurant.status === 'PENDING_APPROVAL') {
       throw new NotFoundError('Restaurant not found.');
     }
-    return this.runQuote(restaurant, items, couponCode);
+    return this.runQuote(restaurant, items, couponCode, loyaltyDiscountMinor);
   }
 
   private async runQuote(
     restaurant: RestaurantWithPublicRelations,
     items: QuoteCartInput['items'],
     couponCode?: string,
+    loyaltyDiscountMinor?: bigint,
   ): Promise<QuoteResult> {
     const issues: CartIssue[] = [];
 
@@ -198,15 +209,19 @@ export class CheckoutQuoteService {
       }
     }
 
-    const breakdown = promotion
-      ? calculatePricing({
-          items: validLines,
-          packagingFeeMinor,
-          deliveryFeeMinor,
-          platformFeeBps,
-          promotion: this.eligibility.toPricingDiscountInput(promotion, deliveryFeeMinor),
-        })
-      : baseBreakdown;
+    const breakdown =
+      promotion || loyaltyDiscountMinor
+        ? calculatePricing({
+            items: validLines,
+            packagingFeeMinor,
+            deliveryFeeMinor,
+            platformFeeBps,
+            ...(promotion
+              ? { promotion: this.eligibility.toPricingDiscountInput(promotion, deliveryFeeMinor) }
+              : {}),
+            ...(loyaltyDiscountMinor ? { loyaltyDiscountMinor } : {}),
+          })
+        : baseBreakdown;
 
     return { valid: issues.length === 0, issues, breakdown };
   }

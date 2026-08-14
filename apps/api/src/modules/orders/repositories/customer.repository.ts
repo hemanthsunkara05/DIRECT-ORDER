@@ -8,13 +8,31 @@ export interface CreateGuestCustomerInput {
   email?: string;
 }
 
+export interface CreateAccountCustomerInput {
+  userId: string;
+  fullName: string;
+  phone: string;
+  email?: string;
+}
+
 /**
- * AMB-2: guest checkout is the pilot default; a persistent, registered
- * "lightweight optional account" (phone-OTP) is explicitly deferred
- * past the pilot — no phase in the 20-phase list covers it. Every
- * checkout in this phase therefore creates a fresh guest Customer row
- * (`userId: null`) rather than looking one up; there is no login to
- * look one up against yet.
+ * AMB-2: guest checkout is the default; `createGuest` (`userId: null`)
+ * remains every checkout's path when no logged-in customer is present.
+ * Phase 16 adds the registered-account path (`createAccount`) — AMB-2's
+ * "lightweight optional account", phone-OTP, no password. The two
+ * creation paths are deliberately separate methods, not one method with
+ * an optional `userId`: AMB-2 explicitly recommends against retroactively
+ * merging a phone's prior guest history into a new account ("Recommend
+ * no for v1 — the deduplication and fraud surface is not worth it"), so
+ * there is no shared lookup-or-create branch worth factoring out.
+ *
+ * Re-provided directly in every module that needs it (OrdersModule,
+ * NotificationsModule, PublicModule, and now CustomerAuthModule/
+ * LoyaltyModule) rather than pulled from one shared module — this
+ * class is thin, stateless, and PrismaService-backed, so a second
+ * Nest-managed instance is exactly as correct as sharing another
+ * module's (see NotificationsModule's own doc comment for the
+ * original statement of this call, made for this exact class).
  */
 @Injectable()
 export class CustomerRepository {
@@ -31,6 +49,22 @@ export class CustomerRepository {
     });
   }
 
+  /**
+   * Called only from `CustomerAuthService.verifyOtp()` the first time a
+   * given phone completes `CUSTOMER_LOGIN` OTP verification.
+   */
+  async createAccount(input: CreateAccountCustomerInput): Promise<Customer> {
+    return this.prisma.customer.create({
+      data: {
+        userId: input.userId,
+        fullName: input.fullName,
+        phone: input.phone,
+        email: input.email,
+        status: 'ACTIVE',
+      },
+    });
+  }
+
   async findById(id: string): Promise<Customer | null> {
     return this.prisma.customer.findUnique({ where: { id } });
   }
@@ -39,5 +73,10 @@ export class CustomerRepository {
   async findByIds(ids: string[]): Promise<Customer[]> {
     if (ids.length === 0) return [];
     return this.prisma.customer.findMany({ where: { id: { in: ids } } });
+  }
+
+  /** The account-resolution lookup every `/me/*` route and `CustomerAccountGuard` uses — `userId` is `@unique`, so at most one row. */
+  async findByUserId(userId: string): Promise<Customer | null> {
+    return this.prisma.customer.findUnique({ where: { userId } });
   }
 }

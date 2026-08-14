@@ -8,6 +8,7 @@ import { PasswordService } from './services/password.service.js';
 import { TokenService } from './services/token.service.js';
 import { SessionService } from './services/session.service.js';
 import { OtpService } from './services/otp.service.js';
+import { OptionalAuthService } from './services/optional-auth.service.js';
 import { AuthNotifierService } from './services/auth-notifier.service.js';
 import { LoginThrottleService } from './services/login-throttle.service.js';
 import { AuthService } from './services/auth.service.js';
@@ -42,6 +43,7 @@ import { RateLimitGuard } from '../../platform/rate-limit/rate-limit.guard.js';
     TokenService,
     SessionService,
     OtpService,
+    OptionalAuthService,
     AuthNotifierService,
     LoginThrottleService,
     AuthService,
@@ -54,7 +56,21 @@ import { RateLimitGuard } from '../../platform/rate-limit/rate-limit.guard.js';
   // (not just AuthGuard itself) because AuthGuard depends on both —
   // a module that imports IdentityModule purely to use `@UseGuards(AuthGuard)`
   // needs AuthGuard's full constructor dependency chain resolvable, not
-  // just the guard class itself.
-  exports: [AuthGuard, UserRepository, TokenService, SessionRepository],
+  // just the guard class itself. OtpService/SessionService/
+  // OptionalAuthService (Phase 16) are exported for CustomerAuthModule,
+  // which assembles the exact same request-a-code/verify-a-
+  // code/issue-a-session flow AuthService uses for staff, just for
+  // customers — reusing these pieces directly rather than duplicating
+  // OTP or session logic a second time.
+  exports: [
+    AuthGuard,
+    UserRepository,
+    TokenService,
+    SessionRepository,
+    OtpService,
+    SessionService,
+    OptionalAuthService,
+    AuthNotifierService,
+  ],
 })
 export class IdentityModule {}
