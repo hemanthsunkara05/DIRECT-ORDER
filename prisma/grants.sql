@@ -61,3 +61,19 @@ BEGIN
     EXECUTE 'REVOKE UPDATE, DELETE ON loyalty_ledger FROM direct_order_app';
   END IF;
 END $$;
+
+-- analytics_events (Phase 17) is append-only for the same reason:
+-- docs/01-domain-model.md §5.14 states it is "append-only" and "never
+-- used as a transactional source of truth" — a bug that tried to
+-- mutate history after the fact should fail at the database, not just
+-- happen to not be called by AnalyticsEventRepository today. The daily
+-- rollup tables (daily_restaurant_metrics/daily_platform_metrics) are
+-- deliberately NOT included here — docs/01 §5.14 describes them as
+-- "recomputable and idempotent" via upsert, which needs real UPDATE
+-- privilege.
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'analytics_events') THEN
+    EXECUTE 'REVOKE UPDATE, DELETE ON analytics_events FROM direct_order_app';
+  END IF;
+END $$;

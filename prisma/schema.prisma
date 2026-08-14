@@ -491,6 +491,8 @@ model Restaurant {
   orders         Order[]
   promotions     Promotion[]
   reviews        Review[]
+  supportCases   SupportCase[]
+  dailyMetrics   DailyRestaurantMetrics[]
 
   @@index([status])
   @@map("restaurants")
@@ -796,6 +798,7 @@ model Customer {
   referralCode         ReferralCode?
   referralsReferred    Referral[]            @relation("Referrer")
   referredBy           Referral?             @relation("Referred")
+  supportCases         SupportCase[]
 
   @@index([phone])
   // docs/01 §5.4: "unique on phone where user_id IS NOT NULL; guests
@@ -922,6 +925,7 @@ model Order {
   /// first order reaching DELIVERED) — not every order has one; most
   /// never do. See Referral.qualifyingOrderId.
   qualifyingReferral   Referral?
+  supportCases         SupportCase[]
 
   @@unique([orderNumber])
   @@unique([restaurantId, idempotencyKey])
@@ -1608,4 +1612,236 @@ model AuditLog {
   @@index([actorType, actorId, createdAt(sort: Desc)])
   @@index([restaurantId, createdAt(sort: Desc)])
   @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Support (Phase 17) — docs/01-domain-model.md §5.12,
+// docs/03-state-machines.md §7.9, docs/06-business-rules.md
+// BR-134..BR-140.
+// ─────────────────────────────────────────────────────────────────
+
+/// No spec source names these value sets (unlike the case status
+/// state machine, which docs/03 §7.9 documents exactly) — a documented
+/// code-level default, same treatment as Phase 15's Bayesian rating
+/// constants and Phase 16's redemption conversion rate.
+enum SupportCaseCategory {
+  ORDER
+  PAYMENT
+  DELIVERY
+  ACCOUNT
+  RESTAURANT
+  OTHER
+}
+
+enum SupportCasePriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+/// docs/03-state-machines.md §7.9's exact state machine. SLA clocks
+/// pause during the three WAITING_* states; enforced at the service
+/// layer (SupportCaseService), not encoded as a schema constraint.
+enum SupportCaseStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  WAITING_RESTAURANT
+  WAITING_PROVIDER
+  RESOLVED
+  CLOSED
+}
+
+enum SupportMessageAuthorType {
+  CUSTOMER
+  RESTAURANT
+  AGENT
+  SYSTEM
+}
+
+/// BR-136: "INTERNAL notes are never returned to customer or
+/// restaurant [...] enforce in the query layer, not by filtering in
+/// the frontend" — every repository method a customer/restaurant
+/// controller calls filters `visibility: 'PUBLIC'` in its own `WHERE`
+/// clause; there is no method that returns unfiltered messages except
+/// the admin/agent-only ones.
+enum SupportMessageVisibility {
+  INTERNAL
+  PUBLIC
+}
+
+/// docs/01 §5.12. Ownership: "exactly one of customer_id/restaurant_id
+/// identifies the reporter; both may be present when a case concerns
+/// an order" — enforced at the service layer (a case is created via
+/// either `/me/support/cases` or `/restaurant/support/cases`, never a
+/// shared endpoint that accepts either id from the client), not a
+/// database CHECK, matching this schema's established "the DSL can't
+/// express an XOR-shaped constraint cleanly" precedent.
+model SupportCase {
+  id               String              @id @default(uuid(7)) @db.Uuid
+  caseNumber       String              @unique @map("case_number")
+  customerId       String?             @map("customer_id") @db.Uuid
+  restaurantId     String?             @map("restaurant_id") @db.Uuid
+  orderId          String?             @map("order_id") @db.Uuid
+  category         SupportCaseCategory
+  priority         SupportCasePriority @default(NORMAL)
+  status           SupportCaseStatus   @default(OPEN)
+  subject          String
+  description      String
+  assignedToUserId String?             @map("assigned_to_user_id") @db.Uuid
+  resolvedAt       DateTime?           @map("resolved_at") @db.Timestamptz
+  resolutionNote   String?             @map("resolution_note")
+  /// BR/docs/03 §7.9: "time-to-first-response measures OPEN -> first
+  /// PUBLIC agent message" — set once, the first time an AGENT-authored
+  /// PUBLIC message is posted, never updated again.
+  firstResponseAt  DateTime?           @map("first_response_at") @db.Timestamptz
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz
+
+  customer   Customer?        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  restaurant Restaurant?      @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  order      Order?           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  messages   SupportMessage[]
+
+  @@index([customerId, createdAt(sort: Desc)])
+  @@index([restaurantId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([assignedToUserId, status])
+  @@map("support_cases")
+}
+
+model SupportMessage {
+  id         String                   @id @default(uuid(7)) @db.Uuid
+  caseId     String                   @map("case_id") @db.Uuid
+  authorType SupportMessageAuthorType @map("author_type")
+  authorId   String?                  @map("author_id") @db.Uuid
+  visibility SupportMessageVisibility @default(PUBLIC)
+  body       String
+  createdAt  DateTime                 @default(now()) @map("created_at") @db.Timestamptz
+
+  case        SupportCase         @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  attachments SupportAttachment[]
+
+  @@index([caseId, createdAt])
+  @@map("support_messages")
+}
+
+/// docs/01 §5.12, BR-140: "private, size- and type-validated, served
+/// via short-lived signed URLs only." `caseId` is denormalised onto
+/// this row alongside `messageId` (the same "avoid a join for every
+/// tenant/ownership check" call `PromotionRedemption.customerPhone`
+/// already makes) — an attachment's own case-membership check never
+/// needs to join through `SupportMessage` first.
+model SupportAttachment {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  caseId         String   @map("case_id") @db.Uuid
+  messageId      String   @map("message_id") @db.Uuid
+  uploadedByType String   @map("uploaded_by_type")
+  uploadedById   String?  @map("uploaded_by_id") @db.Uuid
+  objectKey      String   @map("object_key")
+  filename       String
+  contentType    String   @map("content_type")
+  sizeBytes      Int      @map("size_bytes")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  message SupportMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@map("support_attachments")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Analytics (Phase 17) — docs/01-domain-model.md §5.14.
+// ─────────────────────────────────────────────────────────────────
+
+/// docs/01 §5.14: "append-only... never contains PII beyond internal
+/// identifiers; never used as a transactional source of truth." A
+/// lower-fidelity event stream for future BI/funnel use — the daily
+/// rollups below are deliberately NOT computed from this table (see
+/// `AnalyticsRollupService`'s own doc comment); they recompute directly
+/// from `Order`/`Payment`/`Refund`, the actual source of truth, so
+/// "rollups reconcile with source data" holds by construction rather
+/// than depending on this ingest pipeline never dropping an event.
+model AnalyticsEvent {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  type           String
+  occurredAt     DateTime @map("occurred_at") @db.Timestamptz
+  sessionId      String?  @map("session_id")
+  customerId     String?  @map("customer_id") @db.Uuid
+  restaurantId   String?  @map("restaurant_id") @db.Uuid
+  orderId        String?  @map("order_id") @db.Uuid
+  properties     Json?
+  /// Dedupes a re-relayed outbox event the same way every other
+  /// consumer in this codebase does — insert-and-let-the-constraint-
+  /// decide, not a pre-check.
+  idempotencyKey String?  @unique @map("idempotency_key")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([type, occurredAt])
+  @@index([restaurantId, occurredAt])
+  @@map("analytics_events")
+}
+
+/// docs/01 §5.14. "Unique (restaurant_id, date); recomputable and
+/// idempotent" — `AnalyticsRollupService.rollupRestaurantDay` always
+/// upserts, so re-running it for an already-rolled-up day is safe and
+/// produces the identical row, never a duplicate. `date` is a plain
+/// calendar date (`@db.Date`, no time-of-day component) in the
+/// restaurant's OWN timezone (`RestaurantSettings.timezone`), computed
+/// via `localMidnightToUtc`/`toLocalMoment` — never the server's.
+model DailyRestaurantMetrics {
+  id                   String   @id @default(uuid(7)) @db.Uuid
+  restaurantId         String   @map("restaurant_id") @db.Uuid
+  date                 DateTime @db.Date
+  ordersPlaced         Int      @default(0) @map("orders_placed")
+  ordersCompleted      Int      @default(0) @map("orders_completed")
+  ordersCancelled      Int      @default(0) @map("orders_cancelled")
+  ordersRejected       Int      @default(0) @map("orders_rejected")
+  grossOrderValueMinor BigInt   @default(0) @map("gross_order_value_minor")
+  discountMinor        BigInt   @default(0) @map("discount_minor")
+  refundMinor          BigInt   @default(0) @map("refund_minor")
+  netOrderValueMinor   BigInt   @default(0) @map("net_order_value_minor")
+  avgOrderValueMinor   BigInt   @default(0) @map("avg_order_value_minor")
+  avgPrepSeconds       Int      @default(0) @map("avg_prep_seconds")
+  computedAt           DateTime @default(now()) @map("computed_at") @db.Timestamptz
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@unique([restaurantId, date])
+  @@map("daily_restaurant_metrics")
+}
+
+/// docs/01 §5.14: "same shape at platform scope, plus payment success
+/// rate, delivery success rate, and support case counts." Success
+/// rates are stored as raw counts (`paymentsAttempted`/
+/// `paymentsSucceeded`, `deliveriesAttempted`/`deliveriesSucceeded`),
+/// never a pre-divided float — BR-1's "no floating-point arithmetic on
+/// money" doesn't literally cover a percentage, but storing the counts
+/// keeps the row itself trivially reconcilable and the rate computation
+/// (division) happens once, at the read/display layer, not baked into
+/// the stored row.
+model DailyPlatformMetrics {
+  id                   String   @id @default(uuid(7)) @db.Uuid
+  date                 DateTime @db.Date
+  ordersPlaced         Int      @default(0) @map("orders_placed")
+  ordersCompleted      Int      @default(0) @map("orders_completed")
+  ordersCancelled      Int      @default(0) @map("orders_cancelled")
+  ordersRejected       Int      @default(0) @map("orders_rejected")
+  grossOrderValueMinor BigInt   @default(0) @map("gross_order_value_minor")
+  discountMinor        BigInt   @default(0) @map("discount_minor")
+  refundMinor          BigInt   @default(0) @map("refund_minor")
+  netOrderValueMinor   BigInt   @default(0) @map("net_order_value_minor")
+  avgOrderValueMinor   BigInt   @default(0) @map("avg_order_value_minor")
+  avgPrepSeconds       Int      @default(0) @map("avg_prep_seconds")
+  paymentsAttempted    Int      @default(0) @map("payments_attempted")
+  paymentsSucceeded    Int      @default(0) @map("payments_succeeded")
+  deliveriesAttempted  Int      @default(0) @map("deliveries_attempted")
+  deliveriesSucceeded  Int      @default(0) @map("deliveries_succeeded")
+  supportCasesOpened   Int      @default(0) @map("support_cases_opened")
+  computedAt           DateTime @default(now()) @map("computed_at") @db.Timestamptz
+
+  @@unique([date])
+  @@map("daily_platform_metrics")
 }

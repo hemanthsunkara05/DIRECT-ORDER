@@ -63,3 +63,46 @@ export function previousDateKey(dateKey: string): string {
   const d = date.getUTCDate().toString().padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
+
+/**
+ * The UTC offset (in minutes, east-positive) `timeZone` observes at
+ * `date` — derived from `Intl.DateTimeFormat`, not a static table, so
+ * it is correct across DST transitions for zones that have them (India
+ * itself does not, but this helper is written generically rather than
+ * hardcoded to Asia/Kolkata).
+ */
+function utcOffsetMinutes(date: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes): number => Number(parts.find((p) => p.type === type)?.value);
+  const asIfUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'));
+  return (asIfUtc - date.getTime()) / 60_000;
+}
+
+/**
+ * Phase 17 (analytics rollups): the UTC instant corresponding to local
+ * midnight of `dateKey` (`YYYY-MM-DD`) in `timeZone` — the START
+ * boundary of a restaurant's own calendar day (docs/14-acceptance-
+ * criteria.md: "timezone-correct daily boundaries"). A two-pass
+ * guess-and-correct: the first pass's offset is accurate except within
+ * a few hours of a DST transition landing exactly on local midnight, so
+ * the second pass re-derives the offset from the corrected instant —
+ * moot for Asia/Kolkata (no DST) but correct for any IANA zone.
+ */
+export function localMidnightToUtc(dateKey: string, timeZone: string): Date {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  let instant = Date.UTC(year!, month! - 1, day, 0, 0, 0);
+  for (let pass = 0; pass < 2; pass++) {
+    const offset = utcOffsetMinutes(new Date(instant), timeZone);
+    instant = Date.UTC(year!, month! - 1, day, 0, 0, 0) - offset * 60_000;
+  }
+  return new Date(instant);
+}

@@ -1113,12 +1113,29 @@ function qs(params: Record<string, string | undefined>): string {
   return s ? `?${s}` : '';
 }
 
+export interface DailyMetricsView {
+  date: string;
+  ordersPlaced: number;
+  ordersCompleted: number;
+  ordersCancelled: number;
+  ordersRejected: number;
+  grossOrderValueMinor: string;
+  netOrderValueMinor: string;
+  refundMinor: string;
+  paymentsAttempted: number;
+  paymentsSucceeded: number;
+  deliveriesAttempted: number;
+  deliveriesSucceeded: number;
+  supportCasesOpened: number;
+}
+
 export const adminApi = {
+  /** `ordersToday` (a live `orders.count()` placeholder — see PHASE_REPORTS.md's Phase 13 entry) is replaced by `metrics`, sourced from `DailyPlatformMetrics` rollups (Phase 17) — necessarily "as of yesterday", never a still-accumulating "today". */
   overview: () =>
     request<{
       restaurantsByStatus: Record<string, number>;
-      ordersToday: number;
       activeAdmins: number;
+      metrics: { asOfDate: string | null; latest: DailyMetricsView | null; trend: DailyMetricsView[] };
     }>('/admin/overview', { method: 'GET' }),
 
   health: () =>
@@ -1159,6 +1176,23 @@ export const adminApi = {
   auditLogs: {
     list: (params: { actorType?: string; entityType?: string; cursor?: string } = {}) =>
       requestPage<AuditLogEntry>(`/admin/audit-logs${qs(params)}`, { method: 'GET' }),
+  },
+
+  support: {
+    list: (params: { status?: string; assignedToUserId?: string; cursor?: string } = {}) =>
+      requestPage<AdminSupportCase>(`/admin/support/cases${qs(params)}`, { method: 'GET' }),
+    get: (id: string) =>
+      get<AdminSupportCase & { messages: AdminSupportMessage[] }>(`/admin/support/cases/${id}`),
+    assign: (id: string, assignedToUserId: string) =>
+      post<AdminSupportCase>(`/admin/support/cases/${id}/assign`, { assignedToUserId }),
+    reply: (id: string, body: string, visibility: 'INTERNAL' | 'PUBLIC', attachments?: SupportAttachmentInput[]) =>
+      post<AdminSupportMessage>(`/admin/support/cases/${id}/messages`, { body, visibility, attachments }),
+    resolve: (id: string, resolutionNote: string) =>
+      post<AdminSupportCase>(`/admin/support/cases/${id}/resolve`, { resolutionNote }),
+    presign: (id: string, contentType: string, sizeBytes: number) =>
+      post<SupportAttachmentPresign>(`/admin/support/cases/${id}/attachments/presign`, { contentType, sizeBytes }),
+    download: (id: string, attachmentId: string) =>
+      get<{ url: string }>(`/admin/support/cases/${id}/attachments/${attachmentId}`),
   },
 };
 
@@ -1211,5 +1245,142 @@ export const loyaltyApi = {
   referrals: () =>
     get<{ code: string; isActive: boolean; referrals: ReferralView[]; hasMore: boolean }>(
       '/me/referrals',
+    ),
+};
+
+// ── Support cases and analytics (Phase 17) ──────────────────────────────
+
+export interface SupportCaseSummary {
+  id: string;
+  caseNumber: string;
+  category: 'ORDER' | 'PAYMENT' | 'DELIVERY' | 'ACCOUNT' | 'RESTAURANT' | 'OTHER';
+  priority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+  status: 'OPEN' | 'ASSIGNED' | 'IN_PROGRESS' | 'WAITING_CUSTOMER' | 'WAITING_RESTAURANT' | 'WAITING_PROVIDER' | 'RESOLVED' | 'CLOSED';
+  subject: string;
+  description: string;
+  orderId: string | null;
+  resolvedAt: string | null;
+  resolutionNote: string | null;
+  firstResponseAt: string | null;
+  createdAt: string;
+}
+
+export interface AdminSupportCase extends SupportCaseSummary {
+  customerId: string | null;
+  restaurantId: string | null;
+  assignedToUserId: string | null;
+}
+
+export interface SupportMessageView {
+  id: string;
+  authorType: 'CUSTOMER' | 'RESTAURANT' | 'AGENT' | 'SYSTEM';
+  body: string;
+  createdAt: string;
+}
+
+export interface AdminSupportMessage extends SupportMessageView {
+  authorId: string | null;
+  visibility: 'INTERNAL' | 'PUBLIC';
+}
+
+export interface SupportAttachmentInput {
+  key: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+export interface SupportAttachmentPresign {
+  key: string;
+  uploadUrl: string;
+  expiresInSeconds: number;
+}
+
+export interface CreateSupportCaseInput {
+  category: SupportCaseSummary['category'];
+  subject: string;
+  description: string;
+  orderNumber?: string;
+}
+
+/** `/me/support/cases*` and `/restaurant/support/cases*` — same dual-scope-in-one-object shape `reviewsApi` already uses, since both sides share the identical response shapes. */
+export const supportApi = {
+  listMine: (params: { cursor?: string } = {}) =>
+    requestPage<SupportCaseSummary>(`/me/support/cases${qs(params)}`, { method: 'GET' }),
+  createMine: (input: CreateSupportCaseInput) => post<SupportCaseSummary>('/me/support/cases', input),
+  getMine: (id: string) => get<SupportCaseSummary & { messages: SupportMessageView[] }>(`/me/support/cases/${id}`),
+  replyMine: (id: string, body: string, attachments?: SupportAttachmentInput[]) =>
+    post<SupportMessageView>(`/me/support/cases/${id}/messages`, { body, attachments }),
+  presignMine: (id: string, contentType: string, sizeBytes: number) =>
+    post<SupportAttachmentPresign>(`/me/support/cases/${id}/attachments/presign`, { contentType, sizeBytes }),
+  downloadMine: (id: string, attachmentId: string) =>
+    get<{ url: string }>(`/me/support/cases/${id}/attachments/${attachmentId}`),
+
+  listRestaurant: (params: { cursor?: string } = {}, restaurantId?: string) =>
+    requestPage<SupportCaseSummary>(`/restaurant/support/cases${qs(params)}`, {
+      method: 'GET',
+      ...restaurantHeaders(restaurantId),
+    }),
+  createRestaurant: (input: CreateSupportCaseInput, restaurantId?: string) =>
+    request<SupportCaseSummary>('/restaurant/support/cases', {
+      method: 'POST',
+      body: JSON.stringify(input),
+      ...restaurantHeaders(restaurantId),
+    }),
+  getRestaurant: (id: string, restaurantId?: string) =>
+    request<SupportCaseSummary & { messages: SupportMessageView[] }>(`/restaurant/support/cases/${id}`, {
+      method: 'GET',
+      ...restaurantHeaders(restaurantId),
+    }),
+  replyRestaurant: (id: string, body: string, attachments?: SupportAttachmentInput[], restaurantId?: string) =>
+    request<SupportMessageView>(`/restaurant/support/cases/${id}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ body, attachments }),
+      ...restaurantHeaders(restaurantId),
+    }),
+  presignRestaurant: (id: string, contentType: string, sizeBytes: number, restaurantId?: string) =>
+    request<SupportAttachmentPresign>(`/restaurant/support/cases/${id}/attachments/presign`, {
+      method: 'POST',
+      body: JSON.stringify({ contentType, sizeBytes }),
+      ...restaurantHeaders(restaurantId),
+    }),
+  downloadRestaurant: (id: string, attachmentId: string, restaurantId?: string) =>
+    request<{ url: string }>(`/restaurant/support/cases/${id}/attachments/${attachmentId}`, {
+      method: 'GET',
+      ...restaurantHeaders(restaurantId),
+    }),
+};
+
+export interface RestaurantDailyMetrics {
+  date: string;
+  ordersPlaced: number;
+  ordersCompleted: number;
+  ordersCancelled: number;
+  ordersRejected: number;
+  grossOrderValueMinor: string;
+  discountMinor: string;
+  refundMinor: string;
+  netOrderValueMinor: string;
+  avgOrderValueMinor: string;
+  avgPrepSeconds: number;
+}
+
+export interface RestaurantAnalyticsSummary {
+  ordersPlaced: number;
+  ordersCompleted: number;
+  ordersCancelled: number;
+  ordersRejected: number;
+  grossOrderValueMinor: string;
+  discountMinor: string;
+  refundMinor: string;
+  netOrderValueMinor: string;
+  avgOrderValueMinor: string;
+}
+
+export const analyticsApi = {
+  restaurantOverview: (params: { days?: number } = {}, restaurantId?: string) =>
+    request<{ days: RestaurantDailyMetrics[]; summary: RestaurantAnalyticsSummary }>(
+      `/restaurant/analytics/overview${qs({ days: params.days ? String(params.days) : undefined })}`,
+      { method: 'GET', ...restaurantHeaders(restaurantId) },
     ),
 };

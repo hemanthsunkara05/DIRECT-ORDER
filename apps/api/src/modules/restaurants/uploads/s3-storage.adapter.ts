@@ -44,6 +44,11 @@ export class S3StorageAdapter implements StoragePort {
     return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
   }
 
+  async presignGet(key: string, expiresInSeconds: number): Promise<string> {
+    const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
+    return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+  }
+
   async getObject(key: string): Promise<Uint8Array | null> {
     try {
       const result = await this.client.send(

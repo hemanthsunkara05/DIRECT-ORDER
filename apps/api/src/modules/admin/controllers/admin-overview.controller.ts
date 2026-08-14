@@ -1,10 +1,14 @@
 import { Controller, Get, HttpCode, Inject, UseGuards } from '@nestjs/common';
+import type { DailyPlatformMetrics } from '@prisma/client';
 import { ok } from '../../../platform/http/response-envelope.js';
 import { Permissions } from '../../../platform/authorization/permissions.decorator.js';
 import { AuthorizationGuard } from '../../../platform/authorization/authorization.guard.js';
 import { AuthGuard } from '../../identity/guards/auth.guard.js';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { RedisService } from '../../../platform/redis/redis.service.js';
+import { DailyMetricsRepository } from '../../analytics/repositories/daily-metrics.repository.js';
+
+const TREND_DAYS = 7;
 
 /**
  * `GET /admin/overview`, `GET /admin/health` (docs/04 §8.7, "Any
@@ -15,11 +19,20 @@ import { RedisService } from '../../../platform/redis/redis.service.js';
  * permission and adding one just for this would be one more catalogue
  * row nothing else needs.
  *
- * `overview` reports LIVE counts, not the "platform metrics from
- * rollups" docs/04 describes — `analytics.rollup_daily` (docs/07 §12's
- * job catalogue) is Phase 17 (Support and analytics) scope; no rollup
- * table exists yet to read from. An honestly-scoped placeholder, not a
- * finished implementation — flagged in PHASE_REPORTS.md.
+ * `metrics` now reads exclusively from `DailyPlatformMetrics` (Phase
+ * 17) — the "platform metrics from rollups" docs/04 always described
+ * for this endpoint, previously an honestly-flagged placeholder (see
+ * PHASE_REPORTS.md's Phase 13 entry) reporting a live `orders.count()`
+ * scan instead. `restaurantsByStatus`/`activeAdmins` remain live reads
+ * deliberately: they are cheap, indexed counts over small tables
+ * (`restaurants`, `admin_users`), not the kind of unbounded scan over
+ * `orders`/`payments` this phase's "never live table scans" is
+ * actually about, AND neither has a rollup equivalent to read instead
+ * — `DailyPlatformMetrics` models order/payment/delivery/support
+ * activity, not restaurant onboarding status or admin headcount.
+ * `metrics` is necessarily "as of yesterday" (rollups run for
+ * completed days, never a still-accumulating "today"), shown
+ * explicitly via `metrics.asOfDate` rather than implied.
  */
 @Controller('admin')
 @UseGuards(AuthGuard, AuthorizationGuard)
@@ -27,23 +40,31 @@ export class AdminOverviewController {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(RedisService) private readonly redis: RedisService,
+    @Inject(DailyMetricsRepository) private readonly dailyMetrics: DailyMetricsRepository,
   ) {}
 
   @Get('overview')
   @Permissions('restaurant:read')
   @HttpCode(200)
   async overview() {
-    const [restaurantsByStatus, ordersToday, activeAdmins] = await Promise.all([
+    const [restaurantsByStatus, activeAdmins, latest] = await Promise.all([
       this.prisma.restaurant.groupBy({ by: ['status'], _count: true }),
-      this.prisma.order.count({
-        where: { createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } },
-      }),
       this.prisma.adminUser.count({ where: { status: 'ACTIVE' } }),
+      this.dailyMetrics.findLatestPlatformDay(),
     ]);
+
+    const trend = latest
+      ? await this.dailyMetrics.findPlatformRange(rangeStart(latest.date, TREND_DAYS), latest.date)
+      : [];
+
     return ok({
       restaurantsByStatus: Object.fromEntries(restaurantsByStatus.map((r) => [r.status, r._count])),
-      ordersToday,
       activeAdmins,
+      metrics: {
+        asOfDate: latest ? latest.date.toISOString().slice(0, 10) : null,
+        latest: latest ? toMetricsView(latest) : null,
+        trend: trend.map(toMetricsView),
+      },
     });
   }
 
@@ -69,4 +90,28 @@ export class AdminOverviewController {
     ]);
     return ok({ database, redis });
   }
+}
+
+function rangeStart(latestDate: Date, days: number): Date {
+  const start = new Date(latestDate);
+  start.setUTCDate(start.getUTCDate() - (days - 1));
+  return start;
+}
+
+function toMetricsView(row: DailyPlatformMetrics) {
+  return {
+    date: row.date.toISOString().slice(0, 10),
+    ordersPlaced: row.ordersPlaced,
+    ordersCompleted: row.ordersCompleted,
+    ordersCancelled: row.ordersCancelled,
+    ordersRejected: row.ordersRejected,
+    grossOrderValueMinor: row.grossOrderValueMinor.toString(),
+    netOrderValueMinor: row.netOrderValueMinor.toString(),
+    refundMinor: row.refundMinor.toString(),
+    paymentsAttempted: row.paymentsAttempted,
+    paymentsSucceeded: row.paymentsSucceeded,
+    deliveriesAttempted: row.deliveriesAttempted,
+    deliveriesSucceeded: row.deliveriesSucceeded,
+    supportCasesOpened: row.supportCasesOpened,
+  };
 }

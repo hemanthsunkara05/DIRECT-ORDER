@@ -14,6 +14,8 @@ import { PromotionsModule } from './modules/promotions/promotions.module.js';
 import { ReviewsModule } from './modules/reviews/reviews.module.js';
 import { LoyaltyModule } from './modules/loyalty/loyalty.module.js';
 import { CustomerAuthModule } from './modules/customer-auth/customer-auth.module.js';
+import { SupportModule } from './modules/support/support.module.js';
+import { AnalyticsModule } from './modules/analytics/analytics.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 
 @Module({})
@@ -36,6 +38,8 @@ export class AppModule {
         ReviewsModule,
         LoyaltyModule,
         CustomerAuthModule,
+        SupportModule,
+        AnalyticsModule,
         AdminModule,
       ],
     };

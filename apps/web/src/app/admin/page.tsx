@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { formatINR } from '@direct-order/money';
 import { AdminGuard } from '@/lib/auth/admin-guard';
 import { adminApi } from '@/lib/api-client';
 import { AdminNav } from './admin-nav';
@@ -31,10 +32,6 @@ function OverviewDashboard() {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-lg border border-slate-200 p-4">
-          <p className="text-xs text-slate-400">Orders today</p>
-          <p className="text-2xl font-semibold">{overview?.ordersToday ?? '—'}</p>
-        </div>
-        <div className="rounded-lg border border-slate-200 p-4">
           <p className="text-xs text-slate-400">Active admins</p>
           <p className="text-2xl font-semibold">{overview?.activeAdmins ?? '—'}</p>
         </div>
@@ -56,6 +53,10 @@ function OverviewDashboard() {
             <p className="text-sm text-slate-400">Checking…</p>
           )}
         </div>
+        <div className="rounded-lg border border-slate-200 p-4">
+          <p className="text-xs text-slate-400">Support cases opened (as of {overview?.metrics.asOfDate ?? '—'})</p>
+          <p className="text-2xl font-semibold">{overview?.metrics.latest?.supportCasesOpened ?? '—'}</p>
+        </div>
       </div>
 
       <div className="mt-6 rounded-lg border border-slate-200 p-4">
@@ -72,6 +73,52 @@ function OverviewDashboard() {
           <p className="text-sm text-slate-400">Loading…</p>
         )}
       </div>
+
+      <div className="mt-6 rounded-lg border border-slate-200 p-4">
+        <p className="mb-2 text-sm font-semibold">
+          Platform metrics {overview?.metrics.asOfDate ? `(as of ${overview.metrics.asOfDate})` : ''}
+        </p>
+        {overview === null ? (
+          <p className="text-sm text-slate-400">Loading…</p>
+        ) : overview.metrics.latest === null ? (
+          <p className="text-sm text-slate-400">No rollups computed yet.</p>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+            <Metric label="Orders placed" value={String(overview.metrics.latest.ordersPlaced)} />
+            <Metric label="Orders completed" value={String(overview.metrics.latest.ordersCompleted)} />
+            <Metric label="Orders cancelled" value={String(overview.metrics.latest.ordersCancelled)} />
+            <Metric label="Orders rejected" value={String(overview.metrics.latest.ordersRejected)} />
+            <Metric label="Gross order value" value={formatINR(BigInt(overview.metrics.latest.grossOrderValueMinor))} />
+            <Metric label="Net order value" value={formatINR(BigInt(overview.metrics.latest.netOrderValueMinor))} />
+            <Metric label="Refunds" value={formatINR(BigInt(overview.metrics.latest.refundMinor))} />
+            <Metric
+              label="Payment success"
+              value={
+                overview.metrics.latest.paymentsAttempted > 0
+                  ? `${overview.metrics.latest.paymentsSucceeded}/${overview.metrics.latest.paymentsAttempted}`
+                  : '—'
+              }
+            />
+            <Metric
+              label="Delivery success"
+              value={
+                overview.metrics.latest.deliveriesAttempted > 0
+                  ? `${overview.metrics.latest.deliveriesSucceeded}/${overview.metrics.latest.deliveriesAttempted}`
+                  : '—'
+              }
+            />
+          </div>
+        )}
+      </div>
     </main>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs text-slate-400">{label}</p>
+      <p className="font-medium text-slate-900">{value}</p>
+    </div>
   );
 }

@@ -15,6 +15,10 @@ export class FakeStoragePort implements StoragePort {
     return Promise.resolve(`https://fake-storage.test/${key}?contentType=${contentType}`);
   }
 
+  presignGet(key: string): Promise<string> {
+    return Promise.resolve(`https://fake-storage.test/${key}?mode=get`);
+  }
+
   getObject(key: string): Promise<Uint8Array | null> {
     return Promise.resolve(this.objects.get(key) ?? null);
   }

@@ -599,6 +599,99 @@ export interface NotificationPreferenceRow {
   updatedAt: Date;
 }
 
+export interface SupportCaseRow {
+  id: string;
+  caseNumber: string;
+  customerId: string | null;
+  restaurantId: string | null;
+  orderId: string | null;
+  category: string;
+  priority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+  status: string;
+  subject: string;
+  description: string;
+  assignedToUserId: string | null;
+  resolvedAt: Date | null;
+  resolutionNote: string | null;
+  firstResponseAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface SupportMessageRow {
+  id: string;
+  caseId: string;
+  authorType: 'CUSTOMER' | 'RESTAURANT' | 'AGENT' | 'SYSTEM';
+  authorId: string | null;
+  visibility: 'INTERNAL' | 'PUBLIC';
+  body: string;
+  createdAt: Date;
+}
+
+export interface SupportAttachmentRow {
+  id: string;
+  caseId: string;
+  messageId: string;
+  uploadedByType: string;
+  uploadedById: string | null;
+  objectKey: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: Date;
+}
+
+export interface AnalyticsEventRow {
+  id: string;
+  type: string;
+  occurredAt: Date;
+  sessionId: string | null;
+  customerId: string | null;
+  restaurantId: string | null;
+  orderId: string | null;
+  properties: unknown;
+  idempotencyKey: string | null;
+  createdAt: Date;
+}
+
+export interface DailyRestaurantMetricsRow {
+  id: string;
+  restaurantId: string;
+  date: Date;
+  ordersPlaced: number;
+  ordersCompleted: number;
+  ordersCancelled: number;
+  ordersRejected: number;
+  grossOrderValueMinor: bigint;
+  discountMinor: bigint;
+  refundMinor: bigint;
+  netOrderValueMinor: bigint;
+  avgOrderValueMinor: bigint;
+  avgPrepSeconds: number;
+  computedAt: Date;
+}
+
+export interface DailyPlatformMetricsRow {
+  id: string;
+  date: Date;
+  ordersPlaced: number;
+  ordersCompleted: number;
+  ordersCancelled: number;
+  ordersRejected: number;
+  grossOrderValueMinor: bigint;
+  discountMinor: bigint;
+  refundMinor: bigint;
+  netOrderValueMinor: bigint;
+  avgOrderValueMinor: bigint;
+  avgPrepSeconds: number;
+  paymentsAttempted: number;
+  paymentsSucceeded: number;
+  deliveriesAttempted: number;
+  deliveriesSucceeded: number;
+  supportCasesOpened: number;
+  computedAt: Date;
+}
+
 /** Simulates a Prisma P2002 unique-constraint-violation error — the shape `isUniqueConstraintViolation` (platform/database/prisma-errors.ts) checks for. */
 function prismaUniqueError(target: string[]): Error {
   const error = new Error(
@@ -652,6 +745,12 @@ export interface InMemoryPrisma {
   loyaltyRedemptions: LoyaltyRedemptionRow[];
   referralCodes: ReferralCodeRow[];
   referrals: ReferralRow[];
+  supportCases: SupportCaseRow[];
+  supportMessages: SupportMessageRow[];
+  supportAttachments: SupportAttachmentRow[];
+  analyticsEvents: AnalyticsEventRow[];
+  dailyRestaurantMetrics: DailyRestaurantMetricsRow[];
+  dailyPlatformMetrics: DailyPlatformMetricsRow[];
   prisma: PrismaService;
 }
 
@@ -695,6 +794,12 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   const loyaltyRedemptions: LoyaltyRedemptionRow[] = [];
   const referralCodes: ReferralCodeRow[] = [];
   const referrals: ReferralRow[] = [];
+  const supportCases: SupportCaseRow[] = [];
+  const supportMessages: SupportMessageRow[] = [];
+  const supportAttachments: SupportAttachmentRow[] = [];
+  const analyticsEvents: AnalyticsEventRow[] = [];
+  const dailyRestaurantMetrics: DailyRestaurantMetricsRow[] = [];
+  const dailyPlatformMetrics: DailyPlatformMetricsRow[] = [];
 
   // Phase 14: real Postgres serializes concurrent claimants against the
   // SAME promotion via `SELECT ... FOR UPDATE`; this fake has no real
@@ -1128,6 +1233,12 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     count: ({ where }: { where: { slug?: string } }) => {
       return Promise.resolve(
         restaurants.filter((r) => where.slug === undefined || r.slug === where.slug).length,
+      );
+    },
+    /** `AnalyticsRollupService.rollupYesterdayForAllRestaurants` (Phase 17) — `select` is ignored, matching this fake's convention elsewhere: returning the full row is harmless since every caller only reads the fields it asked for. */
+    findMany: ({ where }: { where?: { status?: string } } = {}) => {
+      return Promise.resolve(
+        restaurants.filter((r) => where?.status === undefined || r.status === where.status),
       );
     },
     /** `AdminOverviewController`'s per-status breakdown (Phase 13) — the one `groupBy` this fake needs to support. */
@@ -1681,6 +1792,11 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     );
   }
 
+  type OrderDateRangeClause =
+    | { placedAt: { gte: Date; lt: Date } }
+    | { deliveredAt: { gte: Date; lt: Date } }
+    | { cancelledAt: { gte: Date; lt: Date } };
+
   interface OrderListWhere {
     id?: string;
     restaurantId?: string;
@@ -1688,9 +1804,14 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     customerPhone?: string;
     status?: string | { in: string[] };
     createdAt?: { lt?: Date; gte?: Date };
+    OR?: OrderDateRangeClause[];
   }
 
-  /** Backs the expiry scheduler's scan (`status`, `createdAt.lt`), Phase 10's restaurant order queue/detail (`restaurantId`, `status.in`, `id`), Phase 13's admin cross-tenant search (`orderNumber`, `createdAt.gte` for "today"), and Phase 14's first-order-only eligibility check (`customerPhone`, `status`, optional `restaurantId`). */
+  function inRange(value: Date | null, range: { gte: Date; lt: Date }): boolean {
+    return value !== null && value.getTime() >= range.gte.getTime() && value.getTime() < range.lt.getTime();
+  }
+
+  /** Backs the expiry scheduler's scan (`status`, `createdAt.lt`), Phase 10's restaurant order queue/detail (`restaurantId`, `status.in`, `id`), Phase 13's admin cross-tenant search (`orderNumber`, `createdAt.gte` for "today"), Phase 14's first-order-only eligibility check (`customerPhone`, `status`, optional `restaurantId`), and Phase 17's rollup scan (`OR` across `placedAt`/`deliveredAt`/`cancelledAt` ranges — each independently gated on its own timestamp, matching `aggregateOrders`'s own doc comment on why a single order can appear as "placed" and "completed" in different days' rollups). */
   function matchOrderList(where: OrderListWhere) {
     return (o: OrderRow) => {
       if (where.id !== undefined && o.id !== where.id) return false;
@@ -1709,6 +1830,14 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       }
       if (where.createdAt?.lt && o.createdAt.getTime() >= where.createdAt.lt.getTime())
         return false;
+      if (where.OR) {
+        const matchesOr = where.OR.some((clause) => {
+          if ('placedAt' in clause) return inRange(o.placedAt, clause.placedAt);
+          if ('deliveredAt' in clause) return inRange(o.deliveredAt, clause.deliveredAt);
+          return inRange(o.cancelledAt, clause.cancelledAt);
+        });
+        if (!matchesOr) return false;
+      }
       return true;
     };
   }
@@ -1953,6 +2082,27 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       orderStatusHistory.push(row);
       return Promise.resolve(row);
     },
+    /** `AnalyticsRollupService`'s "rejected orders" count (Phase 17) — `order.restaurantId` is a nested filter, resolved by looking the parent order up in the `orders` array. */
+    count: ({
+      where,
+    }: {
+      where: {
+        toStatus?: string;
+        createdAt?: { gte: Date; lt: Date };
+        order?: { restaurantId: string };
+      };
+    }) => {
+      const matches = orderStatusHistory.filter((h) => {
+        if (where.toStatus !== undefined && h.toStatus !== where.toStatus) return false;
+        if (where.createdAt && !inRange(h.createdAt, where.createdAt)) return false;
+        if (where.order) {
+          const order = orders.find((o) => o.id === h.orderId);
+          if (!order || order.restaurantId !== where.order.restaurantId) return false;
+        }
+        return true;
+      });
+      return Promise.resolve(matches.length);
+    },
   };
 
   type PaymentWhere = {
@@ -2055,6 +2205,19 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
       return Promise.resolve(row);
     },
+    /** `AnalyticsRollupService`'s platform payment-success-rate counters (Phase 17). */
+    count: ({
+      where,
+    }: {
+      where: { createdAt?: { gte: Date; lt: Date }; status?: { in: string[] } };
+    }) => {
+      const matches = payments.filter((p) => {
+        if (where.createdAt && !inRange(p.createdAt, where.createdAt)) return false;
+        if (where.status && !where.status.in.includes(p.status)) return false;
+        return true;
+      });
+      return Promise.resolve(matches.length);
+    },
   };
 
   type RefundWhere = { paymentId?: string; idempotencyKey?: string; status?: { not: string } };
@@ -2118,6 +2281,29 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       if (!row) throw new Error(`refund ${where.id} not found`);
       Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
       return Promise.resolve(row);
+    },
+    /** `AnalyticsRollupService`'s refund-sum-for-the-day query (Phase 17) — `payment.order.restaurantId` is a two-hop nested filter, resolved via `payments`/`orders`. */
+    aggregate: ({
+      where,
+    }: {
+      where: {
+        status?: string;
+        completedAt?: { gte: Date; lt: Date };
+        payment?: { order: { restaurantId: string } };
+      };
+    }) => {
+      const matches = refunds.filter((r) => {
+        if (where.status !== undefined && r.status !== where.status) return false;
+        if (where.completedAt && !inRange(r.completedAt, where.completedAt)) return false;
+        if (where.payment) {
+          const payment = payments.find((p) => p.id === r.paymentId);
+          const order = payment ? orders.find((o) => o.id === payment.orderId) : undefined;
+          if (!order || order.restaurantId !== where.payment.order.restaurantId) return false;
+        }
+        return true;
+      });
+      const sum = matches.reduce((total, r) => total + r.amountMinor, 0n);
+      return Promise.resolve({ _sum: { amountMinor: matches.length === 0 ? null : sum } });
     },
   };
 
@@ -2388,6 +2574,19 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       const { attemptCount: _attemptCount, ...rest } = data;
       Object.assign(row, omitUndefined(rest), { updatedAt: new Date() });
       return Promise.resolve(row);
+    },
+    /** `AnalyticsRollupService`'s platform delivery-success-rate counters (Phase 17). */
+    count: ({
+      where,
+    }: {
+      where: { createdAt?: { gte: Date; lt: Date }; status?: string };
+    }) => {
+      const matches = deliveries.filter((d) => {
+        if (where.createdAt && !inRange(d.createdAt, where.createdAt)) return false;
+        if (where.status !== undefined && d.status !== where.status) return false;
+        return true;
+      });
+      return Promise.resolve(matches.length);
     },
   };
 
@@ -2661,9 +2860,13 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         }),
       );
     },
-    count: ({ where }: { where: { role: string; status: string } }) => {
+    count: ({ where }: { where: { role?: string; status?: string } }) => {
       return Promise.resolve(
-        adminUsers.filter((a) => a.role === where.role && a.status === where.status).length,
+        adminUsers.filter(
+          (a) =>
+            (where.role === undefined || a.role === where.role) &&
+            (where.status === undefined || a.status === where.status),
+        ).length,
       );
     },
     update: ({ where, data }: { where: { id: string }; data: Partial<AdminUserRow> }) => {
@@ -3248,6 +3451,375 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     },
   };
 
+  type SupportCaseWhere = {
+    id?: string;
+    customerId?: string;
+    restaurantId?: string;
+    status?: string;
+    assignedToUserId?: string | null;
+    createdAt?: { gte: Date; lt: Date };
+  };
+  const matchSupportCase = (where: SupportCaseWhere) => (c: SupportCaseRow) => {
+    if (where.id !== undefined && c.id !== where.id) return false;
+    if (where.customerId !== undefined && c.customerId !== where.customerId) return false;
+    if (where.restaurantId !== undefined && c.restaurantId !== where.restaurantId) return false;
+    if (where.status !== undefined && c.status !== where.status) return false;
+    if (where.assignedToUserId !== undefined && c.assignedToUserId !== where.assignedToUserId)
+      return false;
+    if (where.createdAt && !inRange(c.createdAt, where.createdAt)) return false;
+    return true;
+  };
+
+  interface SupportCaseCreateData {
+    caseNumber: string;
+    customerId?: string;
+    restaurantId?: string;
+    orderId?: string;
+    category: string;
+    priority?: SupportCaseRow['priority'];
+    subject: string;
+    description: string;
+  }
+
+  const supportCaseTable = {
+    create: ({ data }: { data: SupportCaseCreateData }) => {
+      if (supportCases.some((c) => c.caseNumber === data.caseNumber)) {
+        throw prismaUniqueError(['caseNumber']);
+      }
+      const row: SupportCaseRow = {
+        id: randomUUID(),
+        caseNumber: data.caseNumber,
+        customerId: data.customerId ?? null,
+        restaurantId: data.restaurantId ?? null,
+        orderId: data.orderId ?? null,
+        category: data.category,
+        priority: data.priority ?? 'NORMAL',
+        status: 'OPEN',
+        subject: data.subject,
+        description: data.description,
+        assignedToUserId: null,
+        resolvedAt: null,
+        resolutionNote: null,
+        firstResponseAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      supportCases.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { id: string } }) => {
+      return Promise.resolve(supportCases.find((c) => c.id === where.id) ?? null);
+    },
+    findFirst: ({ where }: { where: SupportCaseWhere }) => {
+      return Promise.resolve(supportCases.find(matchSupportCase(where)) ?? null);
+    },
+    findMany: ({
+      where,
+      orderBy,
+      cursor,
+      skip,
+      take,
+    }: {
+      where: SupportCaseWhere;
+      orderBy?: { createdAt: 'asc' | 'desc' };
+      cursor?: { id: string };
+      skip?: number;
+      take?: number;
+    }) => {
+      let matches = supportCases.filter(matchSupportCase(where));
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      if (cursor) {
+        const cursorIndex = matches.findIndex((c) => c.id === cursor.id);
+        matches = cursorIndex === -1 ? [] : matches.slice(cursorIndex + (skip ?? 0));
+      }
+      if (take !== undefined) matches = matches.slice(0, take);
+      return Promise.resolve(matches);
+    },
+    count: ({ where }: { where: SupportCaseWhere }) => {
+      return Promise.resolve(supportCases.filter(matchSupportCase(where)).length);
+    },
+    update: ({
+      where,
+      data,
+    }: {
+      where: { id: string };
+      data: Partial<SupportCaseRow>;
+    }) => {
+      const row = supportCases.find((c) => c.id === where.id);
+      if (!row) throw new Error(`supportCase ${where.id} not found`);
+      Object.assign(row, omitUndefined(data), { updatedAt: new Date() });
+      return Promise.resolve(row);
+    },
+  };
+
+  type SupportMessageWhere = {
+    caseId?: string;
+    visibility?: string;
+    authorType?: string;
+  };
+  const matchSupportMessage = (where: SupportMessageWhere) => (m: SupportMessageRow) => {
+    if (where.caseId !== undefined && m.caseId !== where.caseId) return false;
+    if (where.visibility !== undefined && m.visibility !== where.visibility) return false;
+    if (where.authorType !== undefined && m.authorType !== where.authorType) return false;
+    return true;
+  };
+
+  interface SupportMessageCreateData {
+    caseId: string;
+    authorType: SupportMessageRow['authorType'];
+    authorId?: string;
+    visibility?: SupportMessageRow['visibility'];
+    body: string;
+  }
+
+  const supportMessageTable = {
+    create: ({ data }: { data: SupportMessageCreateData }) => {
+      const row: SupportMessageRow = {
+        id: randomUUID(),
+        caseId: data.caseId,
+        authorType: data.authorType,
+        authorId: data.authorId ?? null,
+        visibility: data.visibility ?? 'PUBLIC',
+        body: data.body,
+        createdAt: new Date(),
+      };
+      supportMessages.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { id: string } }) => {
+      return Promise.resolve(supportMessages.find((m) => m.id === where.id) ?? null);
+    },
+    findFirst: ({
+      where,
+    }: {
+      where: SupportMessageWhere;
+      orderBy?: { createdAt: 'asc' | 'desc' };
+    }) => {
+      return Promise.resolve(supportMessages.find(matchSupportMessage(where)) ?? null);
+    },
+    findMany: ({
+      where,
+      orderBy,
+    }: {
+      where: SupportMessageWhere;
+      orderBy?: { createdAt: 'asc' | 'desc' };
+    }) => {
+      let matches = supportMessages.filter(matchSupportMessage(where));
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      return Promise.resolve(matches);
+    },
+  };
+
+  interface SupportAttachmentCreateData {
+    caseId: string;
+    messageId: string;
+    uploadedByType: string;
+    uploadedById?: string;
+    objectKey: string;
+    filename: string;
+    contentType: string;
+    sizeBytes: number;
+  }
+
+  const supportAttachmentTable = {
+    create: ({ data }: { data: SupportAttachmentCreateData }) => {
+      const row: SupportAttachmentRow = {
+        id: randomUUID(),
+        caseId: data.caseId,
+        messageId: data.messageId,
+        uploadedByType: data.uploadedByType,
+        uploadedById: data.uploadedById ?? null,
+        objectKey: data.objectKey,
+        filename: data.filename,
+        contentType: data.contentType,
+        sizeBytes: data.sizeBytes,
+        createdAt: new Date(),
+      };
+      supportAttachments.push(row);
+      return Promise.resolve(row);
+    },
+    findUnique: ({ where }: { where: { id: string } }) => {
+      return Promise.resolve(supportAttachments.find((a) => a.id === where.id) ?? null);
+    },
+    findFirst: ({ where }: { where: { id: string; caseId: string } }) => {
+      return Promise.resolve(
+        supportAttachments.find((a) => a.id === where.id && a.caseId === where.caseId) ?? null,
+      );
+    },
+  };
+
+  interface AnalyticsEventCreateData {
+    type: string;
+    occurredAt: Date;
+    sessionId?: string;
+    customerId?: string;
+    restaurantId?: string;
+    orderId?: string;
+    properties?: unknown;
+    idempotencyKey?: string;
+  }
+
+  const analyticsEventTable = {
+    create: ({ data }: { data: AnalyticsEventCreateData }) => {
+      if (
+        data.idempotencyKey !== undefined &&
+        analyticsEvents.some((e) => e.idempotencyKey === data.idempotencyKey)
+      ) {
+        throw prismaUniqueError(['idempotencyKey']);
+      }
+      const row: AnalyticsEventRow = {
+        id: randomUUID(),
+        type: data.type,
+        occurredAt: data.occurredAt,
+        sessionId: data.sessionId ?? null,
+        customerId: data.customerId ?? null,
+        restaurantId: data.restaurantId ?? null,
+        orderId: data.orderId ?? null,
+        properties: data.properties ?? null,
+        idempotencyKey: data.idempotencyKey ?? null,
+        createdAt: new Date(),
+      };
+      analyticsEvents.push(row);
+      return Promise.resolve(row);
+    },
+  };
+
+  const dailyRestaurantMetricsTable = {
+    findUnique: ({
+      where,
+    }: {
+      where: { restaurantId_date: { restaurantId: string; date: Date } };
+    }) => {
+      const { restaurantId, date } = where.restaurantId_date;
+      return Promise.resolve(
+        dailyRestaurantMetrics.find(
+          (m) => m.restaurantId === restaurantId && m.date.getTime() === date.getTime(),
+        ) ?? null,
+      );
+    },
+    upsert: ({
+      where,
+      create,
+      update,
+    }: {
+      where: { restaurantId_date: { restaurantId: string; date: Date } };
+      create: Omit<DailyRestaurantMetricsRow, 'id' | 'computedAt'>;
+      update: Omit<DailyRestaurantMetricsRow, 'id' | 'restaurantId' | 'date' | 'computedAt'>;
+    }) => {
+      const { restaurantId, date } = where.restaurantId_date;
+      const existing = dailyRestaurantMetrics.find(
+        (m) => m.restaurantId === restaurantId && m.date.getTime() === date.getTime(),
+      );
+      if (existing) {
+        Object.assign(existing, update, { computedAt: new Date() });
+        return Promise.resolve(existing);
+      }
+      const row: DailyRestaurantMetricsRow = {
+        id: randomUUID(),
+        computedAt: new Date(),
+        ...create,
+      };
+      dailyRestaurantMetrics.push(row);
+      return Promise.resolve(row);
+    },
+    findMany: ({
+      where,
+      orderBy,
+    }: {
+      where: { restaurantId: string; date?: { gte: Date; lte: Date } };
+      orderBy?: { date: 'asc' | 'desc' };
+    }) => {
+      let matches = dailyRestaurantMetrics.filter((m) => {
+        if (m.restaurantId !== where.restaurantId) return false;
+        if (
+          where.date &&
+          (m.date.getTime() < where.date.gte.getTime() || m.date.getTime() > where.date.lte.getTime())
+        )
+          return false;
+        return true;
+      });
+      if (orderBy?.date === 'desc') {
+        matches = [...matches].sort((a, b) => b.date.getTime() - a.date.getTime());
+      } else if (orderBy?.date === 'asc') {
+        matches = [...matches].sort((a, b) => a.date.getTime() - b.date.getTime());
+      }
+      return Promise.resolve(matches);
+    },
+  };
+
+  const dailyPlatformMetricsTable = {
+    findUnique: ({ where }: { where: { date: Date } }) => {
+      return Promise.resolve(
+        dailyPlatformMetrics.find((m) => m.date.getTime() === where.date.getTime()) ?? null,
+      );
+    },
+    upsert: ({
+      where,
+      create,
+      update,
+    }: {
+      where: { date: Date };
+      create: Omit<DailyPlatformMetricsRow, 'id' | 'computedAt'>;
+      update: Omit<DailyPlatformMetricsRow, 'id' | 'date' | 'computedAt'>;
+    }) => {
+      const existing = dailyPlatformMetrics.find((m) => m.date.getTime() === where.date.getTime());
+      if (existing) {
+        Object.assign(existing, update, { computedAt: new Date() });
+        return Promise.resolve(existing);
+      }
+      const row: DailyPlatformMetricsRow = {
+        id: randomUUID(),
+        computedAt: new Date(),
+        ...create,
+      };
+      dailyPlatformMetrics.push(row);
+      return Promise.resolve(row);
+    },
+    findMany: ({
+      where,
+      orderBy,
+    }: {
+      where?: { date?: { gte: Date; lte: Date } };
+      orderBy?: { date: 'asc' | 'desc' };
+    }) => {
+      let matches = dailyPlatformMetrics.filter((m) => {
+        if (
+          where?.date &&
+          (m.date.getTime() < where.date.gte.getTime() || m.date.getTime() > where.date.lte.getTime())
+        )
+          return false;
+        return true;
+      });
+      if (orderBy?.date === 'desc') {
+        matches = [...matches].sort((a, b) => b.date.getTime() - a.date.getTime());
+      } else if (orderBy?.date === 'asc') {
+        matches = [...matches].sort((a, b) => a.date.getTime() - b.date.getTime());
+      }
+      return Promise.resolve(matches);
+    },
+    findFirst: ({
+      orderBy,
+    }: {
+      orderBy?: { date: 'asc' | 'desc' };
+    }) => {
+      let matches = [...dailyPlatformMetrics];
+      if (orderBy?.date === 'desc') {
+        matches = matches.sort((a, b) => b.date.getTime() - a.date.getTime());
+      } else if (orderBy?.date === 'asc') {
+        matches = matches.sort((a, b) => a.date.getTime() - b.date.getTime());
+      }
+      return Promise.resolve(matches[0] ?? null);
+    },
+  };
+
   const prisma = {
     user,
     session,
@@ -3286,6 +3858,12 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     loyaltyRedemption: loyaltyRedemptionTable,
     referralCode: referralCodeTable,
     referral: referralTable,
+    supportCase: supportCaseTable,
+    supportMessage: supportMessageTable,
+    supportAttachment: supportAttachmentTable,
+    analyticsEvent: analyticsEventTable,
+    dailyRestaurantMetrics: dailyRestaurantMetricsTable,
+    dailyPlatformMetrics: dailyPlatformMetricsTable,
     // Supports both Prisma `$transaction` forms this codebase uses: the
     // array form (a list of already-constructed operations, awaited
     // together — see session.repository.ts) and the interactive
@@ -3376,6 +3954,12 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     loyaltyRedemptions,
     referralCodes,
     referrals,
+    supportCases,
+    supportMessages,
+    supportAttachments,
+    analyticsEvents,
+    dailyRestaurantMetrics,
+    dailyPlatformMetrics,
     prisma,
   };
 }

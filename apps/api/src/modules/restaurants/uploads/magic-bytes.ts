@@ -42,6 +42,24 @@ export function contentMatchesDeclaredType(
   return detectImageType(bytes) === declaredContentType;
 }
 
+/**
+ * Phase 17: support attachments additionally allow PDF (BR-140,
+ * "size- and type-validated") — a receipt or screenshot-as-PDF is a
+ * realistic support attachment in a way it never was for a restaurant
+ * branding image, so this checks image types OR PDF's `%PDF` magic
+ * bytes, rather than the stricter image-only check branding uploads
+ * use.
+ */
+export function contentMatchesDeclaredAttachmentType(
+  bytes: Uint8Array,
+  declaredContentType: string,
+): boolean {
+  if (declaredContentType === 'application/pdf') {
+    return startsWith(bytes, [0x25, 0x50, 0x44, 0x46]); // "%PDF"
+  }
+  return detectImageType(bytes) === declaredContentType;
+}
+
 function startsWith(bytes: Uint8Array, prefix: number[]): boolean {
   if (bytes.length < prefix.length) return false;
   return prefix.every((byte, i) => bytes[i] === byte);
