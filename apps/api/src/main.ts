@@ -3,10 +3,19 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import fastifyCookie from '@fastify/cookie';
 import fastifyCors from '@fastify/cors';
+import fastifyHelmet from '@fastify/helmet';
 import { AppModule } from './app.module.js';
 import { validateEnv, EnvValidationError, type Env } from './platform/config/env.schema.js';
 import { AppLoggerService } from './platform/logging/logger.service.js';
 import { createCsrfCookieHook } from './platform/security/csrf-cookie.hook.js';
+import { permissionsPolicyHook } from './platform/security/permissions-policy.hook.js';
+
+const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
+// docs/09-security.md §15.4: "1 MB JSON body limit." Explicit rather
+// than relying on Fastify's own default (which happens to also be 1
+// MiB today, but is an implementation detail of the framework, not a
+// value this codebase has actually asserted or tested until now).
+const JSON_BODY_LIMIT_BYTES = 1024 * 1024;
 
 /**
  * Validated BEFORE the Nest DI container is even constructed. A
@@ -33,7 +42,7 @@ async function bootstrap(): Promise<void> {
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.forRoot(env),
-    new FastifyAdapter({ trustProxy: true }),
+    new FastifyAdapter({ trustProxy: true, bodyLimit: JSON_BODY_LIMIT_BYTES }),
     // rawBody: true populates `request.rawBody` (a Buffer) alongside
     // the parsed body on every request — the webhook receiver needs the
     // exact, unparsed bytes to verify Razorpay's HMAC signature over
@@ -42,6 +51,24 @@ async function bootstrap(): Promise<void> {
   );
 
   app.useLogger(app.get(AppLoggerService));
+
+  // docs/09-security.md §15.7. The API returns only JSON — never HTML,
+  // inline scripts, or third-party embeds — so its own CSP is a full
+  // lockdown (`default-src 'none'`) rather than the web app's
+  // allowlist-shaped policy (apps/web/next.config.mjs carries that
+  // one, since it's the actual HTML-rendering, script/image/frame-
+  // loading surface CSP exists to constrain). HSTS/nosniff/referrer-
+  // policy still apply here: any client that reaches this origin
+  // directly (a misdirected link, a dev tool) gets the same transport
+  // and MIME-sniffing protections as the browser-facing app.
+  await app.register(fastifyHelmet, {
+    contentSecurityPolicy: {
+      directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"], baseUri: ["'none'"] },
+    },
+    hsts: { maxAge: ONE_YEAR_SECONDS, includeSubDomains: true, preload: true },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  });
+  app.getHttpAdapter().getInstance().addHook('onRequest', permissionsPolicyHook);
 
   await app.register(fastifyCookie);
   // credentials:true + an explicit origin (not '*') is required for the

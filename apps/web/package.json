@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "postbuild": "node ../../scripts/check-web-bundle-secrets.mjs",
     "start": "next start",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "echo \"no unit tests yet in apps/web (Phase 1 has no UI logic)\" && exit 0",

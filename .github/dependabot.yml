@@ -1,0 +1,29 @@
+version: 2
+
+# docs/09-security.md §15.11: "Dependabot for security patches." A
+# single npm entry covers the whole pnpm workspace (root + every
+# apps/*/packages/* package.json) — Dependabot resolves the workspace
+# from the root lockfile, it does not need one entry per package.
+updates:
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 10
+    groups:
+      # Security patches land individually (never grouped) so each gets
+      # its own PR, review, and CI run; routine version bumps are
+      # grouped to keep the PR queue from becoming unreviewable noise.
+      minor-and-patch:
+        applies-to: version-updates
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+
+  - package-ecosystem: 'docker'
+    directory: '/'
+    schedule:
+      interval: 'weekly'

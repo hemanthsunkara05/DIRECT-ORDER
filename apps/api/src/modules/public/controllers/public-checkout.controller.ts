@@ -1,5 +1,6 @@
 import { Body, Controller, HttpCode, Inject, Post } from '@nestjs/common';
 import { ok } from '../../../platform/http/response-envelope.js';
+import { RateLimit } from '../../../platform/rate-limit/rate-limit.decorator.js';
 import { serializeBreakdown } from '../../orders/serialize-breakdown.js';
 import { QuoteCartDto } from '../dto/quote-cart.dto.js';
 import { CheckoutQuoteService } from '../services/checkout-quote.service.js';
@@ -17,6 +18,7 @@ export class PublicCheckoutController {
   constructor(@Inject(CheckoutQuoteService) private readonly quoteService: CheckoutQuoteService) {}
 
   @Post('quote')
+  @RateLimit({ limit: 60, windowSeconds: 3600 })
   @HttpCode(200)
   async quote(@Body() body: unknown) {
     const input = QuoteCartDto.parse(body);

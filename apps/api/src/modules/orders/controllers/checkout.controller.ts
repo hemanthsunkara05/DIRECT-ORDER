@@ -2,6 +2,7 @@ import { Body, Controller, Headers, HttpCode, Inject, Post, Req } from '@nestjs/
 import type { FastifyRequest } from 'fastify';
 import { ok } from '../../../platform/http/response-envelope.js';
 import { ValidationError } from '../../../platform/errors/app-error.js';
+import { RateLimit } from '../../../platform/rate-limit/rate-limit.decorator.js';
 import { OptionalAuthService } from '../../identity/services/optional-auth.service.js';
 import { CheckoutDto } from '../dto/checkout.dto.js';
 import { CheckoutService } from '../services/checkout.service.js';
@@ -34,6 +35,7 @@ export class CheckoutController {
   ) {}
 
   @Post()
+  @RateLimit({ limit: 20, windowSeconds: 3600 })
   @HttpCode(200)
   async create(
     @Body() body: unknown,

@@ -58,6 +58,18 @@ export default tseslint.config(
     },
   },
 
+  // Repo-root standalone Node scripts (Phase 18's bundle-secret scan)
+  // and apps/web's own next.config.mjs — plain `.mjs`, run directly by
+  // Node, outside every other globals-defining block above (which only
+  // match `.ts` files or `apps/api`/`apps/worker`/`packages`/`prisma`).
+  {
+    files: ['scripts/**/*.mjs', 'apps/web/next.config.mjs'],
+    ignores,
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+  },
+
   // apps/web: browser globals + Next.js's own recommended rules
   // (accessibility, hooks correctness, image/link usage), bridged from
   // its legacy .eslintrc-shaped config via FlatCompat.

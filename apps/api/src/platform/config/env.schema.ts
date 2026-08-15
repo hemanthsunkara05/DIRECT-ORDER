@@ -141,6 +141,33 @@ export class EnvValidationError extends Error {
 }
 
 /**
+ * docs/09-security.md §15.7: "Development origins must not survive
+ * into production configuration — assert this in a startup check."
+ * Without this, a `WEB_BASE_URL=http://localhost:3000` left over from
+ * a copy-pasted `.env` would silently become the CORS-allowed origin
+ * (and the cookie/CSRF `Secure` flag's effective trust boundary) in a
+ * real production deploy — a config mistake, not an attack, but one
+ * this startup check turns into an immediate, named failure instead of
+ * a silent security regression.
+ */
+function isDevOrigin(url: string): boolean {
+  let hostname: string;
+  let protocol: string;
+  try {
+    ({ hostname, protocol } = new URL(url));
+  } catch {
+    return false; // caught separately by EnvSchema's own z.string().url() check.
+  }
+  if (protocol !== 'https:') return true;
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '0.0.0.0' ||
+    hostname.endsWith('.local')
+  );
+}
+
+/**
  * Parses and validates `process.env`. Throws a single, clearly-worded
  * EnvValidationError naming every missing/invalid variable rather than
  * failing on the first one — a developer fixing configuration should
@@ -166,6 +193,13 @@ export function validateEnv(raw: NodeJS.ProcessEnv): Env {
       throw new EnvValidationError(
         missing.map((key) => `${key} is required when APP_ENV=production`),
       );
+    }
+
+    const devOriginIssues = (['API_BASE_URL', 'WEB_BASE_URL'] as const)
+      .filter((key) => isDevOrigin(env[key]))
+      .map((key) => `${key} (${env[key]}) looks like a development origin (localhost/HTTP) and cannot be used when APP_ENV=production`);
+    if (devOriginIssues.length > 0) {
+      throw new EnvValidationError(devOriginIssues);
     }
   }
 

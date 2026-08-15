@@ -169,6 +169,40 @@ describe('RefundService (Phase 9)', () => {
     expect(ctx.db.payments.find((p) => p.id === paymentId)!.refundedMinor).toBe(5000n); // not double-applied
   });
 
+  // docs/09-security.md §15.5: "submit two identical refunds concurrently"
+  // — genuinely concurrent this time (Promise.all), not the sequential
+  // replay above. Phase 18 gap: the sequential test alone doesn't prove
+  // the race is actually closed by a real lock/constraint rather than
+  // by accident of single-threaded JS never interleaving two awaited
+  // calls.
+  it('Phase 18: two genuinely concurrent requests with the same (paymentId, idempotencyKey) still produce exactly one refund', async () => {
+    ctx = await createTestApp();
+    const { paymentId } = await capturedPayment('20000');
+    const refunds = ctx.app.get(RefundService);
+    const idempotencyKey = randomUUID();
+
+    const [first, second] = await Promise.all([
+      refunds.requestRefund({
+        paymentId,
+        amountMinor: 5000n,
+        reason: 'Goodwill credit',
+        initiatedByActorType: 'ADMIN',
+        idempotencyKey,
+      }),
+      refunds.requestRefund({
+        paymentId,
+        amountMinor: 5000n,
+        reason: 'Goodwill credit',
+        initiatedByActorType: 'ADMIN',
+        idempotencyKey,
+      }),
+    ]);
+
+    expect(first.id).toBe(second.id);
+    expect(ctx.db.refunds.filter((r) => r.paymentId === paymentId)).toHaveLength(1);
+    expect(ctx.db.payments.find((p) => p.id === paymentId)!.refundedMinor).toBe(5000n);
+  });
+
   it('a refund exactly equal to the remaining captured amount succeeds (boundary, not off-by-one)', async () => {
     ctx = await createTestApp();
     const { paymentId } = await capturedPayment('20000');

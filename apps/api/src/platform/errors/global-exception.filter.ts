@@ -20,10 +20,31 @@ const STATUS_TO_CODE: Record<number, string> = {
   404: 'NOT_FOUND',
   405: 'METHOD_NOT_ALLOWED',
   409: 'CONFLICT',
+  413: 'PAYLOAD_TOO_LARGE',
   422: 'VALIDATION_ERROR',
   429: 'RATE_LIMITED',
   503: 'SERVICE_UNAVAILABLE',
 };
+
+/**
+ * Fastify's own errors (body-too-large, malformed content-type, etc. —
+ * thrown by Fastify itself or a registered plugin, before Nest's
+ * routing layer ever sees the request) are plain objects carrying a
+ * `statusCode`, not instances of Nest's `HttpException` — found via
+ * Phase 18's body-limit regression test, which surfaced a raw 1MB
+ * body-too-large request as an opaque 500 INTERNAL_ERROR instead of
+ * 413, the same class of gap Phase 9's `ProviderError` fix (see
+ * checkout.e2e.test.ts) already caught for an unrecognized payment
+ * provider error shape.
+ */
+function isFastifyStatusError(error: unknown): error is { statusCode: number; message?: string } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'statusCode' in error &&
+    typeof (error as { statusCode?: unknown }).statusCode === 'number'
+  );
+}
 
 interface MappedError {
   status: number;
@@ -106,6 +127,16 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         status,
         code: STATUS_TO_CODE[status] ?? (status >= 500 ? 'INTERNAL_ERROR' : 'HTTP_ERROR'),
         message,
+        cause: exception,
+      };
+    }
+
+    if (isFastifyStatusError(exception) && exception.statusCode < 500) {
+      const status = exception.statusCode;
+      return {
+        status,
+        code: STATUS_TO_CODE[status] ?? 'HTTP_ERROR',
+        message: exception.message ?? 'The request could not be processed.',
         cause: exception,
       };
     }

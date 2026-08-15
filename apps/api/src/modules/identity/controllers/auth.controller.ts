@@ -121,6 +121,7 @@ export class AuthController {
   }
 
   @Post('password/reset')
+  @RateLimit({ limit: 10, windowSeconds: 900 })
   @HttpCode(200)
   async resetPassword(@Body() body: unknown) {
     const input = PasswordResetDto.parse(body);
@@ -145,6 +146,11 @@ export class AuthController {
   }
 
   @Post('otp/verify')
+  @RateLimit({
+    limit: 10,
+    windowSeconds: 900,
+    keyBy: (req) => (req.body as { identifier?: string } | undefined)?.identifier,
+  })
   @HttpCode(200)
   async verifyOtp(@Body() body: unknown) {
     const input = OtpVerifyDto.parse(body);

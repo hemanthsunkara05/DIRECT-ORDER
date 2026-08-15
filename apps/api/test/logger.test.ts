@@ -75,6 +75,32 @@ describe('createLogger — real production configuration', () => {
     expect(parsed.auth.otp).toBe('[REDACTED]');
   });
 
+  it('masks a phone number to its last 4 digits, redacts email fully, and never partially reveals a token that happens to end in digits (Phase 18, docs/09-security.md §15.9)', () => {
+    const { destination, lines } = captureLines();
+    const logger = createLogger('debug', destination);
+
+    logger.info(
+      {
+        customer: { phone: '+919876543210', customerPhone: '+919876500001', email: 'asha@example.com' },
+        auth: { token: 'session-token-ending-in-1234' },
+      },
+      'sensitive event',
+    );
+
+    const [parsed] = lines() as [
+      {
+        customer: { phone: string; customerPhone: string; email: string };
+        auth: { token: string };
+      },
+    ];
+    expect(parsed.customer.phone).toBe('[REDACTED:...3210]');
+    expect(parsed.customer.customerPhone).toBe('[REDACTED:...0001]');
+    expect(parsed.customer.email).toBe('[REDACTED]');
+    // A token ending in digits must be fully redacted, not last-4'd —
+    // the censor dispatches on the matched field NAME, never the value.
+    expect(parsed.auth.token).toBe('[REDACTED]');
+  });
+
   it('respects the configured level — messages below it are not emitted', () => {
     const { destination, lines } = captureLines();
     const logger = createLogger('warn', destination);

@@ -64,13 +64,47 @@ describe('validateEnv', () => {
   });
 
   describe('APP_ENV=production', () => {
+    const PRODUCTION_VALID_ENV = {
+      ...BASE_VALID_ENV,
+      APP_ENV: 'production',
+      NODE_ENV: 'production',
+      API_BASE_URL: 'https://api.direct-order.example',
+      WEB_BASE_URL: 'https://direct-order.example',
+    };
+
     it('accepts a complete production configuration', () => {
-      const env = validateEnv({
-        ...BASE_VALID_ENV,
-        APP_ENV: 'production',
-        NODE_ENV: 'production',
-      });
+      const env = validateEnv(PRODUCTION_VALID_ENV);
       expect(env.APP_ENV).toBe('production');
+    });
+
+    // docs/09-security.md §15.7: "Development origins must not survive
+    // into production configuration — assert this in a startup check."
+    it.each([
+      ['API_BASE_URL', 'http://api.direct-order.example'], // http, not https
+      ['WEB_BASE_URL', 'http://direct-order.example'],
+      ['API_BASE_URL', 'https://localhost:4000'],
+      ['WEB_BASE_URL', 'https://127.0.0.1:3000'],
+      ['WEB_BASE_URL', 'https://web.local'],
+    ])('rejects a dev-looking %s (%s) under APP_ENV=production', (key, value) => {
+      expect(() => validateEnv({ ...PRODUCTION_VALID_ENV, [key]: value })).toThrow(
+        EnvValidationError,
+      );
+    });
+
+    it('names every dev-looking origin at once, not just the first', () => {
+      try {
+        validateEnv({
+          ...PRODUCTION_VALID_ENV,
+          API_BASE_URL: 'http://localhost:4000',
+          WEB_BASE_URL: 'http://localhost:3000',
+        });
+        expect.fail('expected validateEnv to throw');
+      } catch (error) {
+        expect(error).toBeInstanceOf(EnvValidationError);
+        const message = (error as EnvValidationError).message;
+        expect(message).toContain('API_BASE_URL');
+        expect(message).toContain('WEB_BASE_URL');
+      }
     });
 
     it('fails fast, naming every missing required variable at once', () => {

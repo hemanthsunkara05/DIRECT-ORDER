@@ -1,10 +1,12 @@
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import fastifyCookie from '@fastify/cookie';
+import fastifyHelmet from '@fastify/helmet';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module.js';
 import { CSRF_COOKIE } from '../../src/platform/security/csrf.js';
 import { createCsrfCookieHook } from '../../src/platform/security/csrf-cookie.hook.js';
+import { permissionsPolicyHook } from '../../src/platform/security/permissions-policy.hook.js';
 import type { Env } from '../../src/platform/config/env.schema.js';
 import { PrismaService } from '../../src/platform/database/prisma.service.js';
 import { RedisService } from '../../src/platform/redis/redis.service.js';
@@ -95,12 +97,24 @@ export async function createTestApp(
     .compile();
 
   const app = moduleRef.createNestApplication<NestFastifyApplication>(
-    new FastifyAdapter({ trustProxy: true }),
+    new FastifyAdapter({ trustProxy: true, bodyLimit: 1024 * 1024 }),
     // rawBody: true — same as main.ts — so WebhookController's raw-body
     // HMAC signature verification is exercised for real over HTTP here
     // too, not bypassed in tests.
     { logger: false, rawBody: true },
   );
+
+  // Same registrations as main.ts's bootstrap(), so security.e2e.test.ts
+  // can assert on real response headers/body-limit behavior instead of
+  // trusting that main.ts and this test harness never drift apart.
+  await app.register(fastifyHelmet, {
+    contentSecurityPolicy: {
+      directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"], baseUri: ["'none'"] },
+    },
+    hsts: { maxAge: 365 * 24 * 60 * 60, includeSubDomains: true, preload: true },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  });
+  app.getHttpAdapter().getInstance().addHook('onRequest', permissionsPolicyHook);
 
   await app.register(fastifyCookie);
   app

@@ -1,3 +1,39 @@
+// docs/09-security.md §15.7's exact header set. `next.config.mjs` runs
+// server-side (build/request time), so it can read the real deploy-time
+// env vars directly — CDN_BASE_URL/NEXT_PUBLIC_API_BASE_URL aren't
+// secrets (they're public origins the browser already loads
+// images/makes API calls from), just not otherwise wired into this
+// app's own env loading; the localhost fallbacks below only ever
+// matter in local dev, where CSP is far lower-stakes than production.
+const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+const cdnOrigin = process.env.CDN_BASE_URL ?? 'http://localhost:9000';
+// Real Razorpay checkout is unverified end-to-end in this environment
+// (RAZORPAY_KEY_ID/etc. — see PHASE_REPORTS.md's Phase 9 entry); this
+// is the actual origin their hosted checkout iframe loads from, wired
+// ahead of when real credentials exist, matching how PAYMENT_PROVIDER
+// itself was scaffolded ahead of Phase 9's real adapter.
+const PAYMENT_PROVIDER_ORIGIN = 'https://checkout.razorpay.com';
+
+const CSP = [
+  "default-src 'self'",
+  `img-src 'self' data: ${cdnOrigin}`,
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  `frame-src ${PAYMENT_PROVIDER_ORIGIN}`,
+  `connect-src 'self' ${apiOrigin}`,
+  "object-src 'none'",
+  "base-uri 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+const SECURITY_HEADERS = [
+  { key: 'Content-Security-Policy', value: CSP },
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  { key: 'Permissions-Policy', value: 'geolocation=(self), camera=(), microphone=()' },
+  { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains; preload' },
+];
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -13,6 +49,9 @@ const nextConfig = {
     // recognize that custom flat config and would otherwise run a
     // second, less-configured lint pass during `next build`.
     ignoreDuringBuilds: true,
+  },
+  async headers() {
+    return [{ source: '/:path*', headers: SECURITY_HEADERS }];
   },
 };
 

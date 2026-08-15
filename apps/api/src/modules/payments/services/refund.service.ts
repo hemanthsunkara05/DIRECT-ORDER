@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Refund } from '@prisma/client';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
+import { isUniqueConstraintViolation } from '../../../platform/database/prisma-errors.js';
 import { ConflictError, NotFoundError } from '../../../platform/errors/app-error.js';
 import { OutboxService } from '../../../platform/outbox/outbox.service.js';
 import { PaymentRepository } from '../repositories/payment.repository.js';
@@ -47,47 +48,70 @@ export class RefundService {
       return existingIdempotent;
     }
 
-    const refund = await this.prisma.$transaction(async (tx) => {
-      // Real Postgres: `SELECT ... FOR UPDATE` — see
-      // PaymentRepository.findByIdForUpdate's doc comment for this
-      // sandbox's standing in-memory-fake degradation.
-      const payment = await tx.payment.findUnique({ where: { id: input.paymentId } });
-      if (!payment) {
-        throw new NotFoundError('Payment not found.');
-      }
-      if (payment.status !== 'CAPTURED' && payment.status !== 'PARTIALLY_REFUNDED') {
-        throw new ConflictError(`Cannot refund a payment in status ${payment.status}.`, [
-          { field: 'status', message: payment.status },
-        ]);
-      }
+    let refund: Refund;
+    try {
+      refund = await this.prisma.$transaction(async (tx) => {
+        // Real Postgres: `SELECT ... FOR UPDATE` — see
+        // PaymentRepository.findByIdForUpdate's doc comment for this
+        // sandbox's standing in-memory-fake degradation.
+        const payment = await tx.payment.findUnique({ where: { id: input.paymentId } });
+        if (!payment) {
+          throw new NotFoundError('Payment not found.');
+        }
+        if (payment.status !== 'CAPTURED' && payment.status !== 'PARTIALLY_REFUNDED') {
+          throw new ConflictError(`Cannot refund a payment in status ${payment.status}.`, [
+            { field: 'status', message: payment.status },
+          ]);
+        }
 
-      const active = await tx.refund.findMany({
-        where: { paymentId: input.paymentId, status: { not: 'FAILED' } },
-      });
-      const alreadyRefunded = active.reduce((sum, r) => sum + r.amountMinor, 0n);
+        const active = await tx.refund.findMany({
+          where: { paymentId: input.paymentId, status: { not: 'FAILED' } },
+        });
+        const alreadyRefunded = active.reduce((sum, r) => sum + r.amountMinor, 0n);
 
-      if (alreadyRefunded + input.amountMinor > payment.capturedMinor) {
-        throw new ConflictError('Refund amount would exceed the captured amount.', [
-          {
-            field: 'amountMinor',
-            message: `capturedMinor=${payment.capturedMinor}, alreadyRefunded=${alreadyRefunded}, requested=${input.amountMinor}`,
+        if (alreadyRefunded + input.amountMinor > payment.capturedMinor) {
+          throw new ConflictError('Refund amount would exceed the captured amount.', [
+            {
+              field: 'amountMinor',
+              message: `capturedMinor=${payment.capturedMinor}, alreadyRefunded=${alreadyRefunded}, requested=${input.amountMinor}`,
+            },
+          ]);
+        }
+
+        return tx.refund.create({
+          data: {
+            paymentId: payment.id,
+            orderId: payment.orderId,
+            amountMinor: input.amountMinor,
+            reason: input.reason,
+            status: 'REQUESTED',
+            initiatedByActorType: input.initiatedByActorType,
+            initiatedByActorId: input.initiatedByActorId,
+            idempotencyKey: input.idempotencyKey,
           },
-        ]);
-      }
-
-      return tx.refund.create({
-        data: {
-          paymentId: payment.id,
-          orderId: payment.orderId,
-          amountMinor: input.amountMinor,
-          reason: input.reason,
-          status: 'REQUESTED',
-          initiatedByActorType: input.initiatedByActorType,
-          initiatedByActorId: input.initiatedByActorId,
-          idempotencyKey: input.idempotencyKey,
-        },
+        });
       });
-    });
+    } catch (error) {
+      // Phase 18: found via a genuinely concurrent (`Promise.all`) test —
+      // docs/09-security.md §15.5's "submit two identical refunds
+      // concurrently." The idempotency check above runs BEFORE this
+      // transaction, so two truly concurrent callers can both pass it;
+      // the real guard against a duplicate is `Refund.@@unique([paymentId,
+      // idempotencyKey])` itself. The loser's insert collides with the
+      // winner's already-committed row — insert-and-let-the-constraint-
+      // decide, the same pattern every other idempotent write in this
+      // codebase already uses, just applied here at the catch site
+      // instead of a pre-check, since the pre-check alone cannot close
+      // this race.
+      if (isUniqueConstraintViolation(error)) {
+        const winner = await this.refunds.findByPaymentAndIdempotencyKey(
+          input.paymentId,
+          input.idempotencyKey,
+        );
+        if (winner) return winner;
+      }
+      throw error;
+    }
 
     // Universal rule 4 (docs/03 §7): emitted after commit, never inside
     // the transaction. Phase 12's notification catalogue maps this to
