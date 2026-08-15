@@ -1,5 +1,6 @@
 import pino from 'pino';
 import { validateWorkerEnv, WorkerEnvValidationError } from './env.schema.js';
+import { initSentry, captureException } from './sentry.js';
 
 /**
  * Worker process entrypoint. Phase 1 registers no job processors — this
@@ -23,6 +24,7 @@ function loadEnvOrExit() {
 
 async function main(): Promise<void> {
   const env = loadEnvOrExit();
+  initSentry(env);
   const logger = pino({ level: env.LOG_LEVEL, timestamp: pino.stdTimeFunctions.isoTime });
 
   logger.info({ appEnv: env.APP_ENV }, 'Worker starting (no job processors registered — Phase 1)');
@@ -44,5 +46,6 @@ async function main(): Promise<void> {
 
 main().catch((error: unknown) => {
   console.error('Fatal error in worker:', error);
+  captureException(error);
   process.exit(1);
 });

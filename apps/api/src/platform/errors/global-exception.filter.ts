@@ -11,6 +11,7 @@ import { ZodError } from 'zod';
 import type { ErrorDetail, ErrorEnvelope } from '@direct-order/contracts';
 import { getCurrentRequestId } from '../logging/request-context.js';
 import { PINO_LOGGER } from '../logging/logging.tokens.js';
+import { captureException } from '../observability/sentry.js';
 import { AppError } from './app-error.js';
 
 const STATUS_TO_CODE: Record<number, string> = {
@@ -167,6 +168,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         { ...context, err: this.serializeError(mapped.cause) },
         'Unhandled error while processing request',
       );
+      // Phase 19: a genuine no-op when SENTRY_DSN isn't set — see
+      // sentry.ts's own doc comment. Only 5xx (truly unexpected)
+      // errors are reported; a 4xx is an expected rejection
+      // (validation, auth, conflict), not an incident to page anyone on.
+      captureException(mapped.cause);
       return;
     }
 

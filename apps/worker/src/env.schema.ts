@@ -11,6 +11,9 @@ import { z } from 'zod';
 export const WorkerEnvSchema = z.object({
   APP_ENV: z.enum(['local', 'test', 'staging', 'production']).default('local'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  // Phase 19: same optional error-tracking wiring as apps/api's env.schema.ts.
+  SENTRY_DSN: z.string().optional(),
+  SENTRY_ENVIRONMENT: z.string().optional(),
 });
 
 export type WorkerEnv = z.infer<typeof WorkerEnvSchema>;

@@ -83,4 +83,23 @@ export class LoyaltyLedgerRepository {
     });
     return result._sum.points ?? 0;
   }
+
+  /**
+   * Phase 19: the batched form of `sumByCustomerId`, one query for
+   * every customer with at least one ledger entry rather than one
+   * query per account — `LoyaltyReconciliationService.reconcile()`
+   * used to call `sumByCustomerId` in a loop (a real 1+N pattern,
+   * found during Phase 19's query-optimization review), which this
+   * replaces. A customer with an account but zero ledger entries
+   * (freshly created, balance 0) simply has no key in the returned
+   * map — callers treat a missing key as sum 0, the same default
+   * `sumByCustomerId` already returns via `?? 0`.
+   */
+  async sumAllGroupedByCustomer(): Promise<Map<string, number>> {
+    const rows = await this.prisma.loyaltyLedger.groupBy({
+      by: ['customerId'],
+      _sum: { points: true },
+    });
+    return new Map(rows.map((r) => [r.customerId, r._sum.points ?? 0]));
+  }
 }

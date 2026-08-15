@@ -9,6 +9,7 @@ import { validateEnv, EnvValidationError, type Env } from './platform/config/env
 import { AppLoggerService } from './platform/logging/logger.service.js';
 import { createCsrfCookieHook } from './platform/security/csrf-cookie.hook.js';
 import { permissionsPolicyHook } from './platform/security/permissions-policy.hook.js';
+import { initSentry } from './platform/observability/sentry.js';
 
 const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
 // docs/09-security.md §15.4: "1 MB JSON body limit." Explicit rather
@@ -39,6 +40,7 @@ function loadEnvOrExit(): Env {
 
 async function bootstrap(): Promise<void> {
   const env = loadEnvOrExit();
+  initSentry(env);
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.forRoot(env),

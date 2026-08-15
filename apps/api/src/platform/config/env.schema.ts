@@ -114,6 +114,16 @@ export const EnvSchema = z.object({
   EMAIL_PROVIDER: z.enum(['resend', 'console']).default('console'),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().email().default('noreply@direct-order.local'),
+
+  // Phase 19: error tracking. Scaffolded in .env.example since early on,
+  // never actually read until now. Optional — Sentry.init() is only
+  // called when SENTRY_DSN is present (main.ts), the same "real
+  // integration wired ahead of real credentials" treatment every other
+  // optional-third-party integration in this codebase already gets
+  // (PAYMENT_PROVIDER/DELIVERY_PROVIDER/SMS_PROVIDER default to a
+  // no-op-equivalent rather than requiring real credentials to boot).
+  SENTRY_DSN: z.string().optional(),
+  SENTRY_ENVIRONMENT: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

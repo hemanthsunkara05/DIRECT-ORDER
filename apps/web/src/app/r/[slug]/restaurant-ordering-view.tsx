@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { formatINR } from '@direct-order/money';
 import {
   ApiError,
@@ -189,11 +190,11 @@ export function RestaurantOrderingView({
       <header className="flex flex-col gap-2 border-b border-slate-200 p-6">
         <div className="flex items-center gap-3">
           {restaurant.branding?.logoUrl && (
-            // eslint-disable-next-line @next/next/no-img-element -- no image-domain config exists for this MVP; a plain <img> avoids requiring one.
-            <img
+            <Image
               src={restaurant.branding.logoUrl}
               alt=""
-              loading="lazy"
+              width={48}
+              height={48}
               className="h-12 w-12 rounded-full object-cover"
             />
           )}
@@ -418,11 +419,11 @@ function ItemCard({
     <li className="flex items-center justify-between gap-4 rounded-lg border border-slate-100 p-3">
       <div className="flex items-center gap-3">
         {item.imageUrl && (
-          // eslint-disable-next-line @next/next/no-img-element -- see header logo above.
-          <img
+          <Image
             src={item.imageUrl}
             alt=""
-            loading="lazy"
+            width={64}
+            height={64}
             className="h-16 w-16 rounded-md object-cover"
           />
         )}

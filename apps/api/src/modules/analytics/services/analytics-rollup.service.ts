@@ -1,4 +1,4 @@
-import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { localMidnightToUtc, toLocalMoment } from '../../availability/timezone.js';
 import { DailyMetricsRepository } from '../repositories/daily-metrics.repository.js';
@@ -53,7 +53,9 @@ interface AggregatedCounters {
  * server's local time.
  */
 @Injectable()
-export class AnalyticsRollupService implements OnModuleInit {
+export class AnalyticsRollupService implements OnModuleInit, OnModuleDestroy {
+  private timer: NodeJS.Timeout | undefined;
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(DailyMetricsRepository) private readonly metrics: DailyMetricsRepository,
@@ -69,14 +71,21 @@ export class AnalyticsRollupService implements OnModuleInit {
    * ("Daily 01:00 IST") is harmless — it just means the rollup for a
    * new day appears within an hour of midnight rather than exactly at
    * 01:00, and re-checking an already-rolled-up day is a fast no-op
-   * upsert of identical values.
+   * upsert of identical values. Phase 19: stores and clears its own
+   * timer on `onModuleDestroy` — see `LoyaltyReconciliationService`'s
+   * identical fix for why `.unref()` alone wasn't enough.
    */
   onModuleInit(): void {
-    setInterval(() => {
+    this.timer = setInterval(() => {
       this.rollupYesterdayForAllRestaurants().catch(() => {
         /* best-effort background job — see LoyaltyReconciliationService's identical reasoning. */
       });
-    }, ROLLUP_CHECK_INTERVAL_MS).unref();
+    }, ROLLUP_CHECK_INTERVAL_MS);
+    this.timer.unref();
+  }
+
+  onModuleDestroy(): void {
+    if (this.timer) clearInterval(this.timer);
   }
 
   async rollupYesterdayForAllRestaurants(): Promise<void> {

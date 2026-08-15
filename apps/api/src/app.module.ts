@@ -16,6 +16,7 @@ import { LoyaltyModule } from './modules/loyalty/loyalty.module.js';
 import { CustomerAuthModule } from './modules/customer-auth/customer-auth.module.js';
 import { SupportModule } from './modules/support/support.module.js';
 import { AnalyticsModule } from './modules/analytics/analytics.module.js';
+import { DataIntegrityModule } from './modules/data-integrity/data-integrity.module.js';
 import { AdminModule } from './modules/admin/admin.module.js';
 
 @Module({})
@@ -40,6 +41,7 @@ export class AppModule {
         CustomerAuthModule,
         SupportModule,
         AnalyticsModule,
+        DataIntegrityModule,
         AdminModule,
       ],
     };

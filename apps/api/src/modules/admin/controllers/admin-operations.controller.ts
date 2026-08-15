@@ -4,10 +4,45 @@ import { NotFoundError, ValidationError } from '../../../platform/errors/app-err
 import { Permissions } from '../../../platform/authorization/permissions.decorator.js';
 import { AuthorizationGuard } from '../../../platform/authorization/authorization.guard.js';
 import { AuthGuard } from '../../identity/guards/auth.guard.js';
+import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { AdminQueryRepository } from '../repositories/admin-query.repository.js';
 import { NotificationRepository } from '../../notifications/repositories/notification.repository.js';
 import { NotificationDispatchService } from '../../notifications/services/notification-dispatch.service.js';
 import { ReconciliationIssueRepository } from '../../payments/repositories/reconciliation-issue.repository.js';
+
+/**
+ * docs/07-events-and-jobs.md's "queue monitoring thresholds" table,
+ * carried over as literally as this codebase's actual architecture
+ * allows — there is no real BullMQ queue to sample a "depth" from
+ * (every job in this codebase is an in-process `setInterval` poller,
+ * not a queue; see PHASE_REPORTS.md's Phase 19 entry for the honest
+ * accounting of that gap). `outbox_events` PENDING rows are this
+ * codebase's actual equivalent of the webhooks/payments queues (the
+ * outbox relay drives both); `notifications` PENDING/DEAD_LETTERED
+ * map directly to the doc's own named metric and DLQ thresholds.
+ */
+const OUTBOX_BACKLOG_WARNING = 50;
+const OUTBOX_BACKLOG_CRITICAL = 200;
+const NOTIFICATION_BACKLOG_WARNING = 500;
+const NOTIFICATION_BACKLOG_CRITICAL = 2000;
+const DEAD_LETTER_WARNING = 1;
+const DEAD_LETTER_CRITICAL = 10;
+const OLDEST_AGE_WARNING_SECONDS = 2 * 60;
+const OLDEST_AGE_CRITICAL_SECONDS = 10 * 60;
+
+type HealthStatus = 'ok' | 'warning' | 'critical';
+
+function statusFor(count: number, warning: number, critical: number): HealthStatus {
+  if (count >= critical) return 'critical';
+  if (count >= warning) return 'warning';
+  return 'ok';
+}
+
+function worstOf(...statuses: HealthStatus[]): HealthStatus {
+  if (statuses.includes('critical')) return 'critical';
+  if (statuses.includes('warning')) return 'warning';
+  return 'ok';
+}
 
 function parseLimit(limitRaw?: string): number | undefined {
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
@@ -34,7 +69,91 @@ export class AdminOperationsController {
     @Inject(NotificationDispatchService) private readonly dispatch: NotificationDispatchService,
     @Inject(ReconciliationIssueRepository)
     private readonly reconciliation: ReconciliationIssueRepository,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
   ) {}
+
+  /**
+   * Phase 19 "queue monitoring and alerting" — see this file's own
+   * threshold constants for the mapping from docs/07's queue-depth
+   * table to what this codebase's in-process pollers actually expose.
+   * Read-only, cheap indexed counts on small tables — the same
+   * "operational visibility, not a live scan of a big table"
+   * reasoning `AdminOverviewController`'s `restaurantsByStatus`/
+   * `activeAdmins` already established.
+   */
+  @Get('system-health')
+  @Permissions('payments:reconcile')
+  @HttpCode(200)
+  async systemHealth() {
+    const now = Date.now();
+    const [
+      outboxPending,
+      oldestPendingOutbox,
+      notificationPending,
+      oldestPendingNotification,
+      notificationDeadLettered,
+      openReconciliationIssues,
+    ] = await Promise.all([
+      this.prisma.outboxEvent.count({ where: { status: 'PENDING' } }),
+      this.prisma.outboxEvent.findFirst({
+        where: { status: 'PENDING' },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.notification.count({ where: { status: 'PENDING' } }),
+      this.prisma.notification.findFirst({
+        where: { status: 'PENDING' },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.notification.count({ where: { status: 'DEAD_LETTERED' } }),
+      this.reconciliation.listOpen(),
+    ]);
+
+    const outboxOldestAgeSeconds = oldestPendingOutbox
+      ? Math.floor((now - oldestPendingOutbox.createdAt.getTime()) / 1000)
+      : null;
+    const notificationOldestAgeSeconds = oldestPendingNotification
+      ? Math.floor((now - oldestPendingNotification.createdAt.getTime()) / 1000)
+      : null;
+
+    const outboxStatus = worstOf(
+      statusFor(outboxPending, OUTBOX_BACKLOG_WARNING, OUTBOX_BACKLOG_CRITICAL),
+      statusFor(
+        outboxOldestAgeSeconds ?? 0,
+        OLDEST_AGE_WARNING_SECONDS,
+        OLDEST_AGE_CRITICAL_SECONDS,
+      ),
+    );
+    const notificationStatus = worstOf(
+      statusFor(notificationPending, NOTIFICATION_BACKLOG_WARNING, NOTIFICATION_BACKLOG_CRITICAL),
+      statusFor(notificationDeadLettered, DEAD_LETTER_WARNING, DEAD_LETTER_CRITICAL),
+      statusFor(
+        notificationOldestAgeSeconds ?? 0,
+        OLDEST_AGE_WARNING_SECONDS,
+        OLDEST_AGE_CRITICAL_SECONDS,
+      ),
+    );
+
+    const bySeverity: Record<string, number> = {};
+    for (const issue of openReconciliationIssues) {
+      bySeverity[issue.severity] = (bySeverity[issue.severity] ?? 0) + 1;
+    }
+
+    return ok({
+      overall: worstOf(
+        outboxStatus,
+        notificationStatus,
+        openReconciliationIssues.length > 0 ? 'warning' : 'ok',
+      ),
+      outbox: { pending: outboxPending, oldestPendingAgeSeconds: outboxOldestAgeSeconds, status: outboxStatus },
+      notifications: {
+        pending: notificationPending,
+        deadLettered: notificationDeadLettered,
+        oldestPendingAgeSeconds: notificationOldestAgeSeconds,
+        status: notificationStatus,
+      },
+      reconciliationIssues: { open: openReconciliationIssues.length, bySeverity },
+    });
+  }
 
   @Get('deliveries')
   @Permissions('delivery:read')

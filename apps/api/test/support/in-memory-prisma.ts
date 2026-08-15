@@ -1802,7 +1802,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     restaurantId?: string;
     orderNumber?: string;
     customerPhone?: string;
-    status?: string | { in: string[] };
+    status?: string | { in: string[] } | { notIn: string[] };
     createdAt?: { lt?: Date; gte?: Date };
     OR?: OrderDateRangeClause[];
   }
@@ -1825,7 +1825,9 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         const matchesStatus =
           typeof where.status === 'string'
             ? o.status === where.status
-            : where.status.in.includes(o.status);
+            : 'in' in where.status
+              ? where.status.in.includes(o.status)
+              : !where.status.notIn.includes(o.status);
         if (!matchesStatus) return false;
       }
       if (where.createdAt?.lt && o.createdAt.getTime() >= where.createdAt.lt.getTime())
@@ -2037,13 +2039,13 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       skip,
       take,
     }: {
-      where: OrderListWhere;
+      where?: OrderListWhere;
       orderBy?: { createdAt: 'asc' | 'desc' };
       cursor?: { id: string };
       skip?: number;
       take?: number;
-    }) => {
-      let matches = orders.filter(matchOrderList(where));
+    } = {}) => {
+      let matches = orders.filter(matchOrderList(where ?? {}));
       if (orderBy?.createdAt === 'desc') {
         matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       } else if (orderBy?.createdAt === 'asc') {
@@ -2107,7 +2109,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
 
   type PaymentWhere = {
     id?: string;
-    orderId?: string;
+    orderId?: string | { in: string[] };
     provider?: string;
     providerPaymentId?: string;
     providerOrderId?: string;
@@ -2115,7 +2117,11 @@ export function createInMemoryPrisma(): InMemoryPrisma {
   };
   const matchPayment = (where: PaymentWhere) => (p: PaymentRow) => {
     if (where.id !== undefined && p.id !== where.id) return false;
-    if (where.orderId !== undefined && p.orderId !== where.orderId) return false;
+    if (where.orderId !== undefined) {
+      const matchesOrderId =
+        typeof where.orderId === 'string' ? p.orderId === where.orderId : where.orderId.in.includes(p.orderId);
+      if (!matchesOrderId) return false;
+    }
     if (where.provider !== undefined && p.provider !== where.provider) return false;
     if (where.providerPaymentId !== undefined && p.providerPaymentId !== where.providerPaymentId)
       return false;
@@ -2188,11 +2194,11 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       orderBy,
       take,
     }: {
-      where: PaymentWhere;
+      where?: PaymentWhere;
       orderBy?: { createdAt: 'asc' | 'desc' };
       take?: number;
-    }) => {
-      let matches = payments.filter(matchPayment(where));
+    } = {}) => {
+      let matches = payments.filter(matchPayment(where ?? {}));
       if (orderBy?.createdAt === 'desc') {
         matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       }
@@ -2474,6 +2480,28 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       if (take !== undefined) matches = matches.slice(0, take);
       return Promise.resolve(matches);
     },
+    /** `AdminOperationsController.systemHealth`'s outbox-backlog count (Phase 19). */
+    count: ({ where }: { where: { status?: string } }) => {
+      return Promise.resolve(
+        outboxEvents.filter((o) => where.status === undefined || o.status === where.status).length,
+      );
+    },
+    /** Same controller's "oldest pending" age. */
+    findFirst: ({
+      where,
+      orderBy,
+    }: {
+      where: { status?: string };
+      orderBy?: { createdAt: 'asc' | 'desc' };
+    }) => {
+      let matches = outboxEvents.filter((o) => where.status === undefined || o.status === where.status);
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      return Promise.resolve(matches[0] ?? null);
+    },
     update: ({
       where,
       data,
@@ -2550,6 +2578,8 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     findFirst: ({ where }: { where: DeliveryWhere }) => {
       return Promise.resolve(findDelivery(where) ?? null);
     },
+    /** `DataIntegrityService`'s duplicate-delivery-per-order check (Phase 19) — the one unfiltered `findMany` this table needs. */
+    findMany: () => Promise.resolve([...deliveries]),
     update: ({
       where,
       data,
@@ -2680,8 +2710,20 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     findUnique: ({ where }: { where: { id: string } }) => {
       return Promise.resolve(notifications.find((n) => n.id === where.id) ?? null);
     },
-    findFirst: ({ where }: { where: NotificationWhere }) => {
-      return Promise.resolve(notifications.find(matchNotification(where)) ?? null);
+    findFirst: ({
+      where,
+      orderBy,
+    }: {
+      where: NotificationWhere;
+      orderBy?: { createdAt: 'asc' | 'desc' };
+    }) => {
+      let matches = notifications.filter(matchNotification(where));
+      if (orderBy?.createdAt === 'desc') {
+        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      } else if (orderBy?.createdAt === 'asc') {
+        matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      }
+      return Promise.resolve(matches[0] ?? null);
     },
     findMany: ({
       where,
@@ -3295,6 +3337,19 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       const matches = loyaltyLedger.filter(matchLoyaltyLedger(where));
       const sum = matches.reduce((total, r) => total + r.points, 0);
       return Promise.resolve({ _sum: { points: matches.length === 0 ? null : sum } });
+    },
+    /** `LoyaltyReconciliationService`'s batched sum (Phase 19) — the one `groupBy` this table needs. */
+    groupBy: (_args: { by: ['customerId']; _sum: { points: true } }) => {
+      const sums = new Map<string, number>();
+      for (const row of loyaltyLedger) {
+        sums.set(row.customerId, (sums.get(row.customerId) ?? 0) + row.points);
+      }
+      return Promise.resolve(
+        [...sums.entries()].map(([customerId, points]) => ({
+          customerId,
+          _sum: { points },
+        })),
+      );
     },
   };
 

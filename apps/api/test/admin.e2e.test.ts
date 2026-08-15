@@ -500,6 +500,76 @@ describe('Admin panel (Phase 13, e2e)', () => {
     await get(ctx, '/api/v1/admin/reconciliation-issues', admin.cookie).expect(403); // payments:reconcile — FINANCE/SUPER_ADMIN only, docs/05 §9.1
   });
 
+  // ── Phase 19: queue/backlog monitoring ──────────────────────────────
+
+  it('GET /admin/system-health reports outbox/notification backlog depth, oldest-pending age, and open reconciliation issues by severity', async () => {
+    ctx = await createTestApp();
+    const admin = await registerAdmin('ADMIN_FINANCE');
+
+    const oldPending = new Date(Date.now() - 3 * 60_000); // 3 min ago — past the 2-min warning threshold
+    ctx.db.outboxEvents.push({
+      id: randomUUID(),
+      eventType: 'ORDER_PLACED',
+      payload: {},
+      status: 'PENDING',
+      attempts: 0,
+      lastError: null,
+      restaurantId: null,
+      createdAt: oldPending,
+      processedAt: null,
+    });
+    ctx.db.notifications.push({
+      id: randomUUID(),
+      outboxEventId: randomUUID(),
+      type: 'ORDER_PLACED',
+      category: 'ORDER',
+      recipientType: 'CUSTOMER',
+      recipientId: randomUUID(),
+      channel: 'SMS',
+      title: 'x',
+      body: 'y',
+      contactAddress: null,
+      status: 'DEAD_LETTERED',
+      readAt: null,
+      attempts: 5,
+      nextAttemptAt: null,
+      lastError: 'provider rejected',
+      providerMessageId: null,
+      sentAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    ctx.db.reconciliationIssues.push({
+      id: randomUUID(),
+      entityType: 'Order',
+      entityId: randomUUID(),
+      issueType: 'ORDER_TOTAL_IDENTITY_VIOLATION',
+      expected: '100',
+      actual: '200',
+      severity: 'CRITICAL',
+      status: 'OPEN',
+      resolutionNote: null,
+      resolvedBy: null,
+      detectedAt: new Date(),
+    });
+
+    const res = await get(ctx, '/api/v1/admin/system-health', admin.cookie).expect(200);
+    expect(res.body.data.outbox.pending).toBe(1);
+    expect(res.body.data.outbox.oldestPendingAgeSeconds).toBeGreaterThanOrEqual(179);
+    expect(res.body.data.outbox.status).toBe('warning');
+    expect(res.body.data.notifications.deadLettered).toBe(1);
+    expect(res.body.data.notifications.status).not.toBe('ok');
+    expect(res.body.data.reconciliationIssues.open).toBe(1);
+    expect(res.body.data.reconciliationIssues.bySeverity.CRITICAL).toBe(1);
+    expect(res.body.data.overall).not.toBe('ok');
+  });
+
+  it('GET /admin/system-health is gated on payments:reconcile — ADMIN_OPERATIONS is forbidden, same as reconciliation-issues', async () => {
+    ctx = await createTestApp();
+    const admin = await registerAdmin('ADMIN_OPERATIONS');
+    await get(ctx, '/api/v1/admin/system-health', admin.cookie).expect(403);
+  });
+
   // ── Notifications, deliveries (cross-tenant, paginated) ─────────────
 
   it('admin can list and manually retry a dead-lettered notification', async () => {

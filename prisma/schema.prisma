@@ -973,6 +973,12 @@ model OrderStatusHistory {
   order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
 
   @@index([orderId, createdAt])
+  /// Phase 19 index review: `AnalyticsRollupService.rollupRestaurantDay`/
+  /// `rollupPlatformDay` run a daily `toStatus = 'REJECTED' AND
+  /// createdAt BETWEEN ...` count (the platform-wide one has no
+  /// `orderId`/`restaurantId` to narrow it first) — `[orderId,
+  /// createdAt]` above doesn't help that query at all.
+  @@index([toStatus, createdAt])
   @@map("order_status_history")
 }
 
