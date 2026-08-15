@@ -11,11 +11,12 @@
  * itself would create, not a migration-time operation
  * (see README.md "Database roles").
  *
- * No password hashing yet: `passwordHash` is left null for every
- * seeded user. Real password hashing (argon2id) arrives in Phase 3
- * (authentication) — this seed data cannot be used to log in until
- * then, only to populate realistic tenant-scoped data for manual
- * inspection and future phases' isolation tests.
+ * Every seeded restaurant owner/staff user gets a real argon2id
+ * password hash (`DEMO_STAFF_PASSWORD` below) and the platform's
+ * seeded `SUPER_ADMIN` gets its own (`DEMO_ADMIN_PASSWORD`) — both
+ * dev/pilot-only, logged to the console when this script runs, never
+ * real production credentials. `db:seed` must never run against
+ * production for exactly this reason.
  */
 import * as argon2 from 'argon2';
 import { PrismaClient } from '@prisma/client';
@@ -72,16 +73,34 @@ const RESTAURANTS: SeedRestaurant[] = [
   },
 ];
 
-async function upsertUser(user: SeedUser) {
+/**
+ * Dev/pilot-only password for every seeded restaurant owner/staff user
+ * (never a real production credential, same as `DEMO_ADMIN_PASSWORD`
+ * below). Originally left unset here — this file predates Phase 3
+ * (authentication); the doc comment above claiming "this seed data
+ * cannot be used to log in" was accurate then and became stale once
+ * real password-based login shipped. Fixed so the seeded restaurant
+ * accounts are actually usable, matching the super admin's own pattern.
+ */
+const DEMO_STAFF_PASSWORD = 'correct-horse-battery-staple-staff';
+
+async function upsertUser(user: SeedUser, passwordHash: string) {
+  // `update` (not just `create`) sets the password too — this script
+  // is re-run across a long-lived dev database that already has these
+  // exact demo users from earlier manual testing (real registrations,
+  // not prior seed runs), so a create-only password would silently
+  // never apply to them. Idempotent and self-healing: `pnpm db:seed`
+  // always leaves the documented demo password actually working.
+  const fields = { fullName: user.fullName, passwordHash, emailVerifiedAt: new Date() };
   return prisma.user.upsert({
     where: { email: user.email },
-    update: {},
-    create: { email: user.email, fullName: user.fullName },
+    update: fields,
+    create: { email: user.email, ...fields },
   });
 }
 
-async function seedRestaurant(spec: SeedRestaurant): Promise<void> {
-  const owner = await upsertUser(spec.owner);
+async function seedRestaurant(spec: SeedRestaurant, passwordHash: string): Promise<void> {
+  const owner = await upsertUser(spec.owner, passwordHash);
 
   const restaurant = await prisma.restaurant.upsert({
     where: { slug: spec.slug },
@@ -113,7 +132,7 @@ async function seedRestaurant(spec: SeedRestaurant): Promise<void> {
   });
 
   for (const { user: staffUser, role } of spec.additionalStaff) {
-    const staff = await upsertUser(staffUser);
+    const staff = await upsertUser(staffUser, passwordHash);
     await prisma.restaurantStaff.upsert({
       where: { userId_restaurantId: { userId: staff.id, restaurantId: restaurant.id } },
       update: {},
@@ -184,10 +203,17 @@ async function seedSuperAdmin(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const staffPasswordHash = await argon2.hash(DEMO_STAFF_PASSWORD, {
+    type: argon2.argon2id,
+    memoryCost: 65536,
+    timeCost: 3,
+    parallelism: 4,
+  });
   for (const spec of RESTAURANTS) {
-    await seedRestaurant(spec);
+    await seedRestaurant(spec, staffPasswordHash);
   }
   await seedSuperAdmin();
+  console.log(`[seed] Restaurant owner/staff password (dev/pilot only): ${DEMO_STAFF_PASSWORD}`);
   console.log(`[seed] Done. ${RESTAURANTS.length} restaurants seeded.`);
 }
 
