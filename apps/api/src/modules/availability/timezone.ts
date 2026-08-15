@@ -106,3 +106,24 @@ export function localMidnightToUtc(dateKey: string, timeZone: string): Date {
   }
   return new Date(instant);
 }
+
+/**
+ * `dateKey` (`YYYY-MM-DD`) as a plain calendar-date `Date` — for
+ * `@db.Date` columns, which store a calendar label, not an instant
+ * (matches `DailyRestaurantMetrics.date`/`DailyPlatformMetrics.date`).
+ * Deliberately NOT timezone-shifted, unlike `localMidnightToUtc` above
+ * — that answers "what UTC instant is local midnight", this answers
+ * "what Date object represents this calendar day". Shared here so a
+ * rollup write (which computes `dateKey` via `toLocalMoment` in the
+ * restaurant's own timezone) and any later read of the same row use
+ * the identical dateKey→Date mapping — found live: a rollup dashboard
+ * endpoint had its own inline `new Date(Date.UTC(...))` computed from
+ * the SERVER's UTC "today" rather than the restaurant's local "today",
+ * so for the several hours each day where UTC's calendar date trails
+ * India's (00:00–05:30 IST), the dashboard silently queried the wrong
+ * day and reported empty results despite the rollup existing.
+ */
+export function dateKeyToUtcDate(dateKey: string): Date {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(Date.UTC(year!, month! - 1, day));
+}

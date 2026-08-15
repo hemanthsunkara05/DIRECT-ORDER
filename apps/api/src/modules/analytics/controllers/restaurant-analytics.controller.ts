@@ -1,13 +1,15 @@
 import { Controller, Get, HttpCode, Inject, Query, UseGuards } from '@nestjs/common';
 import type { DailyRestaurantMetrics } from '@prisma/client';
 import { ok } from '../../../platform/http/response-envelope.js';
-import { ValidationError } from '../../../platform/errors/app-error.js';
+import { ValidationError, NotFoundError } from '../../../platform/errors/app-error.js';
 import { CurrentTenant } from '../../../platform/authorization/current-tenant.decorator.js';
 import { Permissions } from '../../../platform/authorization/permissions.decorator.js';
 import { TenantScoped } from '../../../platform/authorization/tenant-scoped.decorator.js';
 import type { TenantContext } from '../../../platform/authorization/tenant-context.js';
 import { AuthorizationGuard } from '../../../platform/authorization/authorization.guard.js';
 import { AuthGuard } from '../../identity/guards/auth.guard.js';
+import { PrismaService } from '../../../platform/database/prisma.service.js';
+import { dateKeyToUtcDate, previousDateKey, toLocalMoment } from '../../availability/timezone.js';
 import { DailyMetricsRepository } from '../repositories/daily-metrics.repository.js';
 
 const DEFAULT_RANGE_DAYS = 30;
@@ -20,11 +22,24 @@ const MAX_RANGE_DAYS = 90;
  * matching docs/13's "restaurant and admin dashboards from rollups,
  * never live table scans" literally: there is no query against
  * `Order`/`Payment`/`Refund` anywhere in this handler.
+ *
+ * "Today" here MUST be computed in the restaurant's own timezone, the
+ * same one `AnalyticsRollupService` used to key the very rows this
+ * queries — found live: this used to compute `new Date()` as plain
+ * server UTC, so for the several hours each day where UTC's calendar
+ * date still trails India's (00:00-05:30 IST, since the platform's
+ * restaurants are India-based per docs/10 §16's default deployment
+ * region), the range excluded the just-written "today" row entirely —
+ * a real dashboard blank-data bug, not a display quirk, reproduced by
+ * running this endpoint during that window.
  */
 @Controller('restaurant/analytics')
 @UseGuards(AuthGuard, AuthorizationGuard)
 export class RestaurantAnalyticsController {
-  constructor(@Inject(DailyMetricsRepository) private readonly metrics: DailyMetricsRepository) {}
+  constructor(
+    @Inject(DailyMetricsRepository) private readonly metrics: DailyMetricsRepository,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+  ) {}
 
   @Get('overview')
   @TenantScoped()
@@ -32,9 +47,16 @@ export class RestaurantAnalyticsController {
   @HttpCode(200)
   async overview(@CurrentTenant() tenant: TenantContext, @Query('days') daysRaw?: string) {
     const days = parseDays(daysRaw);
-    const toDate = dateOnlyUtc(new Date());
-    const fromDate = new Date(toDate);
-    fromDate.setUTCDate(fromDate.getUTCDate() - (days - 1));
+    const restaurant = await this.prisma.restaurant.findUnique({
+      where: { id: tenant.restaurantId },
+      select: { timezone: true },
+    });
+    if (!restaurant) throw new NotFoundError('Restaurant not found.');
+
+    let dateKey = toLocalMoment(new Date(), restaurant.timezone).dateKey;
+    const toDate = dateKeyToUtcDate(dateKey);
+    for (let i = 1; i < days; i++) dateKey = previousDateKey(dateKey);
+    const fromDate = dateKeyToUtcDate(dateKey);
 
     const rows = await this.metrics.findRestaurantRange(tenant.restaurantId, fromDate, toDate);
     return ok({ days: rows.map(toDailyView), summary: summarize(rows) });
@@ -48,10 +70,6 @@ function parseDays(daysRaw?: string): number {
     throw new ValidationError(`days must be between 1 and ${MAX_RANGE_DAYS}.`);
   }
   return days;
-}
-
-function dateOnlyUtc(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
 
 function toDailyView(row: DailyRestaurantMetrics) {

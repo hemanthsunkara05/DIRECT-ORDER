@@ -1,6 +1,6 @@
 import { Inject, Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
-import { localMidnightToUtc, toLocalMoment } from '../../availability/timezone.js';
+import { dateKeyToUtcDate, localMidnightToUtc, toLocalMoment } from '../../availability/timezone.js';
 import { DailyMetricsRepository } from '../repositories/daily-metrics.repository.js';
 
 const ROLLUP_CHECK_INTERVAL_MS = 60 * 60 * 1000; // hourly check — see onModuleInit's own doc comment for why this is safe to run more often than the job itself needs to.
@@ -122,7 +122,7 @@ export class AnalyticsRollupService implements OnModuleInit, OnModuleDestroy {
 
     return this.metrics.upsertRestaurantDay({
       restaurantId,
-      date: dateOnlyUtc(dateKey),
+      date: dateKeyToUtcDate(dateKey),
       ordersPlaced: counters.ordersPlaced,
       ordersCompleted: counters.ordersCompleted,
       ordersCancelled: counters.ordersCancelled,
@@ -163,7 +163,7 @@ export class AnalyticsRollupService implements OnModuleInit, OnModuleDestroy {
       ]);
 
     return this.metrics.upsertPlatformDay({
-      date: dateOnlyUtc(dateKey),
+      date: dateKeyToUtcDate(dateKey),
       ordersPlaced: counters.ordersPlaced,
       ordersCompleted: counters.ordersCompleted,
       ordersCancelled: counters.ordersCancelled,
@@ -284,8 +284,3 @@ function addOneDay(dateKey: string): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
 }
 
-/** `@db.Date` columns want a UTC-midnight `Date` matching the calendar date, independent of any timezone math — the value stored is a plain calendar date, not an instant. */
-function dateOnlyUtc(dateKey: string): Date {
-  const [y, m, d] = dateKey.split('-').map(Number);
-  return new Date(Date.UTC(y!, m! - 1, d));
-}

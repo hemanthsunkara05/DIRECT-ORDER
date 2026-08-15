@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AdminRole, OutboxEvent } from '@prisma/client';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTestApp, type TestApp } from './support/create-test-app.js';
 import { mutate, get, registerAndLogin, type RegisteredUser } from './support/register-and-login.js';
 import { registerAndLoginCustomer } from './support/register-and-login-customer.js';
@@ -653,6 +653,43 @@ describe('Support and analytics (Phase 17, e2e)', () => {
     expect(adminOverview.body.data.metrics.latest).not.toBeNull();
     expect(adminOverview.body.data.metrics.asOfDate).toEqual(expect.any(String));
     expect(adminOverview.body.data.restaurantsByStatus).toBeTruthy();
+  });
+
+  /**
+   * Regression: `RestaurantAnalyticsController.overview()` used to
+   * compute "today" as plain server UTC (`new Date(Date.UTC(...))`)
+   * instead of the restaurant's own timezone — found live, running the
+   * suite itself during the several hours each day where UTC's
+   * calendar date still trails India's (00:00-05:30 IST). A rollup
+   * keyed to IST "today" fell entirely outside a query range anchored
+   * to UTC "today", so the dashboard reported zero orders despite the
+   * rollup existing. Frozen clock, not real wall-clock time, so this
+   * doesn't depend on when the suite happens to run: 2026-03-10T20:00Z
+   * is 2026-03-11 01:30 IST — UTC says the 10th, the restaurant's own
+   * timezone already says the 11th.
+   */
+  it('GET /restaurant/analytics/overview uses the restaurant\'s own timezone for "today", not server UTC', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-03-10T20:00:00.000Z'));
+
+      const { owner, restaurantId, slug, item } = await fullSetup('45000');
+      const { cartId, guestToken } = await openCart(slug, item.id, item.priceMinor);
+      const orderNumber = await placeAndPayOrder(cartId, guestToken, { phone: '+919876520115' });
+      await deliverOrder(orderNumber);
+
+      const timezone = ctx.db.restaurants.find((r) => r.id === restaurantId)!.timezone;
+      expect(timezone).toBe('Asia/Kolkata');
+      const todayKey = toLocalMoment(new Date(), timezone).dateKey;
+      expect(todayKey).toBe('2026-03-11'); // IST is already the 11th while UTC is still the 10th.
+      await ctx.app.get(AnalyticsRollupService).rollupRestaurantDay(restaurantId, todayKey, timezone);
+
+      const overview = await get(ctx, '/api/v1/restaurant/analytics/overview', owner.cookie).expect(200);
+      expect(overview.body.data.summary.ordersCompleted).toBeGreaterThanOrEqual(1);
+      expect(overview.body.data.days.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // ── analytics ingest: mirrors the outbox, idempotent, never mutates transactional tables ──
