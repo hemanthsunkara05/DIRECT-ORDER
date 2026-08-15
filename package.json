@@ -26,7 +26,8 @@
     "db:grants": "tsx --env-file=.env scripts/db-grants.ts",
     "db:seed": "tsx --env-file=.env prisma/seed.ts",
     "db:restore-drill": "node --env-file=.env scripts/db-restore-drill.mjs",
-    "load-test": "node scripts/load-test.mjs"
+    "load-test": "node scripts/load-test.mjs",
+    "smoke-test": "node scripts/smoke-test.mjs"
   },
   "devDependencies": {
     "@direct-order/config": "workspace:*",

@@ -861,3 +861,52 @@ Nothing. Per the user's standing instruction ("complete all 20 phases"), proceed
 
 **NEXT**
 Phase 20 (Launch readiness) — the final phase.
+
+## PHASE 20 — Launch readiness (final phase)
+
+**IMPLEMENTED**
+Full scope per `docs/13-implementation-phases.md`: production environment provisioning, secrets, domain and TLS, monitoring dashboards, alert routing, full regression, a smoke test suite, and three named deliverables (`PRODUCTION_LAUNCH_CHECKLIST.md`, `OPERATIONS_RUNBOOK.md`, `LAUNCH_REPORT.md`). This phase is structurally different from every prior one: most of its named scope (provisioning, domain/TLS, alert routing against a real monitoring platform) is genuinely external action — a cloud account, a domain purchase, a credential — not something achievable by writing more code, in exactly the same way Phase 9's real Razorpay credentials or Phase 11's real Uber Direct approval were. Consistent with that established pattern (build the real integration ahead of real credentials, report status honestly, never claim a verification that didn't happen), this phase built and locally verified everything buildable and reported the rest honestly rather than either skipping it or fabricating a "done" status.
+
+A real, broader-than-a-bare-health-check smoke test suite (`scripts/smoke-test.mjs`, `pnpm smoke-test`): liveness/readiness, public restaurant browsing, security headers on a real response, and a full admin authentication cycle (real login, a real computed TOTP code against the seeded MFA secret, real CSRF double-submit token handling, an authorized read of `GET /admin/system-health`) — takes any `SMOKE_TEST_BASE_URL`, not hardcoded to local. Ran 10/10 passing against the local dev server; this is deploy-sequence step 6 in docs/10 §17.3 and `OPERATIONS_RUNBOOK.md`, ready to run against a real production URL the moment one exists. `PRODUCTION_LAUNCH_CHECKLIST.md` — every item needed to actually launch, itemized as `DONE` / `BUILT — NOT YET RUN AGAINST PRODUCTION` / `REQUIRES EXTERNAL ACTION` across 8 categories (infrastructure, secrets, external providers, monitoring/alerting, regression/smoke/load, backup/DR, deploy mechanics, security). `OPERATIONS_RUNBOOK.md` — the single day-2-ops entry point, consolidating health/readiness endpoints, the deploy sequence, rollback procedure and triggers, the full alert-to-runbook mapping (every alert in docs/10 §17.6 now has a named response), escalation guidance, and a backup/restore quick reference, rather than duplicating what Phase 19's 9 runbooks already cover. `LAUNCH_REPORT.md` — evaluated every one of docs/14's Phase 20 acceptance criteria against actual evidence (not intent) and landed on an honest **`NOT READY`** status: 3 of 5 criteria unmet (no production deployment exists, smoke tests have only run locally, no alert routing is configured against a real monitoring platform — because no monitoring platform is deployed), 2 of 5 met (external dependencies accurately reported; this document itself). Named `NOT READY` specifically, not `READY WITH ACCEPTED RISKS`, since the latter implies a running system with accepted gaps and nothing is running in production yet. Named every blocker and the exact ordered sequence of external actions that would move the status to `READY WITH ACCEPTED RISKS`.
+
+README.md's top-level status line, stale since Phase 15 (it had never been updated through Phases 16–19), rewritten to reflect the true current state — all 20 phases complete, application-complete but not production-deployed, pointing at `LAUNCH_REPORT.md` for the honest launch status rather than re-narrating 20 phases inline.
+
+**FILES**
+New: `PRODUCTION_LAUNCH_CHECKLIST.md`, `OPERATIONS_RUNBOOK.md`, `LAUNCH_REPORT.md`, `scripts/smoke-test.mjs`. Extended: `package.json` (`smoke-test` script), `README.md` (status line rewrite, new "Launch readiness" section).
+
+**DATABASE**
+No schema changes.
+
+**APIS**
+No new endpoints — this phase consumes existing ones (`/health`, `/ready`, `/public/restaurants/:slug[/menu]`, `/auth/login`, `/auth/mfa/verify`, `/admin/system-health`) via the new smoke-test script, it doesn't add to the surface.
+
+**SECURITY**
+No new attack surface. The smoke test's admin-login path uses the same seeded dev/pilot-only credentials `prisma/seed.ts` already documents as never-for-production, with an explicit code comment restating that; a real production run is expected to set `SMOKE_TEST_ADMIN_*` env vars instead once real (non-seeded) admin credentials exist.
+
+**TESTS**
+No new automated test-suite tests this phase (the smoke test itself is the deliverable, verified by running it, not by a Vitest wrapper around it — matching the load-test/restore-drill precedent from Phase 19). 510/510 `apps/api` tests still passing; full `typecheck`/`lint`/`build`/`test` re-confirmed clean for this phase's own additions.
+
+**VALIDATION**
+Full repo-wide sweep: `pnpm run typecheck` (all workspaces), `pnpm run lint` (`--max-warnings=0`, repo-wide), `pnpm run build` (all workspaces, including the bundle-secret scan), `pnpm run test` (all workspaces) — all clean, 510/510.
+
+Live verification: started the real dev API process against real Postgres/Redis, ran `pnpm smoke-test` against it — all 10 checks passed, including a real login with the real seeded password, a real computed TOTP code accepted by the real MFA-verification endpoint, and a real authorized read of `/admin/system-health` returning genuine backlog/reconciliation data from the live database.
+
+**DECISIONS**
+
+- **`NOT READY`, not `READY WITH ACCEPTED RISKS`.** The distinction matters and was made deliberately: `READY WITH ACCEPTED RISKS` implies a running production system with specific, named, accepted gaps (e.g., "live but still on the mock payment provider"). Nothing is deployed to production at all — the honest status for "no production exists yet" is `NOT READY`, reserving `READY WITH ACCEPTED RISKS` for after a real deploy actually passes its own smoke test and 30-minute watch.
+- **The smoke test is a new hand-written script, not a Playwright/Vitest suite**, matching the established convention from Phase 19's load test and restore drill: a real, runnable, target-URL-parameterized script is more directly useful for an actual deploy than a test-runner-wrapped equivalent, and this phase's other two deliverables (checklist, runbook) are documentation, not code, so the total new-code footprint stays proportionate to what's actually left to build.
+- **This phase does not attempt to provision real infrastructure, purchase a domain, or otherwise take real-world action requiring payment or an external account** — those are the platform owner's decisions to make, not something to simulate or fake a completion of. Every such item is named precisely in `PRODUCTION_LAUNCH_CHECKLIST.md` instead.
+
+**KNOWN ISSUES**
+
+- No production environment exists — see `LAUNCH_REPORT.md` for the complete, evidence-based accounting. This is the expected, honest end state of a build phase that stops exactly where engineering's ability to close gaps stops.
+- `apps/worker` remains the Phase-1 stub (unchanged since Phase 19's note) — out of scope for this phase too.
+- Graceful shutdown under a genuine OS-delivered SIGTERM remains unverified at the live-signal level (Phase 19's finding, unchanged) — the first real Linux production deploy is the natural place to close this.
+- Backup/restore is verified at the data level, not the infrastructure level (Phase 19's finding, unchanged) — open until a real managed Postgres provider is selected.
+- Real Razorpay/Uber Direct/MSG91/WhatsApp credentials remain absent, as they have since their respective phases — every one is a genuine, tested integration correctly running in mock/console mode, not a code gap.
+
+**BLOCKED ON**
+Genuine external action only, all named in `LAUNCH_REPORT.md` and `PRODUCTION_LAUNCH_CHECKLIST.md`: cloud account provisioning, a domain, real secrets, real external-provider credentials, and a payment-settlement/legal decision. None of these can be resolved by further engineering work in this environment.
+
+**NEXT**
+None — this was the 20th and final phase named in `docs/13-implementation-phases.md`. All planned engineering work is complete. Remaining work is exclusively the external, non-code actions named in `LAUNCH_REPORT.md`.
