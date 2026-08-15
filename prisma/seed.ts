@@ -35,6 +35,17 @@ interface SeedUser {
   fullName: string;
 }
 
+interface SeedMenuItem {
+  name: string;
+  description?: string;
+  priceMinor: bigint;
+}
+
+interface SeedMenuCategory {
+  name: string;
+  items: SeedMenuItem[];
+}
+
 interface SeedRestaurant {
   slug: string;
   name: string;
@@ -44,6 +55,7 @@ interface SeedRestaurant {
   postalCode: string;
   owner: SeedUser;
   additionalStaff: Array<{ user: SeedUser; role: 'MANAGER' | 'STAFF' }>;
+  menu: SeedMenuCategory[];
 }
 
 const RESTAURANTS: SeedRestaurant[] = [
@@ -58,6 +70,30 @@ const RESTAURANTS: SeedRestaurant[] = [
     additionalStaff: [
       { user: { email: 'vikram@spiceroute.example', fullName: 'Vikram Shetty' }, role: 'MANAGER' },
     ],
+    menu: [
+      {
+        name: 'Thali',
+        items: [
+          { name: 'Veg Thali', description: 'Rice, sambar, rasam, two curries, curd, papad.', priceMinor: 18000n },
+          { name: 'South Indian Combo', description: 'Idli, vada, and chutney.', priceMinor: 12000n },
+        ],
+      },
+      {
+        name: 'Dosas',
+        items: [
+          { name: 'Plain Dosa', priceMinor: 8000n },
+          { name: 'Masala Dosa', description: 'Potato masala filling.', priceMinor: 10000n },
+          { name: 'Rava Dosa', priceMinor: 12000n },
+        ],
+      },
+      {
+        name: 'Beverages',
+        items: [
+          { name: 'Filter Coffee', priceMinor: 4000n },
+          { name: 'Buttermilk', priceMinor: 3000n },
+        ],
+      },
+    ],
   },
   {
     slug: 'copper-kettle',
@@ -70,8 +106,46 @@ const RESTAURANTS: SeedRestaurant[] = [
     additionalStaff: [
       { user: { email: 'priya@copperkettle.example', fullName: 'Priya Nair' }, role: 'STAFF' },
     ],
+    menu: [
+      {
+        name: 'Tandoor',
+        items: [
+          { name: 'Tandoori Chicken (Half)', priceMinor: 28000n },
+          { name: 'Paneer Tikka', priceMinor: 22000n },
+        ],
+      },
+      {
+        name: 'Curries',
+        items: [
+          { name: 'Butter Chicken', priceMinor: 32000n },
+          { name: 'Dal Makhani', priceMinor: 18000n },
+          { name: 'Paneer Butter Masala', priceMinor: 24000n },
+        ],
+      },
+      {
+        name: 'Breads',
+        items: [
+          { name: 'Butter Naan', priceMinor: 4000n },
+          { name: 'Tandoori Roti', priceMinor: 2500n },
+        ],
+      },
+    ],
   },
 ];
+
+/**
+ * `OperatingHours.opensAt`/`closesAt` are Postgres `TIME` columns —
+ * Prisma round-trips them as a `Date` whose date part is a fixed epoch
+ * and whose UTC hour/minute is the wall-clock time-of-day (see the
+ * identical, more heavily documented `parseTimeOfDay` in
+ * `apps/api/src/modules/availability/time-of-day.ts`, not imported
+ * here to keep this standalone script free of a cross-app dependency
+ * for one three-line helper).
+ */
+function timeOfDay(hhmm: string): Date {
+  const [hours, minutes] = hhmm.split(':').map(Number);
+  return new Date(Date.UTC(1970, 0, 1, hours, minutes, 0, 0));
+}
 
 /**
  * Dev/pilot-only password for every seeded restaurant owner/staff user
@@ -145,7 +219,59 @@ async function seedRestaurant(spec: SeedRestaurant, passwordHash: string): Promi
     });
   }
 
-  console.log(`[seed] ${spec.name} (${spec.slug}): owner + ${spec.additionalStaff.length} staff`);
+  // Open every day, 00:00–23:59 (effectively always-open) — no unique
+  // constraint exists on OperatingHours to upsert against, so this only
+  // creates rows the first time (an empty schedule means "never open,"
+  // per AvailabilityService.isWithinScheduledHours — found live: both
+  // demo restaurants showed "Currently closed" with an empty menu
+  // search because this table, like menu items below, was never
+  // seeded). Deliberately not a realistic "09:00-22:00" business-hours
+  // window — this is demo/dev data checked in a real restaurant
+  // timezone (Asia/Kolkata) at whatever wall-clock time someone happens
+  // to load the page, and a restaurant that's sometimes closed for
+  // testing depending on time-of-day is a worse demo than one that's
+  // simply always open.
+  const existingHours = await prisma.operatingHours.count({ where: { restaurantId: restaurant.id } });
+  if (existingHours === 0) {
+    await prisma.operatingHours.createMany({
+      data: Array.from({ length: 7 }, (_, dayOfWeek) => ({
+        restaurantId: restaurant.id,
+        dayOfWeek,
+        opensAt: timeOfDay('00:00'),
+        closesAt: timeOfDay('23:59'),
+        isClosed: false,
+      })),
+    });
+  }
+
+  // Same idempotency approach as hours: no unique constraint to upsert
+  // against, so only seed the menu the first time a restaurant is
+  // created, not on every re-run.
+  const existingCategories = await prisma.menuCategory.count({
+    where: { restaurantId: restaurant.id },
+  });
+  if (existingCategories === 0) {
+    for (const [categoryIndex, category] of spec.menu.entries()) {
+      const createdCategory = await prisma.menuCategory.create({
+        data: { restaurantId: restaurant.id, name: category.name, displayOrder: categoryIndex },
+      });
+      await prisma.menuItem.createMany({
+        data: category.items.map((item, itemIndex) => ({
+          restaurantId: restaurant.id,
+          categoryId: createdCategory.id,
+          name: item.name,
+          description: item.description,
+          priceMinor: item.priceMinor,
+          displayOrder: itemIndex,
+        })),
+      });
+    }
+  }
+
+  const itemCount = spec.menu.reduce((sum, category) => sum + category.items.length, 0);
+  console.log(
+    `[seed] ${spec.name} (${spec.slug}): owner + ${spec.additionalStaff.length} staff, ${spec.menu.length} categories / ${itemCount} items, open daily`,
+  );
 }
 
 /**

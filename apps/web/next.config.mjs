@@ -14,10 +14,23 @@ const cdnOrigin = process.env.CDN_BASE_URL ?? 'http://localhost:9000';
 // itself was scaffolded ahead of Phase 9's real adapter.
 const PAYMENT_PROVIDER_ORIGIN = 'https://checkout.razorpay.com';
 
+// `next dev`'s Fast Refresh runtime evaluates hot-reloaded module code
+// via `eval()` — with a strict `script-src 'self'` this throws
+// `EvalError: ... violates ... 'unsafe-eval' is not an allowed source`
+// on every page, the React tree never finishes hydrating, and no
+// onClick/onSubmit handler ever attaches (found live: every login
+// button silently did nothing). `next build`/`next start` never call
+// eval() for this, so `NODE_ENV` — set automatically by the Next.js
+// CLI itself, never by this app's own config — is the correct, always-
+// accurate gate: production keeps the strict docs/09 §15.7 policy
+// unchanged, only local `next dev` gets the relaxation Fast Refresh
+// actually needs.
+const isDev = process.env.NODE_ENV === 'development';
+
 const CSP = [
   "default-src 'self'",
   `img-src 'self' data: ${cdnOrigin}`,
-  "script-src 'self'",
+  `script-src 'self'${isDev ? " 'unsafe-eval'" : ''}`,
   "style-src 'self' 'unsafe-inline'",
   `frame-src ${PAYMENT_PROVIDER_ORIGIN}`,
   `connect-src 'self' ${apiOrigin}`,
