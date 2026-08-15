@@ -1,5 +1,7 @@
 import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import type { PaymentStatus } from '@prisma/client';
+import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { ProviderError } from '../../../platform/errors/app-error.js';
 import type {
   CreatePaymentIntentInput,
@@ -46,6 +48,23 @@ interface MockPaymentRecord {
  * without a real provider. Tests and the local-dev checkout flow call
  * it directly (via this concrete class, not the `PAYMENT_PROVIDER`
  * token) to drive a payment to CAPTURED or FAILED.
+ *
+ * `byOrderId`/`byPaymentId` are a cache, not the source of truth — the
+ * real `Payment` row already persists everything this provider needs
+ * (`orderId`, `amountMinor`, `currency`, `providerPaymentId`). Found
+ * live: a checkout created a payment intent, the dev server restarted
+ * (this class is a singleton, so its Maps reset to empty on every
+ * process start — `tsx watch` restarts the whole API on any source
+ * change, which happens constantly during normal development, not as
+ * a rare edge case), and every subsequent call for that order threw
+ * "unknown providerOrderId" even though the order and payment were
+ * sitting in Postgres exactly as checkout had left them — a real
+ * customer-facing dead end ("Simulate successful payment" always
+ * failing, no way to ever complete that order) caused entirely by
+ * this dev-only provider's own bookkeeping, not the actual order
+ * state. Each lookup now falls back to reconstructing the record from
+ * the database on a cache miss instead of failing — self-healing
+ * across restarts, since the DB is the real source of truth anyway.
  */
 @Injectable()
 export class MockPaymentProvider implements PaymentProvider {
@@ -53,6 +72,29 @@ export class MockPaymentProvider implements PaymentProvider {
 
   private readonly byOrderId = new Map<string, MockPaymentRecord>();
   private readonly byPaymentId = new Map<string, MockPaymentRecord>();
+
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+
+  private async reconstructFromDb(
+    where: { providerOrderId: string } | { providerPaymentId: string },
+  ): Promise<MockPaymentRecord | null> {
+    const payment = await this.prisma.payment.findFirst({ where });
+    if (!payment || !payment.providerOrderId) return null;
+    const record: MockPaymentRecord = {
+      providerOrderId: payment.providerOrderId,
+      providerPaymentId: payment.providerPaymentId,
+      orderId: payment.orderId,
+      amountMinor: payment.amountMinor,
+      currency: payment.currency,
+      status: toProviderState(payment.status),
+      method: payment.method ?? undefined,
+      failureCode: payment.failureCode ?? undefined,
+      failureMessage: payment.failureMessage ?? undefined,
+    };
+    this.byOrderId.set(record.providerOrderId, record);
+    if (record.providerPaymentId) this.byPaymentId.set(record.providerPaymentId, record);
+    return record;
+  }
 
   async createPaymentIntent(input: CreatePaymentIntentInput): Promise<PaymentIntent> {
     const providerOrderId = `mock_order_${randomUUID()}`;
@@ -75,7 +117,7 @@ export class MockPaymentProvider implements PaymentProvider {
   }
 
   async fetchPaymentStatus(providerPaymentId: string): Promise<ProviderPaymentStatus> {
-    const record = this.byPaymentId.get(providerPaymentId);
+    const record = this.byPaymentId.get(providerPaymentId) ?? (await this.reconstructFromDb({ providerPaymentId }));
     if (!record) {
       // A real Razorpay lookup against an unknown id fails the same way
       // `RazorpayPaymentProvider.request()` already reports every
@@ -119,7 +161,9 @@ export class MockPaymentProvider implements PaymentProvider {
   }
 
   async createRefund(input: CreateRefundInput): Promise<ProviderRefundResult> {
-    const record = this.byPaymentId.get(input.providerPaymentId);
+    const record =
+      this.byPaymentId.get(input.providerPaymentId) ??
+      (await this.reconstructFromDb({ providerPaymentId: input.providerPaymentId }));
     if (!record) {
       throw new ProviderError(`Unknown provider payment id: ${input.providerPaymentId}`, 502);
     }
@@ -136,12 +180,13 @@ export class MockPaymentProvider implements PaymentProvider {
    * how a real provider never issues a payment id for an attempt that
    * never actually authorized.
    */
-  simulatePaymentOutcome(
+  async simulatePaymentOutcome(
     providerOrderId: string,
     outcome: 'CAPTURED' | 'FAILED',
     options: { failureCode?: string; failureMessage?: string; amountMinor?: bigint } = {},
-  ): { providerPaymentId: string | null } {
-    const record = this.byOrderId.get(providerOrderId);
+  ): Promise<{ providerPaymentId: string | null }> {
+    const record =
+      this.byOrderId.get(providerOrderId) ?? (await this.reconstructFromDb({ providerOrderId }));
     if (!record) {
       throw new Error(`MockPaymentProvider: unknown providerOrderId ${providerOrderId}`);
     }
@@ -186,6 +231,34 @@ export class MockPaymentProvider implements PaymentProvider {
 
   signature(rawBody: Buffer): string {
     return createHmac('sha256', MOCK_WEBHOOK_SECRET).update(rawBody).digest('hex');
+  }
+}
+
+/**
+ * `Payment.status` (DB, `PaymentStatus`) has more states than
+ * `ProviderPaymentState` (provider-side) — the DB also tracks
+ * post-capture lifecycle (`PARTIALLY_REFUNDED`/`REFUNDED`) and
+ * `CANCELLED`, which a provider's own status vocabulary wouldn't
+ * distinguish from "never authorized." A refunded/partially-refunded
+ * payment WAS captured, so it maps to `CAPTURED`, not `FAILED` —
+ * getting this wrong would make a reconstructed record for an
+ * already-refunded payment look like it never succeeded.
+ */
+function toProviderState(status: PaymentStatus): ProviderPaymentState {
+  switch (status) {
+    case 'CREATED':
+      return 'CREATED';
+    case 'PENDING':
+      return 'CREATED';
+    case 'AUTHORIZED':
+      return 'AUTHORIZED';
+    case 'CAPTURED':
+    case 'PARTIALLY_REFUNDED':
+    case 'REFUNDED':
+      return 'CAPTURED';
+    case 'FAILED':
+    case 'CANCELLED':
+      return 'FAILED';
   }
 }
 

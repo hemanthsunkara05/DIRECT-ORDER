@@ -66,7 +66,7 @@ describe('RefundService (Phase 9)', () => {
 
     const mockProvider = ctx.app.get(MockPaymentProvider);
     const payment = ctx.db.payments[0]!;
-    const { providerPaymentId } = mockProvider.simulatePaymentOutcome(
+    const { providerPaymentId } = await mockProvider.simulatePaymentOutcome(
       payment.providerOrderId!,
       'CAPTURED',
     );

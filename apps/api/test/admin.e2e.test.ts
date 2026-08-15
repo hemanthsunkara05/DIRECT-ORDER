@@ -124,7 +124,7 @@ describe('Admin panel (Phase 13, e2e)', () => {
 
     const mockPayment = ctx.app.get(MockPaymentProvider);
     const payment = ctx.db.payments.at(-1)!;
-    const { providerPaymentId } = mockPayment.simulatePaymentOutcome(
+    const { providerPaymentId } = await mockPayment.simulatePaymentOutcome(
       payment.providerOrderId!,
       'CAPTURED',
     );

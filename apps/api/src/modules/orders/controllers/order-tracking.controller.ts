@@ -78,7 +78,7 @@ export class OrderTrackingController {
       throw new ValidationError('This order has no in-progress payment intent to simulate.');
     }
 
-    const result = this.mockProvider.simulatePaymentOutcome(payment.providerOrderId, input.outcome);
+    const result = await this.mockProvider.simulatePaymentOutcome(payment.providerOrderId, input.outcome);
     return ok({ providerPaymentId: result.providerPaymentId });
   }
 

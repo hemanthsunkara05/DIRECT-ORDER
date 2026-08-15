@@ -97,7 +97,7 @@ describe('Restaurant order management (Phase 10, e2e)', () => {
 
     const mockProvider = ctx.app.get(MockPaymentProvider);
     const payment = ctx.db.payments.at(-1)!;
-    const { providerPaymentId } = mockProvider.simulatePaymentOutcome(
+    const { providerPaymentId } = await mockProvider.simulatePaymentOutcome(
       payment.providerOrderId!,
       'CAPTURED',
     );

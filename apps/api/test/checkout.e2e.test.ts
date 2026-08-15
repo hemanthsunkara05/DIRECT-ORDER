@@ -356,7 +356,7 @@ describe('Orders, checkout, payments (Phase 9, e2e)', () => {
 
     const mockProvider = ctx.app.get(MockPaymentProvider);
     const payment = ctx.db.payments[0]!;
-    const { providerPaymentId } = mockProvider.simulatePaymentOutcome(
+    const { providerPaymentId } = await mockProvider.simulatePaymentOutcome(
       payment.providerOrderId!,
       'CAPTURED',
       {
@@ -400,7 +400,7 @@ describe('Orders, checkout, payments (Phase 9, e2e)', () => {
 
     const mockProvider = ctx.app.get(MockPaymentProvider);
     const payment = ctx.db.payments[0]!;
-    const { providerPaymentId } = mockProvider.simulatePaymentOutcome(
+    const { providerPaymentId } = await mockProvider.simulatePaymentOutcome(
       payment.providerOrderId!,
       'CAPTURED',
     );
@@ -443,7 +443,7 @@ describe('Orders, checkout, payments (Phase 9, e2e)', () => {
 
     const mockProvider = ctx.app.get(MockPaymentProvider);
     const payment = ctx.db.payments[0]!;
-    const { providerPaymentId } = mockProvider.simulatePaymentOutcome(
+    const { providerPaymentId } = await mockProvider.simulatePaymentOutcome(
       payment.providerOrderId!,
       'CAPTURED',
     );
