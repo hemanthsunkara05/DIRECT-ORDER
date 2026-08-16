@@ -9,6 +9,7 @@ import { validateEnv, EnvValidationError, type Env } from './platform/config/env
 import { AppLoggerService } from './platform/logging/logger.service.js';
 import { createCsrfCookieHook } from './platform/security/csrf-cookie.hook.js';
 import { permissionsPolicyHook } from './platform/security/permissions-policy.hook.js';
+import { registerEmptyJsonBodyParser } from './platform/http/empty-json-body.parser.js';
 import { initSentry } from './platform/observability/sentry.js';
 
 const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
@@ -89,6 +90,20 @@ async function bootstrap(): Promise<void> {
   app.setGlobalPrefix('api/v1', { exclude: ['health', 'ready'] });
 
   registerGracefulShutdown(app);
+
+  // Nest only registers its own rawBody-aware `application/json` content
+  // type parser during `init()` (NestApplication.registerParserMiddleware,
+  // called from init() — see nest-application.js). Calling
+  // registerEmptyJsonBodyParser() any earlier races that registration:
+  // Fastify's addContentTypeParser throws FST_ERR_CTP_ALREADY_PRESENT if a
+  // parser for the same content-type is added twice, and Nest's own
+  // registration doesn't check for an existing one first (confirmed live —
+  // this crashed bootstrap on the first try). `app.listen()` only calls
+  // `init()` if it hasn't already run (`isInitialized` guard), so calling
+  // init() explicitly here, then replacing the parser, then listen(), is
+  // safe and doesn't double-initialize.
+  await app.init();
+  registerEmptyJsonBodyParser(app.getHttpAdapter().getInstance());
 
   await app.listen(env.PORT, '0.0.0.0');
   app.get(AppLoggerService).log(`API listening on port ${env.PORT} (${env.APP_ENV})`, 'Bootstrap');

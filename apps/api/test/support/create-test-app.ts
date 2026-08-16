@@ -7,6 +7,7 @@ import { AppModule } from '../../src/app.module.js';
 import { CSRF_COOKIE } from '../../src/platform/security/csrf.js';
 import { createCsrfCookieHook } from '../../src/platform/security/csrf-cookie.hook.js';
 import { permissionsPolicyHook } from '../../src/platform/security/permissions-policy.hook.js';
+import { registerEmptyJsonBodyParser } from '../../src/platform/http/empty-json-body.parser.js';
 import type { Env } from '../../src/platform/config/env.schema.js';
 import { PrismaService } from '../../src/platform/database/prisma.service.js';
 import { RedisService } from '../../src/platform/redis/redis.service.js';
@@ -123,7 +124,11 @@ export async function createTestApp(
     .addHook('onRequest', createCsrfCookieHook({ ...TEST_ENV, ...envOverrides }));
   app.setGlobalPrefix('api/v1', { exclude: ['health', 'ready'] });
 
+  // Same ordering as main.ts: Nest only registers its own rawBody-aware
+  // `application/json` parser during init(), so registerEmptyJsonBodyParser
+  // must run after init() or Fastify throws FST_ERR_CTP_ALREADY_PRESENT.
   await app.init();
+  registerEmptyJsonBodyParser(app.getHttpAdapter().getInstance());
   await app.getHttpAdapter().getInstance().ready();
 
   // The onRequest hook sets a fresh CSRF cookie on any request that

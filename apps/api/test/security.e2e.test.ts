@@ -162,6 +162,22 @@ describe('Security hardening (Phase 18, e2e)', () => {
     expect(last!.status).toBe(429);
   });
 
+  // ── empty JSON body no longer breaks bodyless POST endpoints ──────────
+  // Found live (tester report): every no-payload restaurant action
+  // (POST .../accept, /reject, POST /auth/logout, etc. — none of these
+  // handlers declare a @Body() parameter) sends `Content-Type:
+  // application/json` with a genuinely empty body. Fastify's own default
+  // JSON parser (fastify 4.28.1's contentTypeParser.js) throws
+  // FST_ERR_CTP_EMPTY_JSON_BODY unconditionally on an empty body — a
+  // check on the parsed buffer's length, not any header — so the request
+  // never reached the handler at all. See empty-json-body.parser.ts.
+  it('a bodyless POST with Content-Type: application/json succeeds instead of 400ing as an empty JSON body', async () => {
+    ctx = await createTestApp();
+    const res = await mutate(ctx, 'post', '/api/v1/auth/logout').set('Content-Type', 'application/json');
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('ok');
+  });
+
   it('POST /public/checkout/quote is rate limited (was previously unlimited)', async () => {
     ctx = await createTestApp();
     const owner = await registerAndLogin(ctx);
