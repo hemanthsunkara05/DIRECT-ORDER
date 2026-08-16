@@ -1,14 +1,26 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { ApiError, authApi } from '@/lib/api-client';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { ApiError, authApi, restaurantApi } from '@/lib/api-client';
 import { useSession } from '@/lib/auth/session-context';
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
   const { refresh } = useSession();
+  // Carried from an outreach claim link (see /signup) — a restaurant
+  // slug this login should claim on success, landing the new owner in
+  // onboarding instead of the plain account page.
+  const claimSlug = useSearchParams().get('claim');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -24,6 +36,19 @@ export default function LoginPage() {
       // API — the actual source of truth — currently says.
       await authApi.login({ email, password });
       await refresh();
+      if (claimSlug) {
+        try {
+          await restaurantApi.claim(claimSlug);
+        } catch {
+          // Already claimed, or this account already owns a restaurant —
+          // either way, still a real logged-in session; land on /account
+          // rather than blocking the login that just succeeded.
+          router.push('/account');
+          return;
+        }
+        router.push('/onboarding');
+        return;
+      }
       router.push('/account');
     } catch (err) {
       // Deliberately the same generic message for every failure reason

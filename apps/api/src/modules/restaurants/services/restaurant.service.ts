@@ -2,7 +2,9 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { Restaurant } from '@prisma/client';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { AuditService } from '../../../platform/audit/audit.service.js';
-import { ConflictError, ValidationError } from '../../../platform/errors/app-error.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../../platform/errors/app-error.js';
+import { RestaurantMembershipRepository } from '../../../platform/authorization/restaurant-membership.repository.js';
+import { UNCLAIMED_PLACEHOLDER_EMAIL } from '../../../platform/unclaimed-listings.js';
 import { RestaurantRepository } from '../repositories/restaurant.repository.js';
 import { slugify, validateSlugFormat } from '../slug.js';
 
@@ -31,6 +33,8 @@ export class RestaurantService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(RestaurantRepository) private readonly restaurants: RestaurantRepository,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(RestaurantMembershipRepository)
+    private readonly memberships: RestaurantMembershipRepository,
   ) {}
 
   async createRestaurant(ownerId: string, input: CreateRestaurantInput): Promise<Restaurant> {
@@ -77,6 +81,89 @@ export class RestaurantService {
     });
 
     return restaurant;
+  }
+
+  /**
+   * Turns an unclaimed preview listing (owned only by the placeholder
+   * account) into a real restaurant owned by the caller. Deliberately
+   * matches `createRestaurant`'s own invariant that an owner has at
+   * most one restaurant this phase (`OnboardingWizard` on the frontend
+   * resumes from `user.restaurantMemberships[0]` — a caller who already
+   * has one would silently land in the wrong wizard otherwise) by
+   * refusing the claim outright rather than allowing a second one.
+   *
+   * Resets `status` to DRAFT and `onboardingStatus` to NOT_STARTED even
+   * though the preview data (name, address, phone) is already real —
+   * none of it has been confirmed by an actual human at this business
+   * yet, so the claiming owner goes through the exact same
+   * profile-review-and-submit path as any brand-new restaurant, with
+   * the scraped data pre-filled instead of blank.
+   */
+  async claimRestaurant(userId: string, slug: string): Promise<Restaurant> {
+    const restaurant = await this.restaurants.findBySlug(slug);
+    if (!restaurant) {
+      throw new NotFoundError('Restaurant not found.');
+    }
+
+    const placeholder = await this.prisma.user.findUnique({
+      where: { email: UNCLAIMED_PLACEHOLDER_EMAIL },
+    });
+    const staff = await this.prisma.restaurantStaff.findMany({
+      where: { restaurantId: restaurant.id },
+    });
+    const isUnclaimed =
+      placeholder !== null &&
+      staff.length === 1 &&
+      staff[0]!.userId === placeholder.id &&
+      staff[0]!.role === 'OWNER';
+    if (!isUnclaimed) {
+      throw new ConflictError('This listing has already been claimed.');
+    }
+
+    const alreadyOwnsOne = (await this.memberships.findActiveByUser(userId)).length > 0;
+    if (alreadyOwnsOne) {
+      throw new ConflictError('Your account already manages a restaurant — one owner, one restaurant for now.');
+    }
+
+    const claimed = await this.prisma.$transaction(async (tx) => {
+      // updateMany (not update) even though `id` alone is already
+      // unique — matches RestaurantStaffRepository's own
+      // updateRole()/setStatus() convention of keeping the tenant
+      // filter explicit in the where clause rather than relying on a
+      // bare unique-key lookup, and `count` tells us the swap actually
+      // happened instead of silently no-oping.
+      const swapped = await tx.restaurantStaff.updateMany({
+        where: { id: staff[0]!.id, restaurantId: restaurant.id },
+        data: { userId },
+      });
+      if (swapped.count !== 1) {
+        throw new ConflictError('This listing has already been claimed.');
+      }
+      // Preview listings weren't created through createRestaurant(), so
+      // they never got the eager RestaurantSettings row that gives; add
+      // it now so a claimed restaurant behaves identically to a
+      // freshly-created one from this point forward.
+      await tx.restaurantSettings.upsert({
+        where: { restaurantId: restaurant.id },
+        create: { restaurantId: restaurant.id },
+        update: {},
+      });
+      return tx.restaurant.update({
+        where: { id: restaurant.id },
+        data: { status: 'DRAFT', onboardingStatus: 'NOT_STARTED', orderingEnabled: false },
+      });
+    });
+
+    await this.audit.record({
+      actorType: 'RESTAURANT_USER',
+      actorId: userId,
+      action: 'RESTAURANT_CLAIMED',
+      entityType: 'Restaurant',
+      entityId: claimed.id,
+      restaurantId: claimed.id,
+    });
+
+    return claimed;
   }
 
   /**

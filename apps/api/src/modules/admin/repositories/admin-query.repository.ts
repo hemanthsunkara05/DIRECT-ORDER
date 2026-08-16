@@ -10,6 +10,14 @@ import type {
   User,
 } from '@prisma/client';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
+import { UNCLAIMED_PLACEHOLDER_EMAIL } from '../../../platform/unclaimed-listings.js';
+
+export interface UnclaimedListing {
+  slug: string;
+  name: string;
+  phone: string | null;
+  city: string | null;
+}
 
 export interface CursorPage<T> {
   items: T[];
@@ -63,6 +71,48 @@ export class AdminQueryRepository {
       ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     });
     return toPage(rows, limit);
+  }
+
+  /**
+   * Outreach worklist: every restaurant still owned only by the
+   * unclaimed-listing placeholder account (see claimRestaurant() /
+   * UNCLAIMED_PLACEHOLDER_EMAIL), with just enough to work an outreach
+   * queue by hand — name, phone, city, and the slug the claim link is
+   * built from (`/signup?claim=<slug>`). Small, bounded batches (this
+   * exists for the Rajahmundry outreach list, not an open-ended feed),
+   * so a flat list rather than cursor pagination is the honest shape.
+   */
+  async listUnclaimed(): Promise<UnclaimedListing[]> {
+    const placeholder = await this.prisma.user.findUnique({
+      where: { email: UNCLAIMED_PLACEHOLDER_EMAIL },
+    });
+    if (!placeholder) return [];
+
+    // Composed from single-table lookups (staff by userId, then each
+    // restaurant/address by id) rather than a relation-filtering
+    // findMany — keeps this portable across both the real Prisma client
+    // and the in-memory test double, which only implements the simpler
+    // per-table query shapes every OTHER repository in this codebase
+    // already relies on.
+    const staffRows = await this.prisma.restaurantStaff.findMany({
+      where: { userId: placeholder.id, role: 'OWNER' as const },
+    });
+
+    const listings = await Promise.all(
+      staffRows.map(async (staff): Promise<UnclaimedListing | null> => {
+        const restaurant = await this.prisma.restaurant.findUnique({
+          where: { id: staff.restaurantId },
+        });
+        if (!restaurant) return null;
+        const address = await this.prisma.restaurantAddress.findUnique({
+          where: { restaurantId: restaurant.id },
+        });
+        return { slug: restaurant.slug, name: restaurant.name, phone: restaurant.phone, city: address?.city ?? null };
+      }),
+    );
+    return listings
+      .filter((l): l is UnclaimedListing => l !== null)
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async listUsers(

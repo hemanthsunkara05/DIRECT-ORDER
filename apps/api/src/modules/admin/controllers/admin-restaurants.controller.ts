@@ -49,6 +49,21 @@ export class AdminRestaurantsController {
     });
   }
 
+  /**
+   * The outreach worklist behind `/admin/prospects` — every restaurant
+   * still owned only by the unclaimed-listing placeholder account, with
+   * a ready-to-send claim link per row. Same `restaurant:read`
+   * permission as the main list above; this is a read of the same
+   * underlying data, just pre-filtered to "not yet a real relationship."
+   */
+  @Get('unclaimed')
+  @Permissions('restaurant:read')
+  @HttpCode(200)
+  async unclaimed() {
+    const rows = await this.admin.listUnclaimed();
+    return ok(rows);
+  }
+
   @Post(':id/approve')
   @Permissions('restaurant:approve')
   @HttpCode(200)

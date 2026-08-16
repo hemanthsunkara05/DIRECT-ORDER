@@ -1,14 +1,27 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ApiError, authApi } from '@/lib/api-client';
 
 type Step = 'register' | 'verify';
 
 export default function SignupPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignupForm />
+    </Suspense>
+  );
+}
+
+function SignupForm() {
   const router = useRouter();
+  // Outreach claim link: /signup?claim=<slug> — carried through to
+  // /login so a fresh account can claim that listing right after its
+  // first successful login (see /login's own claimSlug handling).
+  const claimSlug = useSearchParams().get('claim');
+  const loginHref = claimSlug ? `/login?claim=${encodeURIComponent(claimSlug)}` : '/login';
   const [step, setStep] = useState<Step>('register');
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
@@ -39,7 +52,7 @@ export default function SignupPage() {
     setSubmitting(true);
     try {
       await authApi.verifyOtp({ identifier: email, purpose: 'EMAIL_VERIFICATION', code });
-      router.push('/login');
+      router.push(loginHref);
     } catch (err) {
       setError(err instanceof ApiError ? formatErrorMessage(err) : 'Something went wrong.');
     } finally {
@@ -111,7 +124,7 @@ export default function SignupPage() {
 
       <p className="text-sm text-slate-500">
         Already have an account?{' '}
-        <Link href="/login" className="underline">
+        <Link href={loginHref} className="underline">
           Log in
         </Link>
       </p>

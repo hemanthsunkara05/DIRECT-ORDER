@@ -4,6 +4,7 @@ import { ok } from '../../../platform/http/response-envelope.js';
 import { AuthGuard } from '../../identity/guards/auth.guard.js';
 import { CurrentUser } from '../../identity/decorators/current-user.decorator.js';
 import { CreateRestaurantDto } from '../dto/create-restaurant.dto.js';
+import { ClaimRestaurantDto } from '../dto/claim-restaurant.dto.js';
 import { RestaurantService } from '../services/restaurant.service.js';
 
 /**
@@ -23,6 +24,22 @@ export class RestaurantsController {
   async create(@CurrentUser() user: User, @Body() body: unknown) {
     const input = CreateRestaurantDto.parse(body);
     const restaurant = await this.restaurants.createRestaurant(user.id, input);
+    return ok(toPublicRestaurant(restaurant));
+  }
+
+  /**
+   * Claims an unclaimed preview listing (an outreach-batch restaurant
+   * still owned by the internal placeholder account) into a real
+   * restaurant owned by the caller. Same "no tenant yet" shape as
+   * `create` above — the caller has no membership for `@TenantScoped()`
+   * to resolve until this succeeds.
+   */
+  @Post('claim')
+  @UseGuards(AuthGuard)
+  @HttpCode(200)
+  async claim(@CurrentUser() user: User, @Body() body: unknown) {
+    const input = ClaimRestaurantDto.parse(body);
+    const restaurant = await this.restaurants.claimRestaurant(user.id, input.slug);
     return ok(toPublicRestaurant(restaurant));
   }
 }

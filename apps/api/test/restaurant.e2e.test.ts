@@ -2,6 +2,22 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTestApp, type TestApp } from './support/create-test-app.js';
 import { get, mutate, registerAndLogin } from './support/register-and-login.js';
 
+const UNCLAIMED_PLACEHOLDER_EMAIL = 'unclaimed-listings@direct-order.local';
+
+/** Mirrors what the Rajahmundry outreach script does — a Restaurant owned only by the unclaimed-listing placeholder. */
+async function seedUnclaimedListing(ctx: TestApp, slug: string, name = 'Sandhya\'s Kitchen') {
+  const placeholder = await ctx.db.prisma.user.create({
+    data: { email: UNCLAIMED_PLACEHOLDER_EMAIL, fullName: 'Unclaimed Listing', status: 'ACTIVE' },
+  });
+  const restaurant = await ctx.db.prisma.restaurant.create({
+    data: { slug, name, status: 'ACTIVE', onboardingStatus: 'NOT_STARTED', orderingEnabled: false },
+  });
+  await ctx.db.prisma.restaurantStaff.create({
+    data: { restaurantId: restaurant.id, userId: placeholder.id, role: 'OWNER' },
+  });
+  return restaurant;
+}
+
 describe('Restaurants (Phase 5, e2e)', () => {
   let ctx: TestApp;
 
@@ -78,6 +94,86 @@ describe('Restaurants (Phase 5, e2e)', () => {
 
     it('requires authentication', async () => {
       await mutate(ctx, 'post', '/api/v1/restaurants').send({ name: 'Spice Route' }).expect(401);
+    });
+  });
+
+  describe('POST /restaurants/claim', () => {
+    it('claims an unclaimed listing: caller becomes OWNER, status resets to DRAFT for real onboarding', async () => {
+      const listing = await seedUnclaimedListing(ctx, 'sandhya-s-kitchen');
+      const owner = await registerAndLogin(ctx);
+
+      const res = await mutate(ctx, 'post', '/api/v1/restaurants/claim', owner.cookie)
+        .send({ slug: 'sandhya-s-kitchen' })
+        .expect(200);
+
+      expect(res.body.data.id).toBe(listing.id);
+      expect(res.body.data.status).toBe('DRAFT');
+      expect(res.body.data.onboardingStatus).toBe('NOT_STARTED');
+
+      const staff = ctx.db.restaurantStaff.filter((s) => s.restaurantId === listing.id);
+      expect(staff).toHaveLength(1);
+      expect(staff[0]?.userId).toBe(owner.userId);
+      expect(staff[0]?.role).toBe('OWNER');
+
+      // The placeholder's ownership is fully gone, not just superseded.
+      const placeholder = ctx.db.users.find((u) => u.email === UNCLAIMED_PLACEHOLDER_EMAIL)!;
+      expect(staff.some((s) => s.userId === placeholder.id)).toBe(false);
+
+      // Matches createRestaurant()'s own eager-settings invariant.
+      expect(ctx.db.restaurantSettings.some((s) => s.restaurantId === listing.id)).toBe(true);
+    });
+
+    it('cannot claim the same listing twice', async () => {
+      await seedUnclaimedListing(ctx, 'sandhya-s-kitchen');
+      const first = await registerAndLogin(ctx, { email: 'first@spiceroute.test' });
+      await mutate(ctx, 'post', '/api/v1/restaurants/claim', first.cookie)
+        .send({ slug: 'sandhya-s-kitchen' })
+        .expect(200);
+
+      const second = await registerAndLogin(ctx, { email: 'second@spiceroute.test' });
+      const res = await mutate(ctx, 'post', '/api/v1/restaurants/claim', second.cookie)
+        .send({ slug: 'sandhya-s-kitchen' })
+        .expect(409);
+      expect(res.body.error.message).toMatch(/already been claimed/i);
+    });
+
+    it('cannot claim a listing while already owning a restaurant — one owner, one restaurant', async () => {
+      await seedUnclaimedListing(ctx, 'sandhya-s-kitchen');
+      const owner = await registerAndLogin(ctx);
+      await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'My Existing Place' })
+        .expect(201);
+
+      const res = await mutate(ctx, 'post', '/api/v1/restaurants/claim', owner.cookie)
+        .send({ slug: 'sandhya-s-kitchen' })
+        .expect(409);
+      expect(res.body.error.message).toMatch(/already manages a restaurant/i);
+    });
+
+    it('claiming a restaurant that was never a preview listing (real owner already) is rejected the same way', async () => {
+      const realOwner = await registerAndLogin(ctx, { email: 'real@spiceroute.test' });
+      await mutate(ctx, 'post', '/api/v1/restaurants', realOwner.cookie)
+        .send({ name: 'Already Real', slug: 'already-real' })
+        .expect(201);
+
+      const claimer = await registerAndLogin(ctx, { email: 'claimer@spiceroute.test' });
+      await mutate(ctx, 'post', '/api/v1/restaurants/claim', claimer.cookie)
+        .send({ slug: 'already-real' })
+        .expect(409);
+    });
+
+    it('404s for a slug that does not exist', async () => {
+      const owner = await registerAndLogin(ctx);
+      await mutate(ctx, 'post', '/api/v1/restaurants/claim', owner.cookie)
+        .send({ slug: 'no-such-restaurant' })
+        .expect(404);
+    });
+
+    it('requires authentication', async () => {
+      await seedUnclaimedListing(ctx, 'sandhya-s-kitchen');
+      await mutate(ctx, 'post', '/api/v1/restaurants/claim')
+        .send({ slug: 'sandhya-s-kitchen' })
+        .expect(401);
     });
   });
 

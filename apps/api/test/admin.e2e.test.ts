@@ -61,6 +61,24 @@ describe('Admin panel (Phase 13, e2e)', () => {
     return { ...owner, adminUserId, role };
   }
 
+  /** Mirrors the Rajahmundry outreach script: a Restaurant owned only by the unclaimed-listing placeholder account. */
+  async function seedUnclaimedListing(slug: string, name: string, phone: string | null = null) {
+    const placeholder = await ctx.db.prisma.user.create({
+      data: {
+        email: 'unclaimed-listings@direct-order.local',
+        fullName: 'Unclaimed Listing',
+        status: 'ACTIVE',
+      },
+    });
+    const restaurant = await ctx.db.prisma.restaurant.create({
+      data: { slug, name, phone, status: 'ACTIVE', onboardingStatus: 'NOT_STARTED', orderingEnabled: false },
+    });
+    await ctx.db.prisma.restaurantStaff.create({
+      data: { restaurantId: restaurant.id, userId: placeholder.id, role: 'OWNER' },
+    });
+    return restaurant;
+  }
+
   async function setUpRestaurantWithPlacedOrder(itemPriceMinor = '20000') {
     const owner = await registerAndLogin(ctx, { email: `owner-${randomUUID()}@spiceroute.test` });
     const created = await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
@@ -335,6 +353,34 @@ describe('Admin panel (Phase 13, e2e)', () => {
     await mutate(ctx, 'post', `/api/v1/admin/restaurants/${restaurantId}/approve`, admin.cookie)
       .send({})
       .expect(409);
+  });
+
+  it('GET /admin/restaurants/unclaimed lists only outreach-batch previews, never a real restaurant', async () => {
+    ctx = await createTestApp();
+    const admin = await registerAdmin('ADMIN_OPERATIONS');
+    await seedUnclaimedListing('sandhya-s-kitchen', "Sandhya's Kitchen", '8919500575');
+    await setUpRestaurantWithPlacedOrder(); // a real, normally-onboarded restaurant
+
+    const res = await get(ctx, '/api/v1/admin/restaurants/unclaimed', admin.cookie).expect(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0]).toMatchObject({
+      slug: 'sandhya-s-kitchen',
+      name: "Sandhya's Kitchen",
+      phone: '8919500575',
+    });
+  });
+
+  it('GET /admin/restaurants/unclaimed drops off once claimed', async () => {
+    ctx = await createTestApp();
+    const admin = await registerAdmin('ADMIN_OPERATIONS');
+    await seedUnclaimedListing('sandhya-s-kitchen', "Sandhya's Kitchen");
+    const owner = await registerAndLogin(ctx, { email: `claimer-${randomUUID()}@spiceroute.test` });
+    await mutate(ctx, 'post', '/api/v1/restaurants/claim', owner.cookie)
+      .send({ slug: 'sandhya-s-kitchen' })
+      .expect(200);
+
+    const res = await get(ctx, '/api/v1/admin/restaurants/unclaimed', admin.cookie).expect(200);
+    expect(res.body.data).toHaveLength(0);
   });
 
   // ── Order cancellation, refunds ────────────────────────────────────

@@ -293,6 +293,13 @@ export const restaurantApi = {
       method: 'POST',
       ...restaurantHeaders(restaurantId),
     }),
+
+  /** Claims an unclaimed outreach-batch preview listing — see restaurants.controller.ts's `claim`. */
+  claim: (slug: string) =>
+    post<{ id: string; slug: string; status: string; onboardingStatus: string }>(
+      '/restaurants/claim',
+      { slug },
+    ),
 };
 
 // ── Promotions (Phase 14) ──────────────────────────────────────────────
@@ -1067,6 +1074,13 @@ export interface AdminUserSummary {
   createdAt: string;
 }
 
+export interface UnclaimedListing {
+  slug: string;
+  name: string;
+  phone: string | null;
+  city: string | null;
+}
+
 export interface AdminOrderSummary {
   id: string;
   orderNumber: string;
@@ -1153,6 +1167,8 @@ export const adminApi = {
       post<{ id: string; status: string }>(`/admin/restaurants/${id}/suspend`, { reason }),
     reinstate: (id: string) =>
       post<{ id: string; status: string }>(`/admin/restaurants/${id}/reinstate`, {}),
+    /** Outreach worklist — restaurants still owned only by the unclaimed-listing placeholder account. */
+    unclaimed: () => get<UnclaimedListing[]>('/admin/restaurants/unclaimed'),
   },
 
   users: {
