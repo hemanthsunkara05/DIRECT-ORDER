@@ -46,6 +46,12 @@ function LoginForm() {
           router.push('/account');
           return;
         }
+        // The claim just created this account's first restaurantStaff
+        // membership — refresh() again so SessionProvider's user carries
+        // it. Without this, /onboarding reads the pre-claim session (no
+        // memberships) and drops the new owner into "create a restaurant"
+        // instead of resuming the one they just claimed.
+        await refresh();
         router.push('/onboarding');
         return;
       }
