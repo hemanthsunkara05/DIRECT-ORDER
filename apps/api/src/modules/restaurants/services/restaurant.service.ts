@@ -38,6 +38,17 @@ export class RestaurantService {
   ) {}
 
   async createRestaurant(ownerId: string, input: CreateRestaurantInput): Promise<Restaurant> {
+    // Same one-owner-one-restaurant invariant claimRestaurant() enforces
+    // below — without it, a caller who reaches this step with a stale
+    // client-side session (e.g. mid-claim-flow) silently ends up owning
+    // two restaurants instead of hitting a clear error.
+    const alreadyOwnsOne = (await this.memberships.findActiveByUser(ownerId)).length > 0;
+    if (alreadyOwnsOne) {
+      throw new ConflictError(
+        'Your account already manages a restaurant — one owner, one restaurant for now.',
+      );
+    }
+
     const slug = input.slug
       ? await this.validateExplicitSlug(input.slug)
       : await this.generateUniqueSlug(input.name);

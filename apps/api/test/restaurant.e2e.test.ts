@@ -95,6 +95,25 @@ describe('Restaurants (Phase 5, e2e)', () => {
     it('requires authentication', async () => {
       await mutate(ctx, 'post', '/api/v1/restaurants').send({ name: 'Spice Route' }).expect(401);
     });
+
+    // Regression: /qa found the frontend onboarding wizard resumes from
+    // user.restaurantMemberships[0], and a stale client-side session
+    // right after a claim (fixed separately in login/page.tsx) could
+    // land a caller here despite already owning one — this is the
+    // backend half of that same one-owner-one-restaurant invariant,
+    // previously enforced only by claimRestaurant(), not this endpoint.
+    // Found by /qa on 2026-08-16.
+    it('cannot create a second restaurant while already owning one', async () => {
+      const owner = await registerAndLogin(ctx);
+      await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'First Place' })
+        .expect(201);
+
+      const res = await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Second Place' })
+        .expect(409);
+      expect(res.body.error.message).toMatch(/already manages a restaurant/i);
+    });
   });
 
   describe('POST /restaurants/claim', () => {
