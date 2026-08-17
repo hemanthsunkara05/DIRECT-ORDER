@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AdminGuard } from '@/lib/auth/admin-guard';
 import { ApiError, adminApi, type AuditLogEntry } from '@/lib/api-client';
-import { AdminNav } from '../admin-nav';
 
 export default function AdminAuditPage() {
   return (
@@ -40,7 +39,6 @@ function AuditDashboard() {
   return (
     <main className="mx-auto max-w-4xl p-6">
       <h1 className="mb-2 text-xl font-semibold">Audit log</h1>
-      <AdminNav />
 
       {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
 

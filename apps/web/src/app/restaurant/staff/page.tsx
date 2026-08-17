@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ApiError, staffApi, type StaffMember } from '@/lib/api-client';
 import { ProtectedRoute } from '@/lib/auth/protected-route';
 import { useSession } from '@/lib/auth/session-context';
+import { Button } from '@/components/ui/Button';
 
 export default function StaffPage() {
   return (
@@ -19,11 +20,18 @@ function formatError(err: unknown): string {
 }
 
 function StaffManagement() {
-  const { user } = useSession();
-  // Pilot scope: a manager/owner acts on the first restaurant they
-  // manage — a user belonging to several would need a picker, not
-  // built yet (no multi-restaurant owner flow exists before Phase 5).
-  const restaurantId = user?.restaurantMemberships.find((m) => m.role !== 'STAFF')?.restaurantId;
+  const { user, activeRestaurantId } = useSession();
+  const activeMembership = user?.restaurantMemberships.find(
+    (m) => m.restaurantId === activeRestaurantId,
+  );
+  // Same fallback as restaurant/profile/page.tsx: prefer the switcher's
+  // active restaurant, but only when this principal manages it — a
+  // STAFF-only active selection falls back to a restaurant they can
+  // actually administer staff for.
+  const restaurantId =
+    activeMembership && activeMembership.role !== 'STAFF'
+      ? activeMembership.restaurantId
+      : user?.restaurantMemberships.find((m) => m.role !== 'STAFF')?.restaurantId;
 
   const [members, setMembers] = useState<StaffMember[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,16 +52,16 @@ function StaffManagement() {
   if (!user || !restaurantId) {
     return (
       <main className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center gap-2 p-8 text-center">
-        <p className="text-sm text-slate-500">You don&apos;t manage a restaurant.</p>
+        <p className="text-sm text-ink-500">You don&apos;t manage a restaurant.</p>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-lg flex-col gap-8 p-8">
-      <h1 className="text-xl font-semibold">Staff</h1>
+    <main className="mx-auto flex min-h-screen max-w-lg flex-col gap-8 p-8" style={{ background: 'var(--bg)' }}>
+      <h1 className="text-xl font-bold text-ink-900">Staff</h1>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm font-medium text-error">{error}</p>}
 
       <StaffList
         members={members}
@@ -107,15 +115,20 @@ function StaffList({
   }
 
   if (!members) {
-    return <p className="text-sm text-slate-500">Loading…</p>;
+    return <p className="text-sm text-ink-500">Loading…</p>;
   }
+
+  // Visible in the UI, not just enforced server-side (the report's own
+  // named gap: "the demote/disable action on the sole remaining owner
+  // should be disabled with an explanation, not just fail on click").
+  const activeOwnerCount = members.filter((m) => m.role === 'OWNER' && m.status === 'ACTIVE').length;
 
   return (
     <div className="flex flex-col gap-2">
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm font-medium text-error">{error}</p>}
       <table className="w-full text-left text-sm">
         <thead>
-          <tr className="border-b border-slate-200 text-xs text-slate-400">
+          <tr className="border-b border-ink-200 text-xs text-ink-400">
             <th className="py-2 font-medium">Name</th>
             <th className="font-medium">Role</th>
             <th className="font-medium">Status</th>
@@ -123,41 +136,49 @@ function StaffList({
           </tr>
         </thead>
         <tbody>
-          {members.map((m) => (
-            <tr key={m.id} className="border-b border-slate-100">
-              <td className="py-2">
-                <p className="font-medium">{m.user.fullName}</p>
-                <p className="text-xs text-slate-400">{m.user.email}</p>
-              </td>
-              <td>
-                <select
-                  value={m.role}
-                  disabled={busyId === m.id || m.user.id === currentUserId}
-                  onChange={(e) =>
-                    void handleRoleChange(m.id, e.target.value as 'STAFF' | 'MANAGER' | 'OWNER')
-                  }
-                  className="input"
-                >
-                  <option value="STAFF">Staff</option>
-                  <option value="MANAGER">Manager</option>
-                  <option value="OWNER">Owner</option>
-                </select>
-              </td>
-              <td>{m.status}</td>
-              <td>
-                {m.status === 'ACTIVE' && (
-                  <button
-                    type="button"
-                    disabled={busyId === m.id}
-                    onClick={() => void handleDisable(m.id)}
-                    className="text-xs text-red-600 underline"
+          {members.map((m) => {
+            const isSoleActiveOwner = m.role === 'OWNER' && m.status === 'ACTIVE' && activeOwnerCount === 1;
+            const soleOwnerTitle = isSoleActiveOwner
+              ? 'This restaurant must always have at least one active owner.'
+              : undefined;
+            return (
+              <tr key={m.id} className="border-b border-dashed border-ink-200">
+                <td className="py-2">
+                  <p className="font-medium text-ink-900">{m.user.fullName}</p>
+                  <p className="text-xs text-ink-400">{m.user.email}</p>
+                </td>
+                <td>
+                  <select
+                    value={m.role}
+                    disabled={busyId === m.id || m.user.id === currentUserId || isSoleActiveOwner}
+                    title={soleOwnerTitle}
+                    onChange={(e) =>
+                      void handleRoleChange(m.id, e.target.value as 'STAFF' | 'MANAGER' | 'OWNER')
+                    }
+                    className="input"
                   >
-                    Disable
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
+                    <option value="STAFF">Staff</option>
+                    <option value="MANAGER">Manager</option>
+                    <option value="OWNER">Owner</option>
+                  </select>
+                </td>
+                <td className="text-ink-700">{m.status}</td>
+                <td>
+                  {m.status === 'ACTIVE' && (
+                    <button
+                      type="button"
+                      disabled={busyId === m.id || isSoleActiveOwner}
+                      title={soleOwnerTitle}
+                      onClick={() => void handleDisable(m.id)}
+                      className="text-xs font-semibold text-error underline disabled:cursor-not-allowed disabled:text-ink-400 disabled:no-underline"
+                    >
+                      Disable
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -191,9 +212,9 @@ function InviteForm({ restaurantId, onInvited }: { restaurantId: string; onInvit
   return (
     <form
       onSubmit={(e) => void handleSubmit(e)}
-      className="flex flex-col gap-4 border-t border-slate-200 pt-6"
+      className="flex flex-col gap-4 border-t border-ink-200 pt-6"
     >
-      <h2 className="text-sm font-semibold text-slate-900">Invite staff</h2>
+      <h2 className="text-sm font-bold text-ink-900">Invite staff</h2>
       <div className="flex gap-3">
         <input
           type="email"
@@ -212,12 +233,12 @@ function InviteForm({ restaurantId, onInvited }: { restaurantId: string; onInvit
           <option value="MANAGER">Manager</option>
           <option value="OWNER">Owner</option>
         </select>
-        <button type="submit" disabled={submitting} className="btn-primary">
-          {submitting ? 'Sending…' : 'Invite'}
-        </button>
+        <Button type="submit" disabled={submitting} loading={submitting}>
+          Invite
+        </Button>
       </div>
-      {message && <p className="text-sm text-slate-600">{message}</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {message && <p className="text-sm text-ink-700">{message}</p>}
+      {error && <p className="text-sm font-medium text-error">{error}</p>}
     </form>
   );
 }

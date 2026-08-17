@@ -6,6 +6,7 @@ import { toMinor } from '@direct-order/money';
 import {
   ApiError,
   restaurantApi,
+  type RestaurantAddressInput,
   type RestaurantBrandingData,
   type RestaurantProfile,
   type RestaurantSettingsData,
@@ -27,8 +28,19 @@ function formatError(err: unknown): string {
 }
 
 function RestaurantProfileEditor() {
-  const { user } = useSession();
-  const restaurantId = user?.restaurantMemberships.find((m) => m.role !== 'STAFF')?.restaurantId;
+  const { user, activeRestaurantId } = useSession();
+  // Prefers the switcher's active restaurant, but only when this
+  // principal holds MANAGER/OWNER there — profile editing needs
+  // restaurant:update, which STAFF never holds, so a STAFF-only active
+  // selection falls back to the first restaurant this user actually
+  // manages rather than showing a page every action on it would 403.
+  const activeMembership = user?.restaurantMemberships.find(
+    (m) => m.restaurantId === activeRestaurantId,
+  );
+  const restaurantId =
+    activeMembership && activeMembership.role !== 'STAFF'
+      ? activeMembership.restaurantId
+      : user?.restaurantMemberships.find((m) => m.role !== 'STAFF')?.restaurantId;
 
   const [profile, setProfile] = useState<RestaurantProfile | null>(null);
   const [branding, setBranding] = useState<RestaurantBrandingData | null>(null);
@@ -82,6 +94,7 @@ function RestaurantProfileEditor() {
 
       <OrderingLinkSection slug={profile.slug} />
       <ProfileSection restaurantId={restaurantId} profile={profile} onSaved={setProfile} />
+      <AddressSection restaurantId={restaurantId} profile={profile} onSaved={setProfile} />
       <BrandingSection restaurantId={restaurantId} branding={branding} onSaved={setBranding} />
       <SettingsSection restaurantId={restaurantId} settings={settings} onSaved={setSettings} />
     </main>
@@ -227,6 +240,144 @@ function ProfileSection({
       {error && <p className="text-sm text-red-600">{error}</p>}
       <button type="submit" disabled={saving} className="btn-primary w-fit">
         {saving ? 'Saving…' : 'Save profile'}
+      </button>
+    </form>
+  );
+}
+
+/**
+ * Phase 21a: closes the "resubmit leads nowhere to fix an address
+ * problem" gap — a restaurant rejected for e.g. an invalid address had no
+ * page to correct it before resubmitting. `updateProfile()` already
+ * accepts and upserts a full `address` object (Phase 5); this is a
+ * frontend-only addition. Latitude/longitude aren't editable here (no map
+ * picker in scope) — saved unchanged from whatever onboarding set.
+ */
+function AddressSection({
+  restaurantId,
+  profile,
+  onSaved,
+}: {
+  restaurantId: string;
+  profile: RestaurantProfile;
+  onSaved: (p: RestaurantProfile) => void;
+}) {
+  const existing = profile.address;
+  const [line1, setLine1] = useState(existing?.line1 ?? '');
+  const [line2, setLine2] = useState(existing?.line2 ?? '');
+  const [locality, setLocality] = useState(existing?.locality ?? '');
+  const [city, setCity] = useState(existing?.city ?? '');
+  const [state, setState] = useState(existing?.state ?? '');
+  const [postalCode, setPostalCode] = useState(existing?.postalCode ?? '');
+  const [landmark, setLandmark] = useState(existing?.landmark ?? '');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      const address: RestaurantAddressInput = {
+        line1,
+        line2: line2 || undefined,
+        locality: locality || undefined,
+        city,
+        state,
+        postalCode,
+        landmark: landmark || undefined,
+        latitude: existing?.latitude ?? undefined,
+        longitude: existing?.longitude ?? undefined,
+      };
+      const updated = await restaurantApi.updateProfile({ address }, restaurantId);
+      onSaved(updated);
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={(e) => void handleSubmit(e)}
+      className="flex flex-col gap-4 border-t border-slate-200 pt-8"
+    >
+      <h2 className="text-sm font-semibold text-slate-900">Address</h2>
+      <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+        Address line 1
+        <input
+          type="text"
+          required
+          value={line1}
+          onChange={(e) => setLine1(e.target.value)}
+          className="input"
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+        Address line 2
+        <input
+          type="text"
+          value={line2}
+          onChange={(e) => setLine2(e.target.value)}
+          className="input"
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+        Locality
+        <input
+          type="text"
+          value={locality}
+          onChange={(e) => setLocality(e.target.value)}
+          className="input"
+        />
+      </label>
+      <div className="grid grid-cols-2 gap-4">
+        <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+          City
+          <input
+            type="text"
+            required
+            value={city}
+            onChange={(e) => setCity(e.target.value)}
+            className="input"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+          State
+          <input
+            type="text"
+            required
+            value={state}
+            onChange={(e) => setState(e.target.value)}
+            className="input"
+          />
+        </label>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+          Postal code
+          <input
+            type="text"
+            required
+            value={postalCode}
+            onChange={(e) => setPostalCode(e.target.value)}
+            className="input"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+          Landmark
+          <input
+            type="text"
+            value={landmark}
+            onChange={(e) => setLandmark(e.target.value)}
+            className="input"
+          />
+        </label>
+      </div>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <button type="submit" disabled={saving} className="btn-primary w-fit">
+        {saving ? 'Saving…' : 'Save address'}
       </button>
     </form>
   );

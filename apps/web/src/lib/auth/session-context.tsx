@@ -10,9 +10,21 @@ export interface SessionContextValue {
   loading: boolean;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
+  /**
+   * The restaurant a multi-restaurant staff member is currently "acting
+   * as" — the tenant switcher's own state (RestaurantSidebar). `null`
+   * until `user` loads; defaults to the first membership. Every
+   * `/restaurant/*` page should read this rather than hardcoding
+   * `restaurantMemberships[0]`, so switching restaurants in the sidebar
+   * actually changes what the rest of the dashboard shows.
+   */
+  activeRestaurantId: string | null;
+  setActiveRestaurantId: (id: string) => void;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
+
+const ACTIVE_RESTAURANT_STORAGE_KEY = 'do_active_restaurant_id';
 
 /**
  * Wraps the app (see layout.tsx), holding the current principal in
@@ -24,6 +36,7 @@ const SessionContext = createContext<SessionContextValue | null>(null);
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [activeRestaurantId, setActiveRestaurantIdState] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -58,11 +71,35 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     await authApi.logout();
     setUser(null);
+    setActiveRestaurantIdState(null);
+  }, []);
+
+  // Resolves whenever the membership list changes (login, logout, a
+  // membership added/removed) — a stored id from a previous session
+  // that's no longer in the list (or was never set) falls back to the
+  // first membership, never a dangling reference to a restaurant this
+  // principal can't act as.
+  useEffect(() => {
+    if (!user || user.restaurantMemberships.length === 0) {
+      setActiveRestaurantIdState(null);
+      return;
+    }
+    const stored =
+      typeof window !== 'undefined' ? window.localStorage.getItem(ACTIVE_RESTAURANT_STORAGE_KEY) : null;
+    const stillValid = stored && user.restaurantMemberships.some((m) => m.restaurantId === stored);
+    setActiveRestaurantIdState(stillValid ? stored : user.restaurantMemberships[0]!.restaurantId);
+  }, [user]);
+
+  const setActiveRestaurantId = useCallback((id: string) => {
+    setActiveRestaurantIdState(id);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(ACTIVE_RESTAURANT_STORAGE_KEY, id);
+    }
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, refresh, logout }),
-    [user, loading, refresh, logout],
+    () => ({ user, loading, refresh, logout, activeRestaurantId, setActiveRestaurantId }),
+    [user, loading, refresh, logout, activeRestaurantId, setActiveRestaurantId],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

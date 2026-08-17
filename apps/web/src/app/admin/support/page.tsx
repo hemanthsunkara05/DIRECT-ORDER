@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AdminGuard } from '@/lib/auth/admin-guard';
 import { ApiError, adminApi, type AdminSupportCase } from '@/lib/api-client';
-import { AdminNav } from '../admin-nav';
 
 const STATUSES = ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'WAITING_CUSTOMER', 'WAITING_RESTAURANT', 'WAITING_PROVIDER', 'RESOLVED', 'CLOSED'];
 
@@ -43,7 +42,6 @@ function SupportQueue() {
   return (
     <main className="mx-auto max-w-4xl p-6">
       <h1 className="mb-2 text-xl font-semibold">Support</h1>
-      <AdminNav />
 
       <select
         value={statusFilter}

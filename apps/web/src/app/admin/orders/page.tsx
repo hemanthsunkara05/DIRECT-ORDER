@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { formatINR } from '@direct-order/money';
 import { AdminGuard } from '@/lib/auth/admin-guard';
 import { ApiError, adminApi, type AdminOrderSummary } from '@/lib/api-client';
-import { AdminNav } from '../admin-nav';
 
 const CANCELLABLE = new Set(['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP']);
 
@@ -60,7 +59,6 @@ function OrdersDashboard() {
   return (
     <main className="mx-auto max-w-4xl p-6">
       <h1 className="mb-2 text-xl font-semibold">Orders</h1>
-      <AdminNav />
 
       <input
         type="text"

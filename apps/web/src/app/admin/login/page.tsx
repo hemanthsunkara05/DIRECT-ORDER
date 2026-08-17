@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ApiError, authApi, mfaApi } from '@/lib/api-client';
+import { useSession } from '@/lib/auth/session-context';
 
 /**
  * A separate login flow from the restaurant-facing `/login` page — Phase
@@ -16,6 +17,7 @@ import { ApiError, authApi, mfaApi } from '@/lib/api-client';
  */
 export default function AdminLoginPage() {
   const router = useRouter();
+  const { refresh } = useSession();
   const [step, setStep] = useState<'password' | 'mfa'>('password');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -43,6 +45,12 @@ export default function AdminLoginPage() {
     setError(null);
     try {
       await mfaApi.verify(code);
+      // Same reasoning as /login's own post-auth refresh() — the session
+      // cookie now belongs to this admin, but SessionProvider's `user`
+      // won't reflect that until asked again; without this, AdminSidebar
+      // would show whoever was last signed in on this browser, not the
+      // admin who just verified.
+      await refresh();
       router.push('/admin');
     } catch (err) {
       setError(

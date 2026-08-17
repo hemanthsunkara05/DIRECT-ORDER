@@ -4,7 +4,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AdminGuard } from '@/lib/auth/admin-guard';
 import { ApiError, adminApi, type UnclaimedListing } from '@/lib/api-client';
-import { AdminNav } from '../admin-nav';
 
 export default function AdminProspectsPage() {
   return (
@@ -70,7 +69,6 @@ function ProspectsDashboard() {
         WhatsApp, SMS, or a call — and the restaurant becomes real the moment they sign up and
         finish onboarding through it. Nothing here is live or orderable until then.
       </p>
-      <AdminNav />
 
       {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
 

@@ -10,7 +10,6 @@ import {
   type AdminSupportCase,
   type AdminSupportMessage,
 } from '@/lib/api-client';
-import { AdminNav } from '../../admin-nav';
 
 export default function AdminSupportCaseDetailPage() {
   return (
@@ -48,7 +47,6 @@ function CaseDetail() {
   if (detail === null) {
     return (
       <main className="mx-auto max-w-2xl p-6">
-        <AdminNav />
         {error ? <p className="text-sm text-red-600">{error}</p> : <p className="text-sm text-slate-500">Loading…</p>}
       </main>
     );
@@ -58,7 +56,6 @@ function CaseDetail() {
 
   return (
     <main className="mx-auto max-w-2xl p-6">
-      <AdminNav />
       <Link href="/admin/support" className="text-xs text-slate-400 hover:underline">
         ← Back to queue
       </Link>

@@ -112,6 +112,43 @@ export default tseslint.config(
     },
   },
 
+  // Counter design-system token adoption (UI Build Gap Report): raw
+  // Tailwind slate/amber/red/gray classes are banned in every file
+  // that's been migrated onto the token system (apps/web/src/app/
+  // globals.css's own doc comment explains why) — semantic ink-*/
+  // brand-*/fresh/warn/error classes only. Scoped to migrated files
+  // only, not all of apps/web/**, since the migration is deliberately
+  // incremental (page by page) and turning this on repo-wide before
+  // every page is migrated would fail `pnpm lint` on untouched pages
+  // for a gap this rule can't fix by itself. Extend this `files` list
+  // as each additional page migrates.
+  {
+    files: [
+      'apps/web/src/components/**/*.tsx',
+      'apps/web/src/app/r/[slug]/restaurant-ordering-view.tsx',
+      'apps/web/src/app/r/[slug]/checkout/page.tsx',
+      'apps/web/src/app/orders/[orderNumber]/page.tsx',
+      'apps/web/src/app/restaurant/orders/page.tsx',
+      'apps/web/src/app/restaurant/menu/page.tsx',
+      'apps/web/src/app/restaurant/layout.tsx',
+      'apps/web/src/app/restaurant/staff/page.tsx',
+      'apps/web/src/app/account/page.tsx',
+      'apps/web/src/app/admin/layout.tsx',
+    ],
+    ignores,
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "JSXAttribute[name.name='className'] Literal[value=/\\b(slate|amber|red|gray|zinc|neutral|stone|yellow|orange|green|blue|indigo|purple|pink)-[0-9]+\\b/]",
+          message:
+            'Use a Counter token class (ink-*/brand-*/fresh/warn/error, see globals.css) instead of a raw Tailwind color class.',
+        },
+      ],
+    },
+  },
+
   // Plain config/build scripts (this file, tailwind/postcss/playwright
   // configs, next.config.mjs): not part of the type-checked project
   // graph, and don't need to be.

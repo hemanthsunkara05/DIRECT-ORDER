@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { formatINR } from '@direct-order/money';
 import { AdminGuard } from '@/lib/auth/admin-guard';
 import { adminApi } from '@/lib/api-client';
-import { AdminNav } from './admin-nav';
 
 export default function AdminOverviewPage() {
   return (
@@ -28,7 +27,6 @@ function OverviewDashboard() {
   return (
     <main className="mx-auto max-w-4xl p-6">
       <h1 className="mb-2 text-xl font-semibold">Admin</h1>
-      <AdminNav />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-lg border border-slate-200 p-4">

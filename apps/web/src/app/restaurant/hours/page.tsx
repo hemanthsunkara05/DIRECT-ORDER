@@ -39,9 +39,9 @@ function formatError(err: unknown): string {
 }
 
 function HoursManagement() {
-  const { user } = useSession();
-  const membership = user?.restaurantMemberships[0];
-  const restaurantId = membership?.restaurantId;
+  const { user, activeRestaurantId } = useSession();
+  const membership = user?.restaurantMemberships.find((m) => m.restaurantId === activeRestaurantId);
+  const restaurantId = activeRestaurantId ?? undefined;
   const canManageHours = membership?.role === 'MANAGER' || membership?.role === 'OWNER';
 
   if (!user || !restaurantId) {
