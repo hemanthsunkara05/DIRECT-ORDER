@@ -111,6 +111,10 @@ export interface RestaurantRow {
   avgPrepMinutes: number | null;
   ratingAvg: number | null;
   ratingCount: number;
+  /** Phase 21a — see `restaurants.submitted_at`/`decided_at`/`rejection_reason` in schema.prisma. */
+  submittedAt: Date | null;
+  decidedAt: Date | null;
+  rejectionReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1180,6 +1184,9 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         avgPrepMinutes: null,
         ratingAvg: null,
         ratingCount: 0,
+        submittedAt: null,
+        decidedAt: null,
+        rejectionReason: null,
         createdAt: new Date(),
         updatedAt: new Date(),
         ...omitUndefined(data),
@@ -1224,6 +1231,12 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       }
       return Promise.resolve(result);
     },
+    /** `RestaurantStateService.transition` (Phase 21a) re-reads the row after the `$queryRaw` lock above — same not-found contract as `promotion.findUniqueOrThrow`. */
+    findUniqueOrThrow: ({ where }: { where: { id: string } }) => {
+      const row = restaurants.find((r) => r.id === where.id);
+      if (!row) throw new Error(`restaurant ${where.id} not found`);
+      return Promise.resolve(row);
+    },
     update: ({ where, data }: { where: { id: string }; data: Partial<RestaurantRow> }) => {
       const row = restaurants.find((r) => r.id === where.id);
       if (!row) throw new Error(`restaurant ${where.id} not found`);
@@ -1235,11 +1248,57 @@ export function createInMemoryPrisma(): InMemoryPrisma {
         restaurants.filter((r) => where.slug === undefined || r.slug === where.slug).length,
       );
     },
-    /** `AnalyticsRollupService.rollupYesterdayForAllRestaurants` (Phase 17) — `select` is ignored, matching this fake's convention elsewhere: returning the full row is harmless since every caller only reads the fields it asked for. */
-    findMany: ({ where }: { where?: { status?: string } } = {}) => {
-      return Promise.resolve(
-        restaurants.filter((r) => where?.status === undefined || r.status === where.status),
-      );
+    /**
+     * Two real callers: `AnalyticsRollupService.rollupYesterdayForAllRestaurants`
+     * (Phase 17, `select` ignored — returning the full row is harmless
+     * since every caller only reads the fields it asked for) and
+     * `AdminQueryRepository.listRestaurants` (Phase 13, extended Phase
+     * 21a for `order=oldest`'s `submittedAt` sort) — the one
+     * platform-wide, cursor-paginated restaurant search this codebase
+     * needs, mirroring `user.findMany`'s exact shape above.
+     */
+    findMany: ({
+      where,
+      orderBy,
+      cursor,
+      skip,
+      take,
+    }: {
+      where?: { status?: string; name?: { contains: string; mode?: string } };
+      orderBy?: { createdAt: 'asc' | 'desc' } | { submittedAt: 'asc' | 'desc' };
+      cursor?: { id: string };
+      skip?: number;
+      take?: number;
+    } = {}) => {
+      let matches = restaurants.filter((r) => {
+        if (where?.status !== undefined && r.status !== where.status) return false;
+        if (where?.name !== undefined) {
+          const needle = where.name.contains.toLowerCase();
+          if (!r.name.toLowerCase().includes(needle)) return false;
+        }
+        return true;
+      });
+      if (orderBy && 'submittedAt' in orderBy) {
+        const dir = orderBy.submittedAt;
+        matches = [...matches].sort((a, b) => {
+          const at = a.submittedAt ? a.submittedAt.getTime() : 0;
+          const bt = b.submittedAt ? b.submittedAt.getTime() : 0;
+          return dir === 'asc' ? at - bt : bt - at;
+        });
+      } else if (orderBy && 'createdAt' in orderBy) {
+        const dir = orderBy.createdAt;
+        matches = [...matches].sort((a, b) =>
+          dir === 'asc'
+            ? a.createdAt.getTime() - b.createdAt.getTime()
+            : b.createdAt.getTime() - a.createdAt.getTime(),
+        );
+      }
+      if (cursor) {
+        const cursorIndex = matches.findIndex((r) => r.id === cursor.id);
+        matches = cursorIndex === -1 ? [] : matches.slice(cursorIndex + (skip ?? 0));
+      }
+      if (take !== undefined) matches = matches.slice(0, take);
+      return Promise.resolve(matches);
     },
     /** `AdminOverviewController`'s per-status breakdown (Phase 13) — the one `groupBy` this fake needs to support. */
     groupBy: (_args: { by: ['status']; _count: true }) => {
@@ -3940,27 +3999,34 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       }
       return Promise.all(arg);
     },
-    // Two real `$queryRaw` callers today: PromotionReservationService's
+    // Three real `$queryRaw` callers today: PromotionReservationService's
     // row-lock query (`SELECT id FROM promotions WHERE code = ${code}
-    // AND is_active = true AND archived_at IS NULL FOR UPDATE`) and
+    // AND is_active = true AND archived_at IS NULL FOR UPDATE`),
     // (Phase 16) LoyaltyAccountRepository.lockByCustomerId's equivalent
     // (`SELECT id, balance_points FROM loyalty_accounts WHERE
-    // customer_id = ${customerId} FOR UPDATE`) — not a general SQL
-    // interpreter, deliberately: each is recognised by the literal SQL
-    // text preceding its single interpolated value, and answered with
-    // the same WHERE-clause semantics the real query has. A literal row
-    // lock is unnecessary to simulate here — the serialized
-    // `$transaction` above is this fake's actual concurrency-safety
-    // mechanism (real Postgres's `FOR UPDATE` only blocks other
-    // transactions from proceeding past their own lock attempt;
-    // globally serializing callbacks achieves the same observable
-    // effect for every test in this suite).
+    // customer_id = ${customerId} FOR UPDATE`), and (Phase 21a)
+    // RestaurantStateService.transition's equivalent (`SELECT id FROM
+    // restaurants WHERE id = ${restaurantId}::uuid FOR UPDATE`) — not a
+    // general SQL interpreter, deliberately: each is recognised by the
+    // literal SQL text preceding its single interpolated value, and
+    // answered with the same WHERE-clause semantics the real query has.
+    // A literal row lock is unnecessary to simulate here — the
+    // serialized `$transaction` above is this fake's actual
+    // concurrency-safety mechanism (real Postgres's `FOR UPDATE` only
+    // blocks other transactions from proceeding past their own lock
+    // attempt; globally serializing callbacks achieves the same
+    // observable effect for every test in this suite).
     $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]> => {
       const sql = strings.join('');
       if (sql.includes('loyalty_accounts')) {
         const customerId = values[0] as string;
         const match = loyaltyAccounts.find((a) => a.customerId === customerId);
         return Promise.resolve(match ? [{ id: match.id, balance_points: match.balancePoints }] : []);
+      }
+      if (sql.includes('restaurants')) {
+        const restaurantId = values[0] as string;
+        const match = restaurants.find((r) => r.id === restaurantId);
+        return Promise.resolve(match ? [{ id: match.id }] : []);
       }
       const code = values[0] as string;
       const match = promotions.find((p) => p.code === code && p.isActive && !p.archivedAt);

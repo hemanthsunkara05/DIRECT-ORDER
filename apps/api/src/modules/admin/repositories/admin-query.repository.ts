@@ -7,6 +7,8 @@ import type {
   Payment,
   Refund,
   Restaurant,
+  RestaurantAddress,
+  RestaurantBranding,
   User,
 } from '@prisma/client';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
@@ -17,6 +19,13 @@ export interface UnclaimedListing {
   name: string;
   phone: string | null;
   city: string | null;
+}
+
+export interface RestaurantDetail {
+  restaurant: Restaurant;
+  address: RestaurantAddress | null;
+  branding: RestaurantBranding | null;
+  menuSummary: { categoryCount: number; itemCount: number };
 }
 
 export interface CursorPage<T> {
@@ -57,6 +66,15 @@ export class AdminQueryRepository {
   async listRestaurants(
     filters: { status?: string; search?: string },
     options: PageOptions = {},
+    /**
+     * Phase 21a: `'oldest'` sorts by `submittedAt` ascending — the
+     * Approval Queue's FIFO order. `'newest'` (default, unchanged
+     * behavior) sorts by `createdAt` descending, same as before this
+     * phase. Deliberately NOT `submittedAt desc` for the default case —
+     * every existing caller of this method expects `createdAt`
+     * ordering and this stays a strict no-op for them.
+     */
+    order: 'newest' | 'oldest' = 'newest',
   ): Promise<CursorPage<Restaurant>> {
     const limit = take(options.limit);
     const rows = await this.prisma.restaurant.findMany({
@@ -66,11 +84,46 @@ export class AdminQueryRepository {
           ? { name: { contains: filters.search, mode: 'insensitive' as const } }
           : {}),
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: order === 'oldest' ? { submittedAt: 'asc' } : { createdAt: 'desc' },
       take: limit + 1,
       ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     });
     return toPage(rows, limit);
+  }
+
+  /**
+   * Phase 21a: the Approval Queue's per-restaurant decision view —
+   * address, a menu summary, and branding, none of which the flat list
+   * above returns. Found missing during `/plan-design-review`'s
+   * outside-voice pass: the queue page cannot show "everything needed
+   * to decide" (the task brief's explicit requirement) without this.
+   * Composed from single-table lookups, matching `listUnclaimed()`'s
+   * own established convention in this file (portable across the real
+   * Prisma client and the in-memory test double).
+   */
+  async getRestaurantDetail(restaurantId: string): Promise<RestaurantDetail | null> {
+    const restaurant = await this.prisma.restaurant.findUnique({ where: { id: restaurantId } });
+    if (!restaurant) return null;
+
+    const address = await this.prisma.restaurantAddress.findUnique({
+      where: { restaurantId },
+    });
+    const branding = await this.prisma.restaurantBranding.findUnique({
+      where: { restaurantId },
+    });
+    const categories = await this.prisma.menuCategory.findMany({
+      where: { restaurantId, archivedAt: null },
+    });
+    const itemCount = await this.prisma.menuItem.count({
+      where: { restaurantId, archivedAt: null },
+    });
+
+    return {
+      restaurant,
+      address,
+      branding,
+      menuSummary: { categoryCount: categories.length, itemCount },
+    };
   }
 
   /**

@@ -131,6 +131,9 @@ describe('Authorization (Phase 4, e2e)', () => {
       avgPrepMinutes: null,
       ratingAvg: null,
       ratingCount: 0,
+      submittedAt: null,
+      decidedAt: null,
+      rejectionReason: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     });

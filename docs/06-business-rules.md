@@ -233,3 +233,14 @@ Rules marked **[PD]** depend on an unresolved product decision — see [15-ambig
 | BR-156 | Production error responses expose no stack traces, SQL, or internal paths.                             |
 | BR-157 | Uploaded files are validated by size and content type; declared MIME is never trusted.                 |
 | BR-158 | Analytics events contain no PII beyond internal identifiers.                                           |
+
+## Restaurant approval fast-path (BR-159 … BR-164, Phase 21a)
+
+| #      | Rule                                                                                                                                       |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| BR-159 | Submitting onboarding (initial or resubmission) sets `submittedAt` and notifies every admin holding `restaurant:approve` or `restaurant:reject`. |
+| BR-160 | `decidedAt` and `rejectionReason` are set only when the decision resolves a PENDING_APPROVAL submission — reinstating a SUSPENDED restaurant is a different kind of decision and never touches either field. |
+| BR-161 | Rejecting a restaurant requires a reason (1–500 characters) and notifies the restaurant with that reason.                                  |
+| BR-162 | A rejected restaurant may resubmit through the same onboarding submission endpoint; resubmission clears the prior rejection reason.        |
+| BR-163 | `restaurant:approve` and `restaurant:reject` are distinct permissions, even though held by the same admin roles today — matching `orders:accept`/`orders:reject`'s precedent. |
+| BR-164 | Approval-lifecycle fields (`submittedAt`, `decidedAt`, `rejectionReason`) are internal moderation state, never exposed on the public/anonymous restaurant endpoint. |

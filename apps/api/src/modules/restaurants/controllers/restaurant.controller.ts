@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, Inject, Patch, Post, UseGuards } from '@nestjs/common';
 import type {
+  Restaurant,
   RestaurantAddress,
   RestaurantBranding,
   RestaurantSettings,
@@ -39,7 +40,7 @@ export class RestaurantController {
   @HttpCode(200)
   async getProfile(@CurrentTenant() tenant: TenantContext) {
     const { restaurant, address } = await this.profile.getProfile(tenant.restaurantId);
-    return ok({ ...toPublicRestaurant(restaurant), address: toPublicAddress(address) });
+    return ok({ ...toOwnerRestaurant(restaurant), address: toPublicAddress(address) });
   }
 
   @Patch('profile')
@@ -57,7 +58,7 @@ export class RestaurantController {
       user.id,
       input,
     );
-    return ok({ ...toPublicRestaurant(restaurant), address: toPublicAddress(address) });
+    return ok({ ...toOwnerRestaurant(restaurant), address: toPublicAddress(address) });
   }
 
   @Get('branding')
@@ -110,8 +111,25 @@ export class RestaurantController {
   @HttpCode(200)
   async submitOnboarding(@CurrentTenant() tenant: TenantContext, @CurrentUser() user: User) {
     const restaurant = await this.profile.submitOnboarding(tenant.restaurantId, user.id);
-    return ok(toPublicRestaurant(restaurant));
+    return ok(toOwnerRestaurant(restaurant));
   }
+}
+
+/**
+ * `toPublicRestaurant()` plus the approval-lifecycle fields (Phase 21a)
+ * — `submittedAt`/`decidedAt`/`rejectionReason` are internal moderation
+ * state, never included in `toPublicRestaurant()` itself since that
+ * function is shared with `public-restaurant.controller.ts`'s anonymous
+ * customer-facing endpoint. Every call site in this file is owner-
+ * facing and tenant-scoped, so it's safe here specifically.
+ */
+function toOwnerRestaurant(restaurant: Restaurant) {
+  return {
+    ...toPublicRestaurant(restaurant),
+    submittedAt: restaurant.submittedAt,
+    decidedAt: restaurant.decidedAt,
+    rejectionReason: restaurant.rejectionReason,
+  };
 }
 
 function toPublicAddress(address: RestaurantAddress | null) {

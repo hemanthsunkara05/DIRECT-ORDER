@@ -6,6 +6,8 @@ import type {
 } from '@prisma/client';
 import { formatINR } from '@direct-order/money';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
+import { AdminUserRepository } from '../../../platform/authorization/admin-user.repository.js';
+import { permissionHolders } from '../../../platform/authorization/permission.catalogue.js';
 import { OrderRepository } from '../../orders/repositories/order.repository.js';
 import { CustomerRepository } from '../../orders/repositories/customer.repository.js';
 import { PaymentRepository } from '../../payments/repositories/payment.repository.js';
@@ -45,6 +47,7 @@ export class NotificationCatalogue {
     @Inject(CustomerRepository) private readonly customers: CustomerRepository,
     @Inject(PaymentRepository) private readonly payments: PaymentRepository,
     @Inject(RestaurantStaffRepository) private readonly staff: RestaurantStaffRepository,
+    @Inject(AdminUserRepository) private readonly admins: AdminUserRepository,
   ) {}
 
   async resolve(eventType: string, payload: unknown): Promise<NotificationDraft[]> {
@@ -158,6 +161,22 @@ export class NotificationCatalogue {
         return this.deliveryCreationFailedEvent(payload);
       case 'DELIVERY_COURIER_ASSIGNED':
         return this.deliveryCourierAssignedEvent(payload);
+      case 'RESTAURANT_SUBMITTED_FOR_APPROVAL':
+        return this.restaurantSubmittedForApprovalEvent(payload);
+      case 'RESTAURANT_APPROVED':
+        return this.restaurantDecisionEvent(payload, {
+          type: 'RESTAURANT_APPROVED',
+          channels: ['IN_APP', 'EMAIL', 'SMS'],
+          title: 'Restaurant approved',
+          body: () => `Your restaurant has been approved and is now live for orders.`,
+        });
+      case 'RESTAURANT_REJECTED':
+        return this.restaurantDecisionEvent(payload, {
+          type: 'RESTAURANT_REJECTED',
+          channels: ['IN_APP', 'EMAIL'],
+          title: 'Restaurant application rejected',
+          body: (reason) => `Your restaurant submission was rejected. Reason: ${reason}`,
+        });
       default:
         return [];
     }
@@ -283,6 +302,73 @@ export class NotificationCatalogue {
         email: customer.email,
       },
     ];
+  }
+
+  private async restaurantSubmittedForApprovalEvent(payload: unknown): Promise<NotificationDraft[]> {
+    const p = payload as { restaurantId?: string; restaurantName?: string };
+    if (!p.restaurantId) return [];
+    return this.adminDrafts(
+      'RESTAURANT_SUBMITTED_FOR_APPROVAL',
+      ['IN_APP', 'EMAIL'],
+      'Restaurant awaiting approval',
+      `${p.restaurantName ?? 'A restaurant'} submitted onboarding and is awaiting approval.`,
+    );
+  }
+
+  private async restaurantDecisionEvent(
+    payload: unknown,
+    def: {
+      type: string;
+      channels: NotificationChannel[];
+      title: string;
+      body: (reason: string) => string;
+    },
+  ): Promise<NotificationDraft[]> {
+    const p = payload as { restaurantId?: string; reason?: string | null };
+    if (!p.restaurantId) return [];
+    return this.restaurantDrafts(
+      p.restaurantId,
+      def.type,
+      def.channels,
+      def.title,
+      def.body(p.reason ?? 'No reason provided.'),
+    );
+  }
+
+  /**
+   * Every ACTIVE admin holding `restaurant:approve` or `restaurant:reject`
+   * gets their own Notification row (Phase 21a). `AdminUserRepository.
+   * list()` hard-caps `take` at `Math.min(limit, 100)` regardless of the
+   * value passed in — `{ limit: 100 }` requests its actual ceiling rather
+   * than a larger number that would be silently clamped to the same
+   * result. Comfortably above any realistic admin headcount at this
+   * pilot's scale (10-20 restaurants); revisit if the roster ever
+   * approaches it.
+   */
+  private async adminDrafts(
+    type: string,
+    channels: NotificationChannel[],
+    title: string,
+    body: string,
+  ): Promise<NotificationDraft[]> {
+    const eligibleRoles = new Set([
+      ...permissionHolders('restaurant:approve'),
+      ...permissionHolders('restaurant:reject'),
+    ]);
+    const admins = await this.admins.list({ limit: 100 });
+    return admins
+      .filter((a) => a.status === 'ACTIVE' && eligibleRoles.has(a.role))
+      .map((a) => ({
+        type,
+        category: 'TRANSACTIONAL' as const,
+        recipientType: 'ADMIN' as const,
+        recipientId: a.userId,
+        channels,
+        title,
+        body,
+        phone: null,
+        email: a.user.email,
+      }));
   }
 
   /** Every ACTIVE staff member of the restaurant gets their own Notification row — the dedupe key already scopes by `recipientId`, so this is never a fan-out bug. */

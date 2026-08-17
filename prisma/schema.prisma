@@ -474,6 +474,18 @@ model Restaurant {
   avgPrepMinutes   Int?                       @map("avg_prep_minutes")
   ratingAvg        Decimal?                   @map("rating_avg") @db.Decimal(3, 2)
   ratingCount      Int                        @default(0) @map("rating_count")
+  /// Phase 21a: when onboarding was last submitted for approval (set on
+  /// every DRAFT/REJECTED -> PENDING_APPROVAL transition) and when an
+  /// admin last decided on it (set on both approve and reject) — the
+  /// basis for a queryable time-to-approval metric, not derived from
+  /// AuditLog joins, matching this schema's existing convention of
+  /// dedicated lifecycle timestamp columns (orders.placedAt/acceptedAt).
+  submittedAt      DateTime?                  @map("submitted_at") @db.Timestamptz
+  decidedAt        DateTime?                  @map("decided_at") @db.Timestamptz
+  /// The most recent rejection's reason, shown to the restaurant owner;
+  /// cleared on resubmission so a stale reason never survives past the
+  /// decision that produced it.
+  rejectionReason  String?                    @map("rejection_reason")
   createdAt        DateTime                   @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime                   @updatedAt @map("updated_at") @db.Timestamptz
 

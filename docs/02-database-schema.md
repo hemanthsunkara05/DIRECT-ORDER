@@ -409,3 +409,20 @@ Application-level scoping is the primary control, but it is one forgotten `where
 - Index creation on large tables uses `CREATE INDEX CONCURRENTLY` in a standalone migration.
 - Every migration is tested against a restored production-shaped dump before release.
 - A migration that deletes financial data requires explicit human approval and is never automated in the deploy pipeline.
+
+## 6.7 Restaurant approval lifecycle columns (Phase 21a)
+
+Three nullable, additive columns on `restaurants` — no rewrite, applied per §6.6's rules:
+
+```sql
+ALTER TABLE restaurants
+  ADD COLUMN submitted_at     TIMESTAMPTZ,
+  ADD COLUMN decided_at       TIMESTAMPTZ,
+  ADD COLUMN rejection_reason TEXT;
+```
+
+- `submitted_at` — set on every DRAFT/REJECTED → PENDING_APPROVAL transition (initial submission and resubmission alike). The basis for a queryable time-to-approval metric.
+- `decided_at` — set when an admin resolves a PENDING_APPROVAL submission (approve or reject). Not touched by `reinstate()` (SUSPENDED → ACTIVE), which is a different kind of decision (BR-160).
+- `rejection_reason` — the most recent rejection's reason, shown to the restaurant owner; cleared on resubmission so a stale reason never survives past the decision that produced it (BR-162).
+
+Dedicated timestamp columns, not derived from `audit_logs` joins — matches this schema's existing convention for lifecycle timestamps (`orders.placed_at`/`accepted_at`, etc.).

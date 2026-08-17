@@ -30,6 +30,9 @@ function createHarness() {
     avgPrepMinutes: null,
     ratingAvg: null,
     ratingCount: 0,
+    submittedAt: null,
+    decidedAt: null,
+    rejectionReason: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   });

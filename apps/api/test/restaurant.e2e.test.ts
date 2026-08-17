@@ -394,5 +394,71 @@ describe('Restaurants (Phase 5, e2e)', () => {
 
       await mutate(ctx, 'post', '/api/v1/restaurant/onboarding/submit', owner.cookie).expect(409);
     });
+
+    // ── Phase 21a: resubmit after rejection ──────────────────────────
+
+    it('resubmits after rejection: REJECTED -> PENDING_APPROVAL, rejectionReason cleared, submittedAt refreshed', async () => {
+      const owner = await registerAndLogin(ctx);
+      const created = await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Spice Route' })
+        .expect(201);
+      const restaurantId = created.body.data.id as string;
+      await mutate(ctx, 'patch', '/api/v1/restaurant/profile', owner.cookie)
+        .send({
+          address: {
+            line1: '123 MG Road',
+            city: 'Bengaluru',
+            state: 'Karnataka',
+            postalCode: '560001',
+          },
+        })
+        .expect(200);
+      await mutate(ctx, 'post', '/api/v1/restaurant/onboarding/submit', owner.cookie).expect(200);
+      const firstSubmittedAt = ctx.db.restaurants.find((r) => r.id === restaurantId)!.submittedAt;
+
+      // Simulates an admin rejection (admin.e2e.test.ts covers the endpoint itself).
+      const row = ctx.db.restaurants.find((r) => r.id === restaurantId)!;
+      row.status = 'REJECTED';
+      row.decidedAt = new Date();
+      row.rejectionReason = 'Address could not be verified';
+
+      const before = await get(ctx, '/api/v1/restaurant/profile', owner.cookie).expect(200);
+      expect(before.body.data.status).toBe('REJECTED');
+      expect(before.body.data.rejectionReason).toBe('Address could not be verified');
+
+      const res = await mutate(
+        ctx,
+        'post',
+        '/api/v1/restaurant/onboarding/submit',
+        owner.cookie,
+      ).expect(200);
+      expect(res.body.data.status).toBe('PENDING_APPROVAL');
+      expect(res.body.data.rejectionReason).toBeNull();
+      expect(new Date(res.body.data.submittedAt).getTime()).toBeGreaterThanOrEqual(
+        firstSubmittedAt!.getTime(),
+      );
+    });
+
+    it('cannot be submitted from ACTIVE (409) — only DRAFT and REJECTED are legal', async () => {
+      const owner = await registerAndLogin(ctx);
+      const created = await mutate(ctx, 'post', '/api/v1/restaurants', owner.cookie)
+        .send({ name: 'Spice Route' })
+        .expect(201);
+      await mutate(ctx, 'patch', '/api/v1/restaurant/profile', owner.cookie)
+        .send({
+          address: {
+            line1: '123 MG Road',
+            city: 'Bengaluru',
+            state: 'Karnataka',
+            postalCode: '560001',
+          },
+        })
+        .expect(200);
+      // An address now exists, isolating this 409 to the status guard
+      // specifically, not the (already separately tested) address guard.
+      ctx.db.restaurants.find((r) => r.id === created.body.data.id)!.status = 'ACTIVE';
+
+      await mutate(ctx, 'post', '/api/v1/restaurant/onboarding/submit', owner.cookie).expect(409);
+    });
   });
 });

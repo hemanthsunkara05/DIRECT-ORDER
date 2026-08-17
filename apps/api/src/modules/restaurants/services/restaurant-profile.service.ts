@@ -6,6 +6,7 @@ import type {
   RestaurantSettings,
 } from '@prisma/client';
 import { AuditService } from '../../../platform/audit/audit.service.js';
+import { OutboxService } from '../../../platform/outbox/outbox.service.js';
 import { ConflictError, NotFoundError } from '../../../platform/errors/app-error.js';
 import { RestaurantRepository } from '../repositories/restaurant.repository.js';
 import {
@@ -50,6 +51,7 @@ export class RestaurantProfileService {
     @Inject(RestaurantBrandingRepository) private readonly branding: RestaurantBrandingRepository,
     @Inject(RestaurantSettingsRepository) private readonly settings: RestaurantSettingsRepository,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(OutboxService) private readonly outbox: OutboxService,
   ) {}
 
   async getProfile(restaurantId: string): Promise<RestaurantWithAddress> {
@@ -140,25 +142,37 @@ export class RestaurantProfileService {
    * criteria: "onboarding completion is determined by the backend;
    * clearing browser storage does not change it"). Requires the
    * minimum viable profile (name — already required at creation — and
-   * a full pickup address) before allowing DRAFT → PENDING_APPROVAL
-   * (docs/03-state-machines.md §7.5: "onboarding submitted"). Branding
-   * and settings stay optional — a restaurant can go live with defaults
-   * and refine its look later.
+   * a full pickup address) before allowing DRAFT/REJECTED →
+   * PENDING_APPROVAL (docs/03-state-machines.md §7.5: "onboarding
+   * submitted" / "resubmitted", both legal edges). Branding and
+   * settings stay optional — a restaurant can go live with defaults and
+   * refine its look later. Also covers Phase 21a's resubmit path — the
+   * same endpoint (`POST /restaurant/onboarding/submit`) simply keeps
+   * working once the guard accepts `REJECTED`, rather than a separate
+   * `/resubmit` route calling identical logic.
    */
   async submitOnboarding(restaurantId: string, actorId: string): Promise<Restaurant> {
     const restaurant = await this.requireRestaurant(restaurantId);
+    // Captured as a primitive before `update()` runs below — see
+    // `RestaurantStateService.transition()`'s identical doc comment: the
+    // in-memory test fake mutates rows in place, so `restaurant` and the
+    // row `update()` writes are the same object reference, and reading
+    // `restaurant.status` again afterwards would observe the new value.
+    const fromStatus = restaurant.status;
     const address = await this.addresses.find(restaurantId);
 
     if (!address) {
       throw new ConflictError('A pickup address is required before onboarding can be submitted.');
     }
-    if (restaurant.status !== 'DRAFT') {
-      throw new ConflictError(`Onboarding cannot be submitted from status ${restaurant.status}.`);
+    if (fromStatus !== 'DRAFT' && fromStatus !== 'REJECTED') {
+      throw new ConflictError(`Onboarding cannot be submitted from status ${fromStatus}.`);
     }
 
     const updated = await this.restaurants.update(restaurantId, {
       status: 'PENDING_APPROVAL',
       onboardingStatus: 'COMPLETED',
+      submittedAt: new Date(),
+      rejectionReason: null,
     });
 
     await this.audit.record({
@@ -168,8 +182,18 @@ export class RestaurantProfileService {
       entityType: 'Restaurant',
       entityId: restaurantId,
       restaurantId,
+      before: { status: fromStatus },
       after: { status: updated.status, onboardingStatus: updated.onboardingStatus },
     });
+
+    // After commit, never inside it (docs/03-state-machines.md universal
+    // rule 4) — this method has no transaction to defer past, so the
+    // insert simply follows the write directly.
+    await this.outbox.record(
+      'RESTAURANT_SUBMITTED_FOR_APPROVAL',
+      { restaurantId: updated.id, restaurantName: updated.name },
+      updated.id,
+    );
 
     return updated;
   }

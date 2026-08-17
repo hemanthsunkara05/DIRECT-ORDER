@@ -22,6 +22,7 @@ restaurant:settings     |   | x | x |   |   |   | x
 restaurant:hours        |   | x | x |   |   |   | x
 restaurant:availability | x | x | x |   |   |   | x
 restaurant:approve      |   |   |   |   | x |   | x
+restaurant:reject       |   |   |   |   | x |   | x
 restaurant:suspend      |   |   |   |   | x |   | x
 menu:read               | x | x | x | x | x |   | x
 menu:write              |   | x | x |   |   |   | x

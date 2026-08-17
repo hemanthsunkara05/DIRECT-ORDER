@@ -181,7 +181,8 @@ Every endpoint resolves the tenant from the authenticated membership. All return
 
 | Method       | Path                                      | Min role  | Purpose                                                      |
 | ------------ | ----------------------------------------- | --------- | ------------------------------------------------------------ |
-| GET/PATCH    | `/restaurant/profile`                     | MANAGER   | Profile                                                      |
+| GET/PATCH    | `/restaurant/profile`                     | MANAGER   | Profile. Response includes `submittedAt`/`decidedAt`/`rejectionReason` (Phase 21a) — internal moderation state, owner-facing only, never on the public restaurant endpoint |
+| POST         | `/restaurant/onboarding/submit`           | MANAGER   | DRAFT/REJECTED → PENDING_APPROVAL. Requires a saved address. Phase 21a widened the guard to also accept REJECTED — the same endpoint doubles as "resubmit," no separate route |
 | GET/PATCH    | `/restaurant/branding`                    | MANAGER   | Branding                                                     |
 | GET/PATCH    | `/restaurant/settings`                    | MANAGER   | Settings                                                     |
 | GET/PUT      | `/restaurant/hours`                       | MANAGER   | Operating hours                                              |
@@ -254,8 +255,10 @@ Processing happens in the worker. A processing failure is retried from the store
 | Method   | Path                                | Role        | Purpose                                                           |
 | -------- | ----------------------------------- | ----------- | ----------------------------------------------------------------- |
 | GET      | `/admin/overview`                   | Any admin   | Platform metrics from rollups                                     |
-| GET      | `/admin/restaurants`                | OPERATIONS+ | Search / filter                                                   |
+| GET      | `/admin/restaurants`                | OPERATIONS+ | Search / filter. `order=oldest` (Phase 21a) sorts by `submittedAt` ascending — the Approval Queue's FIFO view; default (unspecified) sorts by `createdAt` descending, unchanged |
+| GET      | `/admin/restaurants/:id/detail`     | OPERATIONS+ | Phase 21a — address, branding, menu summary for a decision        |
 | POST     | `/admin/restaurants/:id/approve`    | OPERATIONS+ | Approve onboarding                                                |
+| POST     | `/admin/restaurants/:id/reject`     | OPERATIONS+ | Phase 21a — `restaurant:reject`; reason required, audited         |
 | POST     | `/admin/restaurants/:id/suspend`    | OPERATIONS+ | Reason required, audited                                          |
 | POST     | `/admin/restaurants/:id/reinstate`  | OPERATIONS+ | Audited                                                           |
 | GET      | `/admin/users`                      | OPERATIONS+ | Search — never returns hashes                                     |

@@ -216,6 +216,19 @@ Testable conditions per phase. "Feature works" is not acceptance. Every criterio
 - [ ] All external dependencies reported with accurate status
 - [ ] `LAUNCH_REPORT.md` states a status justified by evidence, and names every blocker
 
+## Phase 21a — Fast-path restaurant approval
+
+- [ ] Submitting onboarding notifies every admin holding `restaurant:approve` or `restaurant:reject`
+- [ ] Rejecting a PENDING_APPROVAL restaurant requires a reason (1–500 chars) and is rejected with 422 without one
+- [ ] Approving or rejecting a restaurant not in PENDING_APPROVAL returns 409
+- [ ] A concurrent approve and reject on the same restaurant: exactly one wins, the row is never left inconsistent
+- [ ] A rejected restaurant sees the actual rejection reason (not just "REJECTED") on its own profile and dashboard
+- [ ] A rejected restaurant can resubmit through the same onboarding endpoint; resubmission clears the prior reason
+- [ ] The Approval Queue (`order=oldest`) sorts by `submittedAt`, not `createdAt` — a resubmitted restaurant reviews by resubmission time
+- [ ] `GET /admin/restaurants/:id/detail` returns address, menu summary, and branding, and 404s for a nonexistent id
+- [ ] `restaurant:reject` is gated correctly: a restaurant role gets 403; an admin without the permission (e.g. FINANCE-only) gets 403
+- [ ] No auto-approval path exists — every approve/reject is a human admin action
+
 ---
 
 ## Definition of Done — per change

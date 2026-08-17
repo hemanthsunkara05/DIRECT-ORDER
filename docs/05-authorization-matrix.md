@@ -50,6 +50,7 @@ The guard resolves the tenant from the authenticated principal, loads the resour
 | `restaurant:hours`        |       |    ✓    |   ✓   |         |     |         |   ✓   |
 | `restaurant:availability` |   ✓   |    ✓    |   ✓   |         |     |         |   ✓   |
 | `restaurant:approve`      |       |         |       |         |  ✓  |         |   ✓   |
+| `restaurant:reject`       |       |         |       |         |  ✓  |         |   ✓   |
 | `restaurant:suspend`      |       |         |       |         |  ✓  |         |   ✓   |
 | `menu:read`               |   ✓   |    ✓    |   ✓   |    ✓    |  ✓  |         |   ✓   |
 | `menu:write`              |       |    ✓    |   ✓   |         |     |         |   ✓   |
