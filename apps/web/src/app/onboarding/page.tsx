@@ -204,17 +204,7 @@ function ProfileStep({
         {
           description: description || undefined,
           phone: phone || undefined,
-          address: {
-            line1,
-            city,
-            state,
-            postalCode,
-            line2: null,
-            locality: null,
-            latitude: null,
-            longitude: null,
-            landmark: null,
-          },
+          address: { line1, city, state, postalCode },
         },
         restaurant.id,
       );
@@ -435,7 +425,29 @@ function ReviewStep({ restaurant }: { restaurant: RestaurantProfile }) {
           <strong>{restaurant.name}</strong> has been submitted and is{' '}
           {status === 'PENDING_APPROVAL' ? 'awaiting approval' : status.toLowerCase()}.
         </p>
-        <button type="button" onClick={() => router.push('/account')} className="btn-primary w-fit">
+        {status === 'REJECTED' && (
+          <>
+            {restaurant.rejectionReason && (
+              <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+                {restaurant.rejectionReason}
+              </p>
+            )}
+            <ErrorText error={error} />
+            <button
+              type="button"
+              onClick={() => void handleSubmit()}
+              disabled={submitting}
+              className="btn-primary w-fit"
+            >
+              {submitting ? 'Resubmitting…' : 'Resubmit for approval'}
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          onClick={() => router.push('/account')}
+          className={status === 'REJECTED' ? 'text-sm text-slate-500 underline w-fit' : 'btn-primary w-fit'}
+        >
           Go to account
         </button>
       </div>

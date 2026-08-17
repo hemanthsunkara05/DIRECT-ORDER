@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatINR } from '@direct-order/money';
-import { ApiError, cartApi, checkoutApi, orderApi } from '@/lib/api-client';
+import { ApiError, cartApi, checkoutApi, orderApi, type CartIssue } from '@/lib/api-client';
 import { fetchPublicRestaurant, type PublicRestaurant } from '@/lib/public-api';
+import { Button } from '@/components/ui/Button';
 
 interface CartItem {
   itemId: string;
@@ -86,6 +87,39 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
     (sum, c) => sum + BigInt(c.priceMinor) * BigInt(c.quantity),
     0n,
   );
+
+  // A structured (never a bare string) below-minimum check, run
+  // proactively rather than only surfaced after a failed submit —
+  // `CartIssue`'s `BELOW_MINIMUM_ORDER` case carries the actual
+  // minimum, so the shortfall shown is exact ("add ₹80 more"), the
+  // same value `/r/[slug]`'s own cart drawer already computes, not a
+  // generic "below minimum" string.
+  const [quoteIssues, setQuoteIssues] = useState<CartIssue[]>([]);
+  useEffect(() => {
+    if (!hydrated || !slug || cart.length === 0) return;
+    let cancelled = false;
+    checkoutApi
+      .quote({
+        restaurantSlug: slug,
+        items: cart.map((c) => ({
+          itemId: c.itemId,
+          quantity: c.quantity,
+          unitPriceMinorAtAdd: c.priceMinor,
+        })),
+      })
+      .then((result) => {
+        if (!cancelled) setQuoteIssues(result.issues);
+      })
+      .catch(() => {
+        // Best-effort — the submit-time quote inside handleSubmit is
+        // still the real gate; this only powers the inline warning.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, slug, cart]);
+
+  const belowMinimumIssue = quoteIssues.find((issue) => issue.code === 'BELOW_MINIMUM_ORDER');
 
   /**
    * A preview only (`POST /public/checkout/quote`, non-locking — see
@@ -184,51 +218,64 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
   }
 
   if (!hydrated || !slug) {
-    return <main className="mx-auto max-w-xl p-6 text-sm text-slate-500">Loading…</main>;
+    return <main className="mx-auto max-w-xl p-6 text-sm text-ink-500">Loading…</main>;
   }
 
   return (
-    <main className="mx-auto flex max-w-xl flex-col gap-6 p-6">
+    <main className="mx-auto flex max-w-xl flex-col gap-6 p-6" style={{ background: 'var(--bg)' }}>
       <div>
         <button
           type="button"
           onClick={() => router.push(`/r/${slug}`)}
-          className="text-sm text-slate-500 underline"
+          className="text-sm text-ink-500 underline"
         >
           ← Back to menu
         </button>
-        <h1 className="mt-2 text-xl font-semibold">
+        <h1 className="mt-2 text-xl font-bold text-ink-900">
           Checkout{restaurant ? ` — ${restaurant.name}` : ''}
         </h1>
       </div>
 
-      <section className="rounded-lg border border-slate-200 p-4">
-        <h2 className="mb-2 text-sm font-semibold">Your order</h2>
+      <section className="rounded-card border border-ink-200 bg-surface p-[22px] shadow-1">
+        <h2 className="mb-2 text-sm font-bold text-ink-900">Your order</h2>
         <ul className="flex flex-col gap-1 text-sm">
           {cart.map((c) => (
-            <li key={c.itemId} className="flex items-center justify-between">
+            <li key={c.itemId} className="flex items-center justify-between text-ink-800">
               <span>
                 {c.quantity}× {c.name}
               </span>
-              <span>{formatINR(BigInt(c.priceMinor) * BigInt(c.quantity))}</span>
+              <span className="font-mono">{formatINR(BigInt(c.priceMinor) * BigInt(c.quantity))}</span>
             </li>
           ))}
         </ul>
-        <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-2 text-sm font-semibold">
+        <div className="mt-2 flex items-center justify-between border-t border-ink-200 pt-2 text-sm font-semibold text-ink-900">
           <span>Subtotal</span>
-          <span>{formatINR(subtotalMinor)}</span>
+          <span className="font-mono">{formatINR(subtotalMinor)}</span>
         </div>
         {appliedCoupon && couponDiscountMinor && (
-          <div className="mt-1 flex items-center justify-between text-sm text-emerald-700">
+          <div className="mt-1 flex items-center justify-between text-sm text-fresh-700">
             <span>Coupon {appliedCoupon}</span>
-            <span>−{formatINR(BigInt(couponDiscountMinor))}</span>
+            <span className="font-mono">−{formatINR(BigInt(couponDiscountMinor))}</span>
           </div>
         )}
-        <p className="mt-1 text-xs text-slate-400">
+        {belowMinimumIssue && belowMinimumIssue.code === 'BELOW_MINIMUM_ORDER' && (
+          <p className="mt-2 rounded-ctrl bg-warn-100 px-3 py-2 text-xs font-medium text-warn-700">
+            Add{' '}
+            <span className="font-mono">
+              {formatINR(
+                BigInt(belowMinimumIssue.minimumMinor) - BigInt(belowMinimumIssue.subtotalMinor),
+              )}
+            </span>{' '}
+            more to reach the{' '}
+            <span className="font-mono">{formatINR(BigInt(belowMinimumIssue.minimumMinor))}</span>{' '}
+            minimum order.
+          </p>
+        )}
+        <p className="mt-1 text-xs text-ink-400">
           Fees, tax, and the final total are computed server-side at checkout.
         </p>
 
-        <div className="mt-3 flex gap-2 border-t border-slate-100 pt-3">
+        <div className="mt-3 flex gap-2 border-t border-ink-200 pt-3">
           <input
             type="text"
             value={couponCode}
@@ -241,22 +288,22 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
             placeholder="Coupon code"
             className="input flex-1"
           />
-          <button
+          <Button
             type="button"
+            variant="secondary"
             disabled={checkingCoupon || !couponCode.trim()}
             onClick={() => void handleApplyCoupon()}
-            className="btn-secondary disabled:cursor-not-allowed"
           >
             {checkingCoupon ? 'Checking…' : appliedCoupon ? 'Applied' : 'Apply'}
-          </button>
+          </Button>
         </div>
-        {couponError && <p className="mt-1 text-xs text-red-600">{couponError}</p>}
+        {couponError && <p className="mt-1 text-xs font-medium text-error">{couponError}</p>}
       </section>
 
       <form onSubmit={(e) => void handleSubmit(e)} className="flex flex-col gap-4">
         <fieldset className="flex flex-col gap-3">
-          <legend className="mb-1 text-sm font-semibold">Contact details</legend>
-          <label className="flex flex-col gap-1 text-sm">
+          <legend className="mb-1 text-sm font-bold text-ink-900">Contact details</legend>
+          <label className="flex flex-col gap-1 text-sm text-ink-700">
             Full name
             <input
               required
@@ -265,7 +312,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
               className="input"
             />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1 text-sm text-ink-700">
             Phone
             <input
               required
@@ -276,7 +323,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
               className="input"
             />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1 text-sm text-ink-700">
             Email (optional)
             <input
               type="email"
@@ -288,8 +335,8 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
         </fieldset>
 
         <fieldset className="flex flex-col gap-3">
-          <legend className="mb-1 text-sm font-semibold">Delivery address</legend>
-          <label className="flex flex-col gap-1 text-sm">
+          <legend className="mb-1 text-sm font-bold text-ink-900">Delivery address</legend>
+          <label className="flex flex-col gap-1 text-sm text-ink-700">
             Address
             <input
               required
@@ -298,7 +345,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
               className="input"
             />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1 text-sm text-ink-700">
             City
             <input
               required
@@ -307,7 +354,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
               className="input"
             />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1 text-sm text-ink-700">
             Postal code
             <input
               required
@@ -318,15 +365,13 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
           </label>
         </fieldset>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="text-sm font-medium text-error">{error}</p>}
 
-        <button
-          type="submit"
-          disabled={submitting}
-          className="btn-primary disabled:cursor-not-allowed"
-        >
-          {submitting ? 'Placing order…' : `Place order — ${formatINR(subtotalMinor)}`}
-        </button>
+        <Button type="submit" disabled={submitting || Boolean(belowMinimumIssue)} loading={submitting}>
+          {belowMinimumIssue
+            ? 'Add more to meet the minimum order'
+            : `Place order — ${formatINR(subtotalMinor)}`}
+        </Button>
       </form>
     </main>
   );

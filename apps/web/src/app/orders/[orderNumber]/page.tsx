@@ -6,6 +6,17 @@ import { formatINR } from '@direct-order/money';
 import Link from 'next/link';
 import { ApiError, orderApi, type OrderTrackingView } from '@/lib/api-client';
 import { ReviewForm } from './review-form';
+import { Button } from '@/components/ui/Button';
+import { OrderStatusTimeline } from '@/components/ui/OrderStatusTimeline';
+
+const TIMELINE_STATUSES = new Set([
+  'PLACED',
+  'ACCEPTED',
+  'PREPARING',
+  'READY_FOR_PICKUP',
+  'OUT_FOR_DELIVERY',
+  'DELIVERED',
+]);
 
 const STATUS_LABEL: Record<string, string> = {
   PENDING_PAYMENT: 'Awaiting payment',
@@ -100,38 +111,44 @@ export default function OrderTrackingPage() {
   }
 
   if (error) {
-    return <main className="mx-auto max-w-xl p-6 text-sm text-red-600">{error}</main>;
+    return <main className="mx-auto max-w-xl p-6 text-sm font-medium text-error">{error}</main>;
   }
   if (!order) {
-    return <main className="mx-auto max-w-xl p-6 text-sm text-slate-500">Loading…</main>;
+    return <main className="mx-auto max-w-xl p-6 text-sm text-ink-500">Loading…</main>;
   }
 
   return (
-    <main className="mx-auto flex max-w-xl flex-col gap-6 p-6">
+    <main className="mx-auto flex max-w-xl flex-col gap-6 p-6" style={{ background: 'var(--bg)' }}>
       <div>
-        <p className="text-xs text-slate-400">Order</p>
-        <h1 className="text-xl font-semibold">{order.orderNumber}</h1>
-        <p className="mt-1 text-sm font-medium text-slate-700">
+        <p className="font-mono text-xs text-ink-400">Order</p>
+        <h1 className="font-mono text-xl font-bold text-ink-900">{order.orderNumber}</h1>
+        <p className="mt-1 text-sm font-medium text-ink-700">
           {STATUS_LABEL[order.status] ?? order.status}
         </p>
       </div>
 
-      <p className="text-sm text-slate-500">
+      {TIMELINE_STATUSES.has(order.status) && (
+        <section className="rounded-card border border-ink-200 bg-surface p-[22px] shadow-1">
+          <OrderStatusTimeline status={order.status} />
+        </section>
+      )}
+
+      <p className="text-sm text-ink-500">
         Want to earn loyalty points and track your order history?{' '}
-        <Link href="/customer/login" className="text-blue-600 underline">
+        <Link href="/customer/login" className="font-medium text-brand-600 underline">
           Create a free account
         </Link>
         .
       </p>
 
       {order.status === 'PENDING_PAYMENT' && (
-        <section className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <p className="text-sm text-amber-900">
+        <section className="flex flex-col gap-3 rounded-card border border-warn bg-warn-100 p-[22px]">
+          <p className="text-sm text-warn-700">
             Complete payment to place your order. This environment uses a mock payment provider for
             local development and testing — no real payment is processed.
           </p>
           {mockUnavailable && (
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-ink-700">
               This environment is configured for a real payment provider; simulated payment
               isn&apos;t available here. Complete payment through the provider&apos;s checkout
               instead.
@@ -139,69 +156,59 @@ export default function OrderTrackingPage() {
           )}
           {!mockUnavailable && (
             <div className="flex gap-3">
-              <button
-                type="button"
-                disabled={paying}
-                onClick={() => void simulate('CAPTURED')}
-                className="btn-primary disabled:cursor-not-allowed"
-              >
-                {paying ? 'Processing…' : 'Simulate successful payment'}
-              </button>
-              <button
-                type="button"
-                disabled={paying}
-                onClick={() => void simulate('FAILED')}
-                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed"
-              >
+              <Button disabled={paying} loading={paying} onClick={() => void simulate('CAPTURED')}>
+                Simulate successful payment
+              </Button>
+              <Button variant="secondary" disabled={paying} onClick={() => void simulate('FAILED')}>
                 Simulate failed payment
-              </button>
+              </Button>
             </div>
           )}
-          {payError && <p className="text-sm text-red-600">{payError}</p>}
+          {payError && <p className="text-sm font-medium text-error">{payError}</p>}
         </section>
       )}
 
       {order.status === 'PAYMENT_FAILED' && (
-        <section className="rounded-lg border border-red-200 bg-red-50 p-4">
-          <p className="text-sm text-red-800">
+        <section className="rounded-card border border-error bg-error-100 p-[22px]">
+          <p className="text-sm text-error-700">
             Payment was not completed for this order. Please start a new order — retrying payment on
             this same order isn&apos;t available yet.
           </p>
         </section>
       )}
 
-      <section className="rounded-lg border border-slate-200 p-4">
-        <h2 className="mb-2 text-sm font-semibold">Items</h2>
+      <section className="rounded-card border border-ink-200 bg-surface p-[22px] shadow-1">
+        <h2 className="mb-2 text-sm font-bold text-ink-900">Items</h2>
         <ul className="flex flex-col gap-1 text-sm">
           {order.items.map((item, i) => (
-            <li key={i} className="flex items-center justify-between">
+            <li key={i} className="flex items-center justify-between text-ink-800">
               <span>
                 {item.quantity}× {item.name}
               </span>
-              <span>{formatINR(BigInt(item.lineTotalMinor))}</span>
+              <span className="font-mono">{formatINR(BigInt(item.lineTotalMinor))}</span>
             </li>
           ))}
         </ul>
-        <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-2 text-sm font-semibold">
+        <div className="mt-2 flex items-center justify-between border-t border-ink-200 pt-2 text-sm font-semibold text-ink-900">
           <span>Total</span>
-          <span>{formatINR(BigInt(order.payableTotalMinor))}</span>
+          <span className="font-mono">{formatINR(BigInt(order.payableTotalMinor))}</span>
         </div>
       </section>
 
-      <section className="rounded-lg border border-slate-200 p-4">
-        <h2 className="mb-2 text-sm font-semibold">Delivering to</h2>
-        <p className="text-sm text-slate-700">{order.customerName}</p>
-        <p className="text-sm text-slate-500">{formatAddress(order.deliveryAddress)}</p>
+      <section className="rounded-card border border-ink-200 bg-surface p-[22px] shadow-1">
+        <h2 className="mb-2 text-sm font-bold text-ink-900">Delivering to</h2>
+        <p className="text-sm text-ink-700">{order.customerName}</p>
+        <p className="text-sm text-ink-500">{formatAddress(order.deliveryAddress)}</p>
       </section>
 
       {order.delivery && (
-        <section className="rounded-lg border border-slate-200 p-4">
-          <h2 className="mb-2 text-sm font-semibold">Delivery</h2>
-          <p className="text-sm text-slate-700">
+        <section className="rounded-card border border-ink-200 bg-surface p-[22px] shadow-1">
+          <h2 className="mb-2 text-sm font-bold text-ink-900">Delivery</h2>
+          <p className="text-sm text-ink-700">
             {DELIVERY_STATUS_LABEL[order.delivery.status] ?? order.delivery.status}
           </p>
           {order.delivery.courierName && (
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-1 text-sm text-ink-500">
               Courier: {order.delivery.courierName}
               {order.delivery.courierPhone ? ` · ${order.delivery.courierPhone}` : ''}
             </p>
@@ -211,7 +218,7 @@ export default function OrderTrackingPage() {
               href={order.delivery.trackingUrl}
               target="_blank"
               rel="noreferrer"
-              className="mt-1 inline-block text-sm text-indigo-600 underline"
+              className="mt-1 inline-block text-sm font-medium text-brand-600 underline"
             >
               Track delivery
             </a>
@@ -223,13 +230,16 @@ export default function OrderTrackingPage() {
         <ReviewForm orderNumber={order.orderNumber} token={token} />
       )}
 
-      <section className="rounded-lg border border-slate-200 p-4">
-        <h2 className="mb-2 text-sm font-semibold">Status history</h2>
-        <ol className="flex flex-col gap-1 text-sm text-slate-600">
+      <section className="rounded-card border border-ink-200 bg-surface p-[22px] shadow-1">
+        <h2 className="mb-2 text-sm font-bold text-ink-900">Status history</h2>
+        <ol className="flex flex-col gap-1 text-sm">
           {order.history.map((entry, i) => (
-            <li key={i} className="flex items-center justify-between">
+            <li
+              key={i}
+              className="flex items-center justify-between border-t border-dashed border-ink-200 py-1.5 text-ink-700 first:border-t-0"
+            >
               <span>{STATUS_LABEL[entry.toStatus] ?? entry.toStatus}</span>
-              <span className="text-xs text-slate-400">
+              <span className="font-mono text-xs text-ink-400">
                 {new Date(entry.createdAt).toLocaleString()}
               </span>
             </li>

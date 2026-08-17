@@ -13,6 +13,9 @@ import {
   type QuoteResult,
 } from '@/lib/api-client';
 import type { PublicMenu, PublicMenuItem, PublicRestaurant } from '@/lib/public-api';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { StatusPill, type StatusTone } from '@/components/ui/StatusPill';
 
 interface CartItem {
   itemId: string;
@@ -60,6 +63,12 @@ function availabilityMessage(restaurant: PublicRestaurant): string {
     default:
       return 'Currently closed';
   }
+}
+
+function availabilityTone(restaurant: PublicRestaurant): StatusTone {
+  if (restaurant.status === 'SUSPENDED') return 'error';
+  if (restaurant.status === 'CLOSED') return 'error';
+  return restaurant.availability.accepting ? 'fresh' : 'warn';
 }
 
 function issueMessage(issue: CartIssue, cart: CartItem[]): string {
@@ -186,8 +195,8 @@ export function RestaurantOrderingView({
   const canOrder = restaurant.availability.accepting;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-6 pb-28">
-      <header className="flex flex-col gap-2 border-b border-slate-200 p-6">
+    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-6 pb-28" style={{ background: 'var(--bg)' }}>
+      <header className="flex flex-col gap-2 border-b border-ink-200 p-6">
         <div className="flex items-center gap-3">
           {restaurant.branding?.logoUrl && (
             <Image
@@ -199,11 +208,11 @@ export function RestaurantOrderingView({
             />
           )}
           <div>
-            <h1 className="text-xl font-semibold">{restaurant.name}</h1>
+            <h1 className="text-xl font-bold text-ink-900">{restaurant.name}</h1>
             {restaurant.branding?.tagline && (
-              <p className="text-sm text-slate-500">{restaurant.branding.tagline}</p>
+              <p className="text-sm text-ink-500">{restaurant.branding.tagline}</p>
             )}
-            <p className="text-xs text-slate-500">
+            <p className="font-mono text-xs text-ink-500">
               {restaurant.ratingAvg !== null
                 ? // Not money — a 1-5 star rating average, not a currency amount.
                   // eslint-disable-next-line no-restricted-syntax
@@ -212,27 +221,22 @@ export function RestaurantOrderingView({
             </p>
           </div>
         </div>
-        {restaurant.description && (
-          <p className="text-sm text-slate-600">{restaurant.description}</p>
-        )}
-        <p
-          className={`w-fit rounded-full px-3 py-1 text-xs font-medium ${
-            canOrder ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-600'
-          }`}
-        >
-          {availabilityMessage(restaurant)}
-        </p>
+        {restaurant.description && <p className="text-sm text-ink-700">{restaurant.description}</p>}
+        <div>
+          <StatusPill label={availabilityMessage(restaurant)} tone={availabilityTone(restaurant)} />
+        </div>
       </header>
 
       <nav
         aria-label="Menu categories"
-        className="sticky top-0 z-10 flex gap-2 overflow-x-auto border-b border-slate-100 bg-white/95 px-6 py-3 backdrop-blur"
+        className="sticky top-0 z-10 flex gap-2 overflow-x-auto border-b border-ink-200 px-6 py-3 backdrop-blur"
+        style={{ background: 'rgba(251,250,247,.95)' }}
       >
         {menu.categories.map((category) => (
           <a
             key={category.id}
             href={`#category-${category.id}`}
-            className="whitespace-nowrap rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            className="whitespace-nowrap rounded-pill border border-ink-200 px-3 py-1 text-xs font-medium text-ink-700 hover:border-brand-600 hover:bg-brand-100"
           >
             {category.name}
           </a>
@@ -240,7 +244,7 @@ export function RestaurantOrderingView({
       </nav>
 
       <div className="px-6">
-        <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+        <label className="flex flex-col gap-1 text-sm font-medium text-ink-700">
           <span className="sr-only">Search this menu</span>
           <input
             type="search"
@@ -253,15 +257,16 @@ export function RestaurantOrderingView({
       </div>
 
       <div className="flex flex-col gap-8 px-6">
-        {visibleCategories.length === 0 && (
-          <p className="text-sm text-slate-500">No items match your search.</p>
-        )}
+        {visibleCategories.length === 0 &&
+          (normalizedSearch ? (
+            <EmptyState message={`No items match "${search.trim()}".`} />
+          ) : (
+            <EmptyState message="This restaurant hasn't added any menu items yet." />
+          ))}
         {visibleCategories.map((category) => (
           <section key={category.id} id={`category-${category.id}`} className="flex flex-col gap-3">
-            <h2 className="text-lg font-semibold">{category.name}</h2>
-            {category.description && (
-              <p className="text-sm text-slate-500">{category.description}</p>
-            )}
+            <h2 className="text-lg font-bold text-ink-900">{category.name}</h2>
+            {category.description && <p className="text-sm text-ink-500">{category.description}</p>}
             <ul className="flex flex-col gap-3">
               {category.items.map((item) => (
                 <ItemCard
@@ -281,21 +286,23 @@ export function RestaurantOrderingView({
       </div>
 
       {cartCount > 0 && (
-        <div className="fixed inset-x-0 bottom-0 border-t border-slate-200 bg-white shadow-lg">
+        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-ink-200 bg-surface shadow-3">
           {cartOpen && (
-            <div className="max-h-80 overflow-y-auto border-b border-slate-100 px-6 py-3">
+            <div className="max-h-80 overflow-y-auto border-b border-ink-200 px-6 py-3">
               <ul>
                 {cart.map((c) => (
-                  <li key={c.itemId} className="flex items-center justify-between py-1 text-sm">
-                    <span>
+                  <li key={c.itemId} className="flex items-center justify-between border-t border-dashed border-ink-200 py-2 text-sm first:border-t-0">
+                    <span className="text-ink-800">
                       {c.quantity}× {c.name}
                     </span>
                     <div className="flex items-center gap-3">
-                      <span>{formatINR(BigInt(c.priceMinor) * BigInt(c.quantity))}</span>
+                      <span className="font-mono text-ink-800">
+                        {formatINR(BigInt(c.priceMinor) * BigInt(c.quantity))}
+                      </span>
                       <button
                         type="button"
                         onClick={() => removeFromCart(c.itemId)}
-                        className="text-xs text-red-600 underline"
+                        className="text-xs font-semibold text-error underline"
                         aria-label={`Remove ${c.name} from cart`}
                       >
                         Remove
@@ -305,11 +312,11 @@ export function RestaurantOrderingView({
                 ))}
               </ul>
 
-              <div className="mt-3 flex flex-col gap-1 border-t border-slate-100 pt-3 text-sm">
-                {quoting && <p className="text-xs text-slate-400">Pricing your order…</p>}
-                {quoteError && <p className="text-xs text-red-600">{quoteError}</p>}
+              <div className="mt-3 flex flex-col gap-1 border-t border-ink-200 pt-3 text-sm">
+                {quoting && <p className="text-xs text-ink-400">Pricing your order…</p>}
+                {quoteError && <p className="text-xs text-error">{quoteError}</p>}
                 {quote?.issues.map((issue, index) => (
-                  <p key={index} className="text-xs text-amber-700">
+                  <p key={index} className="text-xs text-warn-700">
                     {issueMessage(issue, cart)}
                   </p>
                 ))}
@@ -331,20 +338,19 @@ export function RestaurantOrderingView({
                     {quote.breakdown.discountMinor !== '0' && (
                       <Row label="Discount" valueMinor={`-${quote.breakdown.discountMinor}`} />
                     )}
-                    <div className="flex items-center justify-between pt-1 font-semibold">
+                    <div className="flex items-center justify-between pt-1 font-semibold text-ink-900">
                       <span>Total</span>
-                      <span>{formatINR(BigInt(quote.breakdown.payableTotalMinor))}</span>
+                      <span className="font-mono">{formatINR(BigInt(quote.breakdown.payableTotalMinor))}</span>
                     </div>
                   </>
                 )}
-                <button
-                  type="button"
+                <Button
                   disabled={!quote?.valid}
                   onClick={() => router.push(`/r/${restaurant.slug}/checkout`)}
-                  className="btn-primary mt-2 w-full disabled:cursor-not-allowed"
+                  className="mt-2 w-full"
                 >
                   {canOrder ? 'Proceed to checkout' : 'Restaurant unavailable'}
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -354,10 +360,12 @@ export function RestaurantOrderingView({
             aria-expanded={cartOpen}
             className="flex w-full items-center justify-between px-6 py-4"
           >
-            <span className="text-sm font-medium">
+            <span className="font-mono text-sm font-semibold text-ink-900">
               {cartCount} item{cartCount === 1 ? '' : 's'} · {formatINR(cartSubtotalMinor)}
             </span>
-            <span className="text-xs text-slate-500">{cartOpen ? 'Hide cart' : 'View cart'}</span>
+            <span className="text-xs font-semibold text-brand-600">
+              {cartOpen ? 'Hide cart' : 'View cart'}
+            </span>
           </button>
         </div>
       )}
@@ -379,16 +387,16 @@ function Reviews({ slug }: { slug: string }) {
   if (!reviews || reviews.length === 0) return null;
 
   return (
-    <section className="flex flex-col gap-3 border-t border-slate-100 pt-6">
-      <h2 className="text-lg font-semibold">Reviews</h2>
+    <section className="flex flex-col gap-3 border-t border-ink-200 pt-6">
+      <h2 className="text-lg font-bold text-ink-900">Reviews</h2>
       <ul className="flex flex-col gap-3">
         {reviews.map((review) => (
-          <li key={review.id} className="rounded-lg border border-slate-200 p-3 text-sm">
+          <li key={review.id} className="rounded-card border border-ink-200 bg-surface p-3 text-sm shadow-1">
             <div className="flex items-center justify-between">
-              <span className="font-medium">{'★'.repeat(review.rating)}</span>
-              <span className="text-xs text-slate-400">{review.authorFirstName}</span>
+              <span className="font-medium text-brand-600">{'★'.repeat(review.rating)}</span>
+              <span className="text-xs text-ink-400">{review.authorFirstName}</span>
             </div>
-            {review.body && <p className="mt-1 text-slate-600">{review.body}</p>}
+            {review.body && <p className="mt-1 text-ink-700">{review.body}</p>}
           </li>
         ))}
       </ul>
@@ -398,9 +406,9 @@ function Reviews({ slug }: { slug: string }) {
 
 function Row({ label, valueMinor }: { label: string; valueMinor: string }) {
   return (
-    <div className="flex items-center justify-between text-xs text-slate-600">
+    <div className="flex items-center justify-between text-xs text-ink-500">
       <span>{label}</span>
-      <span>{formatINR(BigInt(valueMinor))}</span>
+      <span className="font-mono">{formatINR(BigInt(valueMinor))}</span>
     </div>
   );
 }
@@ -415,8 +423,13 @@ function ItemCard({
   onAdd: () => void;
 }) {
   const addable = canOrder && item.isAvailable;
+  // FSSAI marks only define two colors (veg/non-veg); EGG follows the
+  // common Indian labeling convention of using the non-veg mark, since
+  // the design system's token set has no third color for it.
+  const dietaryColor =
+    item.dietaryTag === 'VEG' ? 'var(--veg)' : item.dietaryTag === 'UNKNOWN' ? null : 'var(--nonveg)';
   return (
-    <li className="flex items-center justify-between gap-4 rounded-lg border border-slate-100 p-3">
+    <li className="flex items-center justify-between gap-4 rounded-card border border-ink-200 bg-surface p-3 shadow-1">
       <div className="flex items-center gap-3">
         {item.imageUrl && (
           <Image
@@ -424,26 +437,30 @@ function ItemCard({
             alt=""
             width={64}
             height={64}
-            className="h-16 w-16 rounded-md object-cover"
+            className="h-16 w-16 rounded-ctrl object-cover"
           />
         )}
         <div>
-          <p className="text-sm font-medium">
-            {item.name}
-            {item.dietaryTag !== 'UNKNOWN' && (
-              <span className="ml-2 text-xs text-slate-400">
-                {item.dietaryTag.replace('_', ' ')}
+          <p className="flex items-center gap-1.5 text-sm font-medium text-ink-900">
+            {dietaryColor && (
+              <span
+                aria-hidden="true"
+                className="inline-block h-2.5 w-2.5 rounded-sm border"
+                style={{ borderColor: dietaryColor }}
+              >
+                <span className="block h-full w-full scale-50 rounded-full" style={{ background: dietaryColor }} />
               </span>
             )}
+            {item.name}
           </p>
-          {item.description && <p className="text-xs text-slate-500">{item.description}</p>}
-          <p className="text-sm text-slate-700">{formatINR(BigInt(item.priceMinor))}</p>
-          {!item.isAvailable && <p className="text-xs text-red-600">Sold out</p>}
+          {item.description && <p className="text-xs text-ink-500">{item.description}</p>}
+          <p className="font-mono text-sm text-ink-700">{formatINR(BigInt(item.priceMinor))}</p>
+          {!item.isAvailable && <p className="text-xs font-semibold text-error">Sold out</p>}
         </div>
       </div>
-      <button type="button" disabled={!addable} onClick={onAdd} className="btn-primary shrink-0">
+      <Button disabled={!addable} onClick={onAdd} className="shrink-0">
         Add
-      </button>
+      </Button>
     </li>
   );
 }

@@ -10,6 +10,10 @@ import {
 } from '@/lib/api-client';
 import { ProtectedRoute } from '@/lib/auth/protected-route';
 import { useSession } from '@/lib/auth/session-context';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { StatusPill, ORDER_STATUS_TONE, statusLabel } from '@/components/ui/StatusPill';
+import { ReasonModal } from '@/components/ui/ReasonModal';
 
 /** The actionable queue (docs/04-api-specification.md §8.5) — not a full historical ledger; a restaurant reviewing past DELIVERED/REJECTED/CANCELLED orders is a reporting concern for a later phase. OUT_FOR_DELIVERY stays in the queue (Phase 11) — still active, and a DELIVERY_FAILED alert needs somewhere for staff to see it. */
 const QUEUE_STATUSES = ['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'OUT_FOR_DELIVERY'];
@@ -113,9 +117,12 @@ function useOrderStream(enabled: boolean, onEvent: () => void): 'connecting' | '
 }
 
 function OrderDashboard() {
-  const { user } = useSession();
-  const membership = user?.restaurantMemberships[0];
-  const restaurantId = membership?.restaurantId;
+  const { user, activeRestaurantId } = useSession();
+  const restaurantId = activeRestaurantId ?? undefined;
+  // SSE has no way to carry the X-Restaurant-Id header EventSource
+  // can't set — this is about how many restaurants exist to
+  // disambiguate between, independent of which one is currently
+  // active in the switcher, so it stays keyed off membership count.
   const canUseSse = (user?.restaurantMemberships.length ?? 0) <= 1;
 
   const [orders, setOrders] = useState<RestaurantOrderSummary[] | null>(null);
@@ -125,6 +132,7 @@ function OrderDashboard() {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
+  const [rejecting, setRejecting] = useState(false);
   const seenOrderIds = useRef<Set<string> | null>(null);
 
   const load = useCallback(async () => {
@@ -190,16 +198,13 @@ function OrderDashboard() {
     }
   }
 
-  async function handleReject(orderId: string) {
-    const reason = window.prompt(
-      'Reason for rejecting this order (the customer will be refunded in full):',
-    );
-    if (!reason || !reason.trim()) return;
-    await runAction(() => restaurantOrdersApi.reject(orderId, reason.trim(), restaurantId));
+  async function handleReject(orderId: string, reason: string) {
+    await runAction(() => restaurantOrdersApi.reject(orderId, reason, restaurantId));
+    setRejecting(false);
   }
 
   if (!restaurantId) {
-    return <main className="p-6 text-sm text-slate-500">Loading…</main>;
+    return <main className="p-6 text-sm text-ink-500">Loading…</main>;
   }
 
   return (
@@ -210,15 +215,15 @@ function OrderDashboard() {
 
       <section className="flex-1">
         <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-xl font-semibold">Orders</h1>
-          <p className="text-xs text-slate-400">
+          <h1 className="text-xl font-bold text-ink-900">Orders</h1>
+          <p className="font-mono text-xs text-ink-400">
             {canUseSse ? (streamStatus === 'open' ? 'Live' : 'Connecting…') : 'Polling every 15s'}
           </p>
         </div>
 
-        {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+        {error && <p className="mb-4 text-sm font-medium text-error">{error}</p>}
         {orders !== null && orders.length === 0 && (
-          <p className="text-sm text-slate-500">No active orders right now.</p>
+          <EmptyState message="No active orders right now." />
         )}
 
         <ul className="flex flex-col gap-2">
@@ -227,19 +232,22 @@ function OrderDashboard() {
               <button
                 type="button"
                 onClick={() => void loadDetail(order.id)}
-                className={`flex w-full items-center justify-between rounded-lg border p-3 text-left ${
-                  selectedId === order.id ? 'border-slate-900' : 'border-slate-200'
-                } ${order.status === 'PLACED' ? 'bg-amber-50' : ''}`}
+                className={`flex w-full items-center justify-between rounded-card border p-3 text-left shadow-1 ${
+                  selectedId === order.id ? 'border-ink-900' : 'border-ink-200'
+                } ${order.status === 'PLACED' ? 'bg-warn-100' : 'bg-surface'}`}
               >
                 <div>
-                  <p className="text-sm font-medium">{order.orderNumber}</p>
-                  <p className="text-xs text-slate-500">{order.customerName}</p>
+                  <p className="text-sm font-medium text-ink-900">{order.orderNumber}</p>
+                  <p className="text-xs text-ink-500">{order.customerName}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs font-medium">
-                    {STATUS_LABEL[order.status] ?? order.status}
+                  <StatusPill
+                    label={STATUS_LABEL[order.status] ?? statusLabel(order.status)}
+                    tone={ORDER_STATUS_TONE[order.status] ?? 'ink'}
+                  />
+                  <p className="mt-1 font-mono text-sm text-ink-800">
+                    {formatINR(BigInt(order.payableTotalMinor))}
                   </p>
-                  <p className="text-sm">{formatINR(BigInt(order.payableTotalMinor))}</p>
                 </div>
               </button>
             </li>
@@ -247,112 +255,118 @@ function OrderDashboard() {
         </ul>
       </section>
 
-      <section className="w-96 shrink-0 rounded-lg border border-slate-200 p-4">
-        {!detail && <p className="text-sm text-slate-500">Select an order to see details.</p>}
+      <section className="w-96 shrink-0 rounded-card border border-ink-200 bg-surface p-[22px] shadow-1">
+        {!detail && <p className="text-sm text-ink-500">Select an order to see details.</p>}
         {detail && (
           <div className="flex flex-col gap-3">
             <div>
-              <p className="text-xs text-slate-400">Order</p>
-              <h2 className="text-lg font-semibold">{detail.orderNumber}</h2>
-              <p className="text-sm font-medium">{STATUS_LABEL[detail.status] ?? detail.status}</p>
+              <p className="font-mono text-xs text-ink-400">Order</p>
+              <h2 className="font-mono text-lg font-bold text-ink-900">{detail.orderNumber}</h2>
+              <StatusPill
+                label={STATUS_LABEL[detail.status] ?? statusLabel(detail.status)}
+                tone={ORDER_STATUS_TONE[detail.status] ?? 'ink'}
+              />
             </div>
 
             <div>
-              <p className="text-sm">{detail.customerName}</p>
-              <p className="text-sm text-slate-500">{detail.customerPhone}</p>
+              <p className="text-sm text-ink-800">{detail.customerName}</p>
+              <p className="text-sm text-ink-500">{detail.customerPhone}</p>
             </div>
 
             <ul className="flex flex-col gap-1 text-sm">
               {detail.items.map((item) => (
-                <li key={item.id} className="flex items-center justify-between">
+                <li key={item.id} className="flex items-center justify-between text-ink-800">
                   <span>
                     {item.quantity}× {item.nameSnapshot}
                   </span>
-                  <span>{formatINR(BigInt(item.lineTotalMinor))}</span>
+                  <span className="font-mono">{formatINR(BigInt(item.lineTotalMinor))}</span>
                 </li>
               ))}
             </ul>
-            <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-sm font-semibold">
+            <div className="flex items-center justify-between border-t border-ink-200 pt-2 text-sm font-semibold text-ink-900">
               <span>Total</span>
-              <span>{formatINR(BigInt(detail.payableTotalMinor))}</span>
+              <span className="font-mono">{formatINR(BigInt(detail.payableTotalMinor))}</span>
             </div>
 
             {detail.delivery && (
-              <div className="rounded-md border border-slate-100 bg-slate-50 p-3 text-sm">
-                <p className="font-medium">
+              <div className="rounded-ctrl border border-ink-200 bg-ink-100 p-3 text-sm">
+                <p className="font-medium text-ink-900">
                   Delivery:{' '}
                   {DELIVERY_STATUS_LABEL[detail.delivery.status] ?? detail.delivery.status}
                 </p>
                 {detail.delivery.provider === 'mock_delivery' && (
-                  <p className="mt-1 text-xs text-amber-700">
+                  <p className="mt-1 text-xs text-warn-700">
                     Mock delivery provider — not production-enabled.
                   </p>
                 )}
                 {detail.delivery.courierName && (
-                  <p className="mt-1 text-slate-600">
+                  <p className="mt-1 text-ink-700">
                     Courier: {detail.delivery.courierName}
                     {detail.delivery.courierPhone ? ` · ${detail.delivery.courierPhone}` : ''}
                   </p>
                 )}
                 {detail.delivery.failureReason && (
-                  <p className="mt-1 text-red-700">{detail.delivery.failureReason}</p>
+                  <p className="mt-1 font-medium text-error">{detail.delivery.failureReason}</p>
                 )}
               </div>
             )}
 
-            {actionError && <p className="text-sm text-red-600">{actionError}</p>}
+            {actionError && <p className="text-sm font-medium text-error">{actionError}</p>}
 
             <div className="flex flex-col gap-2">
               {detail.status === 'PLACED' && (
                 <>
-                  <button
-                    type="button"
+                  <Button
                     disabled={busy}
+                    loading={busy}
                     onClick={() =>
                       void runAction(() => restaurantOrdersApi.accept(detail.id, restaurantId))
                     }
-                    className="btn-primary disabled:cursor-not-allowed"
                   >
                     Accept
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void handleReject(detail.id)}
-                    className="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-700 disabled:cursor-not-allowed"
-                  >
+                  </Button>
+                  <Button variant="destructive" disabled={busy} onClick={() => setRejecting(true)}>
                     Reject (refunds in full)
-                  </button>
+                  </Button>
                 </>
               )}
               {detail.status === 'ACCEPTED' && (
-                <button
-                  type="button"
+                <Button
                   disabled={busy}
+                  loading={busy}
                   onClick={() =>
                     void runAction(() => restaurantOrdersApi.preparing(detail.id, restaurantId))
                   }
-                  className="btn-primary disabled:cursor-not-allowed"
                 >
                   Start preparing
-                </button>
+                </Button>
               )}
               {detail.status === 'PREPARING' && (
-                <button
-                  type="button"
+                <Button
                   disabled={busy}
+                  loading={busy}
                   onClick={() =>
                     void runAction(() => restaurantOrdersApi.ready(detail.id, restaurantId))
                   }
-                  className="btn-primary disabled:cursor-not-allowed"
                 >
                   Mark ready for pickup
-                </button>
+                </Button>
               )}
             </div>
           </div>
         )}
       </section>
+
+      {rejecting && detail && (
+        <ReasonModal
+          title="Reject order"
+          consequence="The customer will be refunded in full and notified their order was rejected."
+          confirmLabel="Reject order"
+          confirmTone="error"
+          onConfirm={(reason) => handleReject(detail.id, reason)}
+          onCancel={() => setRejecting(false)}
+        />
+      )}
     </main>
   );
 }

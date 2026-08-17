@@ -11,6 +11,8 @@ import {
 } from '@/lib/api-client';
 import { ProtectedRoute } from '@/lib/auth/protected-route';
 import { useSession } from '@/lib/auth/session-context';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
 
 export default function MenuPage() {
   return (
@@ -34,9 +36,9 @@ function moveItem<T>(list: T[], from: number, to: number): T[] {
 }
 
 function MenuManagement() {
-  const { user } = useSession();
-  const membership = user?.restaurantMemberships[0];
-  const restaurantId = membership?.restaurantId;
+  const { user, activeRestaurantId } = useSession();
+  const membership = user?.restaurantMemberships.find((m) => m.restaurantId === activeRestaurantId);
+  const restaurantId = activeRestaurantId ?? undefined;
   const canWrite = membership?.role === 'MANAGER' || membership?.role === 'OWNER';
 
   const [categories, setCategories] = useState<MenuCategory[] | null>(null);
@@ -108,15 +110,15 @@ function MenuManagement() {
   if (!user || !restaurantId) {
     return (
       <main className="mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center gap-2 p-8 text-center">
-        <p className="text-sm text-slate-500">You don&apos;t manage a restaurant.</p>
+        <p className="text-sm text-ink-500">You don&apos;t manage a restaurant.</p>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-8 p-8">
-      <h1 className="text-xl font-semibold">Menu</h1>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-8 p-8" style={{ background: 'var(--bg)' }}>
+      <h1 className="text-xl font-bold text-ink-900">Menu</h1>
+      {error && <p className="text-sm font-medium text-error">{error}</p>}
       {/* Announces reorder outcomes to screen-reader users, who won't see a drag-and-drop's visual reshuffle. */}
       <p role="status" aria-live="polite" className="sr-only">
         {announcement}
@@ -124,7 +126,10 @@ function MenuManagement() {
 
       {canWrite && <CreateCategoryForm restaurantId={restaurantId} onCreated={() => void load()} />}
 
-      {!categories && <p className="text-sm text-slate-500">Loading…</p>}
+      {!categories && <p className="text-sm text-ink-500">Loading…</p>}
+      {categories?.length === 0 && (
+        <EmptyState message="No menu categories yet. Add one above to start building your menu." />
+      )}
 
       {categories?.map((category, index) => (
         <CategoryCard
@@ -214,7 +219,7 @@ function CategoryCard({
 
   return (
     <section
-      className="flex flex-col gap-4 rounded-lg border border-slate-200 p-4"
+      className="flex flex-col gap-4 rounded-card border border-ink-200 bg-surface p-[22px] shadow-1"
       draggable={canWrite}
       onDragStart={(e) => e.dataTransfer.setData('text/category-id', category.id)}
       onDragOver={(e) => canWrite && e.preventDefault()}
@@ -238,10 +243,8 @@ function CategoryCard({
           </div>
         ) : (
           <div>
-            <h2 className="text-base font-semibold">{category.name}</h2>
-            {category.description && (
-              <p className="text-sm text-slate-500">{category.description}</p>
-            )}
+            <h2 className="text-base font-bold text-ink-900">{category.name}</h2>
+            {category.description && <p className="text-sm text-ink-500">{category.description}</p>}
           </div>
         )}
 
@@ -252,7 +255,7 @@ function CategoryCard({
               aria-label={`Move ${category.name} up`}
               disabled={isFirst}
               onClick={onMoveUp}
-              className="text-xs disabled:opacity-30"
+              className="text-xs text-ink-500 disabled:opacity-30"
             >
               ▲
             </button>
@@ -261,7 +264,7 @@ function CategoryCard({
               aria-label={`Move ${category.name} down`}
               disabled={isLast}
               onClick={onMoveDown}
-              className="text-xs disabled:opacity-30"
+              className="text-xs text-ink-500 disabled:opacity-30"
             >
               ▼
             </button>
@@ -270,7 +273,7 @@ function CategoryCard({
                 type="button"
                 disabled={busy}
                 onClick={() => void handleSave()}
-                className="text-xs text-slate-700 underline"
+                className="text-xs font-semibold text-ink-700 underline"
               >
                 Save
               </button>
@@ -278,7 +281,7 @@ function CategoryCard({
               <button
                 type="button"
                 onClick={() => setEditing(true)}
-                className="text-xs text-slate-700 underline"
+                className="text-xs font-semibold text-ink-700 underline"
               >
                 Edit
               </button>
@@ -287,7 +290,7 @@ function CategoryCard({
               type="button"
               disabled={busy}
               onClick={() => void handleArchive()}
-              className="text-xs text-red-600 underline"
+              className="text-xs font-semibold text-error underline"
             >
               Archive
             </button>
@@ -295,7 +298,7 @@ function CategoryCard({
         )}
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm font-medium text-error">{error}</p>}
 
       <ItemList
         items={items}
@@ -330,7 +333,7 @@ function ItemList({
   onReordered: (next: MenuItem[]) => void;
 }) {
   if (items.length === 0) {
-    return <p className="text-xs text-slate-400">No items yet.</p>;
+    return <p className="text-xs text-ink-400">No items yet.</p>;
   }
 
   return (
@@ -418,7 +421,7 @@ function ItemRow({
 
   return (
     <li
-      className="flex items-center justify-between gap-3 rounded border border-slate-100 px-3 py-2"
+      className="flex items-center justify-between gap-3 rounded-ctrl border border-dashed border-ink-200 px-3 py-2"
       draggable={canWrite}
       onDragStart={(e) => e.dataTransfer.setData('text/item-id', item.id)}
       onDragOver={(e) => canWrite && e.preventDefault()}
@@ -430,15 +433,15 @@ function ItemRow({
       }}
     >
       <div className="flex flex-col">
-        <span className="text-sm font-medium">{item.name}</span>
-        <span className="text-xs text-slate-500">
+        <span className="text-sm font-medium text-ink-900">{item.name}</span>
+        <span className="font-mono text-xs text-ink-500">
           {formatINR(BigInt(item.priceMinor))} · {item.dietaryTag}
         </span>
-        {error && <span className="text-xs text-red-600">{error}</span>}
+        {error && <span className="text-xs font-medium text-error">{error}</span>}
       </div>
 
       <div className="flex items-center gap-3">
-        <label className="flex items-center gap-1 text-xs text-slate-600">
+        <label className="flex items-center gap-1 text-xs text-ink-700">
           <input
             type="checkbox"
             checked={available}
@@ -455,7 +458,7 @@ function ItemRow({
               aria-label={`Move ${item.name} up`}
               disabled={isFirst}
               onClick={onMoveUp}
-              className="text-xs disabled:opacity-30"
+              className="text-xs text-ink-500 disabled:opacity-30"
             >
               ▲
             </button>
@@ -464,7 +467,7 @@ function ItemRow({
               aria-label={`Move ${item.name} down`}
               disabled={isLast}
               onClick={onMoveDown}
-              className="text-xs disabled:opacity-30"
+              className="text-xs text-ink-500 disabled:opacity-30"
             >
               ▼
             </button>
@@ -472,7 +475,7 @@ function ItemRow({
               type="button"
               disabled={busy}
               onClick={() => void handleArchive()}
-              className="text-xs text-red-600 underline"
+              className="text-xs font-semibold text-error underline"
             >
               Archive
             </button>
@@ -519,10 +522,10 @@ function CreateCategoryForm({
         onChange={(e) => setName(e.target.value)}
         className="input flex-1"
       />
-      <button type="submit" disabled={submitting} className="btn-primary">
-        {submitting ? 'Adding…' : 'Add category'}
-      </button>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      <Button type="submit" disabled={submitting} loading={submitting}>
+        Add category
+      </Button>
+      {error && <p className="text-sm font-medium text-error">{error}</p>}
     </form>
   );
 }
@@ -594,10 +597,10 @@ function CreateItemForm({
           </option>
         ))}
       </select>
-      <button type="submit" disabled={submitting} className="btn-primary">
-        {submitting ? 'Adding…' : 'Add item'}
-      </button>
-      {error && <p className="w-full text-sm text-red-600">{error}</p>}
+      <Button type="submit" disabled={submitting} loading={submitting}>
+        Add item
+      </Button>
+      {error && <p className="w-full text-sm font-medium text-error">{error}</p>}
     </form>
   );
 }

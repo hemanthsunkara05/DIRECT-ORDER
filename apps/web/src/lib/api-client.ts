@@ -171,6 +171,26 @@ export interface RestaurantAddress {
   landmark: string | null;
 }
 
+/**
+ * The write shape `PATCH /restaurant/profile`'s `address` field actually
+ * accepts (`UpsertAddressDto`, apps/api) — optional fields are `.optional()`
+ * (undefined-only), not `.nullable()`, so `null` 422s with "Expected
+ * string, received null". Distinct from `RestaurantAddress` (the READ
+ * shape, where these fields really are `string | null` once persisted)
+ * so a caller can't accidentally satisfy the write type by passing `null`.
+ */
+export interface RestaurantAddressInput {
+  line1: string;
+  line2?: string;
+  locality?: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  latitude?: number;
+  longitude?: number;
+  landmark?: string;
+}
+
 export interface RestaurantProfile {
   id: string;
   slug: string;
@@ -184,6 +204,9 @@ export interface RestaurantProfile {
   orderingEnabled: boolean;
   createdAt: string;
   address: RestaurantAddress | null;
+  submittedAt: string | null;
+  decidedAt: string | null;
+  rejectionReason: string | null;
 }
 
 export interface RestaurantBrandingData {
@@ -236,7 +259,7 @@ export const restaurantApi = {
       phone: string;
       email: string;
       timezone: string;
-      address: RestaurantAddress;
+      address: RestaurantAddressInput;
     }>,
     restaurantId?: string,
   ) =>
@@ -1063,6 +1086,19 @@ export interface AdminRestaurant {
   status: 'DRAFT' | 'PENDING_APPROVAL' | 'ACTIVE' | 'SUSPENDED' | 'CLOSED' | 'REJECTED';
   orderingEnabled: boolean;
   createdAt: string;
+  submittedAt: string | null;
+}
+
+export interface AdminRestaurantDetail {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  status: AdminRestaurant['status'];
+  submittedAt: string | null;
+  address: RestaurantAddress | null;
+  branding: RestaurantBrandingData | null;
+  menuSummary: { categoryCount: number; itemCount: number };
 }
 
 export interface AdminUserSummary {
@@ -1159,10 +1195,16 @@ export const adminApi = {
     }>('/admin/health', { method: 'GET' }),
 
   restaurants: {
-    list: (params: { status?: string; search?: string; cursor?: string } = {}) =>
-      requestPage<AdminRestaurant>(`/admin/restaurants${qs(params)}`, { method: 'GET' }),
+    list: (
+      params: { status?: string; search?: string; cursor?: string; order?: 'newest' | 'oldest' } = {},
+    ) => requestPage<AdminRestaurant>(`/admin/restaurants${qs(params)}`, { method: 'GET' }),
+    /** Phase 21a — the Approval Queue's per-row decision detail (address, branding, menu summary). */
+    detail: (id: string) => get<AdminRestaurantDetail>(`/admin/restaurants/${id}/detail`),
     approve: (id: string) =>
       post<{ id: string; status: string }>(`/admin/restaurants/${id}/approve`, {}),
+    /** Phase 21a — requires `restaurant:reject`; mirrors `suspend()`'s reason-required shape. */
+    reject: (id: string, reason: string) =>
+      post<{ id: string; status: string }>(`/admin/restaurants/${id}/reject`, { reason }),
     suspend: (id: string, reason: string) =>
       post<{ id: string; status: string }>(`/admin/restaurants/${id}/suspend`, { reason }),
     reinstate: (id: string) =>
