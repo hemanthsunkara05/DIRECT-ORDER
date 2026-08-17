@@ -6,9 +6,8 @@ import Link from 'next/link';
  * IMPLEMENTATION_HANDOFF.md — no public "browse all restaurants" search
  * exists) — each restaurant is reached through its own branded ordering
  * link (`/r/:slug`), never discovered from here. This page is a minimal
- * "start here" surface: what the platform is, links into the two seeded
- * demo restaurants for local/dev use, and the staff/admin login entry
- * points. It replaces the Phase 1 placeholder ("the customer ordering
+ * "start here" surface: what the platform is, plus the staff/admin login
+ * entry points. It replaces the Phase 1 placeholder ("the customer ordering
  * experience is not built yet"), which was never updated after the real
  * ordering experience shipped in Phase 7 and sat stale through 19 more
  * phases of development.
@@ -22,26 +21,6 @@ export default function HomePage() {
           Commission-free direct ordering for independent restaurants. Each restaurant has its own
           branded ordering link — there is no cross-restaurant marketplace here by design.
         </p>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-slate-400">
-          Demo restaurants
-        </h2>
-        <div className="flex gap-4">
-          <Link
-            href="/r/spice-route"
-            className="rounded-md border border-slate-200 px-4 py-2 text-sm font-medium hover:bg-slate-50"
-          >
-            Spice Route
-          </Link>
-          <Link
-            href="/r/copper-kettle"
-            className="rounded-md border border-slate-200 px-4 py-2 text-sm font-medium hover:bg-slate-50"
-          >
-            Copper Kettle
-          </Link>
-        </div>
       </div>
 
       <div className="flex gap-6 text-sm">
