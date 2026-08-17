@@ -1,7 +1,36 @@
 import type { Metadata } from 'next';
 import { connection } from 'next/server';
+import { Bricolage_Grotesque, Instrument_Sans, Spline_Sans_Mono } from 'next/font/google';
 import { SessionProvider } from '@/lib/auth/session-context';
 import './globals.css';
+
+/**
+ * Counter's three typefaces (readme.md, tokens/fonts.css), self-hosted
+ * via `next/font/google` rather than the reference's own `@import` —
+ * self-hosting avoids a runtime request to Google Fonts and needs no
+ * CSP `font-src` relaxation (middleware.ts's `default-src 'self'`
+ * already covers same-origin font files). Weight sets match the
+ * reference's `@import` line exactly (400/600/700/800 for Bricolage,
+ * 400/500/600 for the other two) — no extra weights bundled.
+ */
+const bricolage = Bricolage_Grotesque({
+  subsets: ['latin'],
+  weight: ['400', '600', '700', '800'],
+  variable: '--font-bricolage',
+  display: 'swap',
+});
+const instrument = Instrument_Sans({
+  subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  variable: '--font-instrument',
+  display: 'swap',
+});
+const splineMono = Spline_Sans_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  variable: '--font-spline-mono',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'Direct-Order',
@@ -22,8 +51,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   await connection();
 
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-white text-slate-900 antialiased">
+    <html lang="en" className={`${bricolage.variable} ${instrument.variable} ${splineMono.variable}`}>
+      <body className="min-h-screen antialiased" style={{ background: 'var(--bg)', color: 'var(--text-body)', fontFamily: 'var(--font-body)' }}>
         <SessionProvider>{children}</SessionProvider>
       </body>
     </html>

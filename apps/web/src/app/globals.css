@@ -2,14 +2,184 @@
 @tailwind components;
 @tailwind utilities;
 
+/**
+ * Counter — Direct-Order's design system. Values copied verbatim from
+ * `Admin console build verification package/_ds/.../tokens/*.css` (the
+ * reference package's own token source), not re-derived or rounded.
+ * `--font-*` are declared here but loaded via `next/font/google` in
+ * layout.tsx, not `@import` — self-hosted, so no CSP `font-src`
+ * relaxation is needed and no external request happens at runtime.
+ *
+ * Convention going forward: no raw `slate-*`/`amber-*`/`red-*`/`gray-*`
+ * Tailwind classes in `apps/web` — use the semantic tokens below (via
+ * the `ink-*`/`brand-*`/`fresh`/`warn`/`error` Tailwind color keys in
+ * tailwind.config.ts, or the CSS variables directly for values Tailwind
+ * doesn't expose, like `--sh-1`/`--bw`). Enforced by eslint.config.js's
+ * `no-restricted-syntax` override for every file already migrated;
+ * extend that file's glob as more pages move onto the token system —
+ * see docs/02 or the migration order in the UI Build Gap Report.
+ */
+:root {
+  /* Ink — navy chrome/text, never black */
+  --ink-100: #f1f4f8;
+  --ink-200: #dee5ee;
+  --ink-300: #bcc9da;
+  --ink-400: #93a6bf;
+  --ink-500: #6b82a1;
+  --ink-600: #4c6485;
+  --ink-700: #35496a;
+  --ink-800: #24344f;
+  --ink-900: #16223a;
+
+  /* Brand — swappable per restaurant; DirectOrder's own default is berry magenta */
+  --brand-100: #fdedf4;
+  --brand-200: #fad1e4;
+  --brand-300: #f5a9ca;
+  --brand-400: #ed74a8;
+  --brand-500: #de3e82;
+  --brand-600: #c81e68;
+  --brand-700: #a11552;
+  --brand-800: #7a0f40;
+  --brand-900: #560a2c;
+
+  /* Fresh — live order progress & success only, never decorative */
+  --fresh-100: #e9f8f0;
+  --fresh-500: #1fa06a;
+  --fresh-700: #157a50;
+
+  /* Semantic */
+  --warn: #e8930c;
+  --warn-100: #fbf1de;
+  --warn-700: #9a6206;
+  --error: #c2303b;
+  --error-100: #fbeaec;
+  --error-700: #8e2129;
+
+  /* Food-safety marks (FSSAI convention) — never restyled or brand-tinted */
+  --veg: #008533;
+  --nonveg: #963b20;
+
+  /* Ground */
+  --bg: #fbfaf7;
+  --surface: #ffffff;
+  --border: var(--ink-200);
+  --border-strong: var(--ink-300);
+
+  /* Semantic aliases */
+  --text-strong: var(--ink-900);
+  --text-body: var(--ink-800);
+  --text-muted: var(--ink-500);
+  --text-faint: var(--ink-400);
+  --accent: var(--brand-600);
+  --accent-hover: var(--brand-700);
+  --accent-tint: var(--brand-100);
+  --accent-text: var(--brand-700);
+  --focus-ring: var(--brand-100);
+
+  /* Shape */
+  --r-card: 12px;
+  --r-ctrl: 8px;
+  --r-sm: 3px;
+  --r-pill: 999px;
+  --sh-1: 0 1px 2px rgba(22, 34, 58, 0.06);
+  --sh-2: 0 4px 14px rgba(22, 34, 58, 0.08);
+  --sh-3: 0 12px 32px rgba(22, 34, 58, 0.14);
+  --bw: 1.5px;
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --dur-fast: 150ms;
+  --dur: 200ms;
+  --dur-slow: 250ms;
+
+  /* Spacing — 4px base */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+  --sp-16: 64px;
+  --gutter: 20px;
+  --content-max: 760px;
+
+  /* Type — font-family set here, actual @font-face injected by next/font */
+  --font-display: var(--font-bricolage), sans-serif;
+  --font-body: var(--font-instrument), sans-serif;
+  --font-mono: var(--font-spline-mono), monospace;
+  --ls-display: -0.02em;
+  --ls-eyebrow: 0.08em;
+}
+
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    letter-spacing: var(--ls-display);
+  }
+}
+
 @layer components {
+  /* `.input`/`.btn-*` keep their existing class names (many pages already
+     call them) but now resolve to token colors — every caller gets the
+     Counter palette for free, no per-page migration needed for these. */
   .input {
-    @apply rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none;
+    @apply w-full text-[15px] leading-normal outline-none transition-colors;
+    font-family: var(--font-body);
+    color: var(--text-body);
+    background: var(--surface);
+    border: var(--bw) solid var(--border);
+    border-radius: var(--r-ctrl);
+    padding: 11px 18px;
+  }
+  .input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--focus-ring);
   }
   .btn-primary {
-    @apply rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50;
+    font-family: var(--font-body);
+    color: #fff;
+    background: var(--accent);
+    border-radius: var(--r-ctrl);
+    padding: 11px 18px;
+    transition: background-color var(--dur) var(--ease), transform 60ms var(--ease);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+  .btn-primary:active:not(:disabled) {
+    transform: scale(0.97);
   }
   .btn-secondary {
-    @apply rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50;
+    font-family: var(--font-body);
+    color: var(--text-body);
+    background: var(--surface);
+    border: var(--bw) solid var(--border-strong);
+    border-radius: var(--r-ctrl);
+    padding: 11px 18px;
+    transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease), transform 60ms var(--ease);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--accent-tint);
+    border-color: var(--accent);
+  }
+  .btn-secondary:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-primary,
+  .btn-secondary {
+    transition: none;
+  }
+  .btn-primary:active:not(:disabled),
+  .btn-secondary:active:not(:disabled) {
+    transform: none;
   }
 }

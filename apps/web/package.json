@@ -14,6 +14,7 @@
   "dependencies": {
     "@direct-order/contracts": "workspace:*",
     "@direct-order/money": "workspace:*",
+    "lucide-react": "^1.31.0",
     "next": "^15.1.4",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
