@@ -227,7 +227,7 @@ function InviteForm({ restaurantId, onInvited }: { restaurantId: string; onInvit
         <select
           value={role}
           onChange={(e) => setRole(e.target.value as 'STAFF' | 'MANAGER' | 'OWNER')}
-          className="input"
+          className="input w-auto shrink-0"
         >
           <option value="STAFF">Staff</option>
           <option value="MANAGER">Manager</option>

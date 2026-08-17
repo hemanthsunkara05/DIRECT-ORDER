@@ -589,7 +589,7 @@ function CreateItemForm({
       <select
         value={dietaryTag}
         onChange={(e) => setDietaryTag(e.target.value as DietaryTag)}
-        className="input"
+        className="input w-auto shrink-0"
       >
         {DIETARY_TAGS.map((tag) => (
           <option key={tag} value={tag}>
