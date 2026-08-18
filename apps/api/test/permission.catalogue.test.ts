@@ -24,9 +24,11 @@ restaurant:availability | x | x | x |   |   |   | x
 restaurant:approve      |   |   |   |   | x |   | x
 restaurant:reject       |   |   |   |   | x |   | x
 restaurant:suspend      |   |   |   |   | x |   | x
+restaurant:create       |   |   |   |   | x |   | x
+restaurant:admin_edit   |   |   |   |   | x |   | x
 menu:read               | x | x | x | x | x |   | x
-menu:write              |   | x | x |   |   |   | x
-menu:availability       | x | x | x |   |   |   | x
+menu:write              |   | x | x |   | x |   | x
+menu:availability       | x | x | x |   | x |   | x
 orders:read             | x | x | x | x | x | x | x
 orders:accept           | x | x | x |   |   |   |
 orders:reject           | x | x | x |   |   |   |

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { AdminGuard } from '@/lib/auth/admin-guard';
 import { ApiError, adminApi, type AdminRestaurant } from '@/lib/api-client';
 import { ReasonModal } from '@/components/ui/ReasonModal';
@@ -86,7 +87,15 @@ function RestaurantsDashboard() {
 
   return (
     <main className="mx-auto max-w-4xl p-6">
-      <h1 className="mb-2 text-xl font-semibold">Restaurants</h1>
+      <div className="mb-2 flex items-center justify-between">
+        <h1 className="text-xl font-semibold">Restaurants</h1>
+        <Link
+          href="/admin/restaurants/new"
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+        >
+          + New restaurant
+        </Link>
+      </div>
 
       {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
 
@@ -103,9 +112,24 @@ function RestaurantsDashboard() {
             <tr key={r.id} className="border-b border-slate-100">
               <td className="py-2">{r.name}</td>
               <td>
-                <StatusPill label={statusLabel(r.status)} tone={RESTAURANT_STATUS_TONE[r.status] ?? 'ink'} />
+                <StatusPill
+                  label={statusLabel(r.status)}
+                  tone={RESTAURANT_STATUS_TONE[r.status] ?? 'ink'}
+                />
               </td>
               <td className="flex gap-2 py-2">
+                <Link
+                  href={`/admin/restaurants/${r.id}/edit`}
+                  className="text-indigo-600 underline"
+                >
+                  Edit
+                </Link>
+                <Link
+                  href={`/admin/restaurants/${r.id}/menu`}
+                  className="text-indigo-600 underline"
+                >
+                  Menu
+                </Link>
                 {r.status === 'PENDING_APPROVAL' && (
                   <>
                     <button

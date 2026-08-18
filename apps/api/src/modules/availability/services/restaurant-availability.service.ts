@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { ClosurePeriod, OperatingHours, Restaurant } from '@prisma/client';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { AuditService } from '../../../platform/audit/audit.service.js';
+import type { AuditActor } from '../../../platform/audit/audit.types.js';
 import { NotFoundError, ValidationError } from '../../../platform/errors/app-error.js';
 import { OperatingHoursRepository } from '../repositories/operating-hours.repository.js';
 import { ClosurePeriodRepository } from '../repositories/closure-period.repository.js';
@@ -30,7 +31,7 @@ export class RestaurantAvailabilityService {
 
   async setHours(
     restaurantId: string,
-    actorId: string,
+    actor: AuditActor,
     input: SetHoursInput,
   ): Promise<OperatingHours[]> {
     const rows = input.days.map((day) => {
@@ -45,8 +46,8 @@ export class RestaurantAvailabilityService {
     const created = await this.hours.replaceAll(restaurantId, rows);
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'RESTAURANT_HOURS_SET',
       entityType: 'OperatingHours',
       restaurantId,
@@ -62,7 +63,7 @@ export class RestaurantAvailabilityService {
 
   async createClosure(
     restaurantId: string,
-    actorId: string,
+    actor: AuditActor,
     input: CreateClosureInput,
   ): Promise<ClosurePeriod> {
     if (input.endsAt && input.endsAt.getTime() <= input.startsAt.getTime()) {
@@ -73,12 +74,12 @@ export class RestaurantAvailabilityService {
       startsAt: input.startsAt,
       endsAt: input.endsAt,
       reason: input.reason,
-      createdByUserId: actorId,
+      createdByUserId: actor.id,
     });
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'RESTAURANT_CLOSURE_CREATED',
       entityType: 'ClosurePeriod',
       entityId: closure.id,
@@ -89,7 +90,7 @@ export class RestaurantAvailabilityService {
     return closure;
   }
 
-  async endClosure(restaurantId: string, actorId: string, closureId: string): Promise<void> {
+  async endClosure(restaurantId: string, actor: AuditActor, closureId: string): Promise<void> {
     const existing = await this.closures.findById(restaurantId, closureId);
     if (!existing) {
       throw new NotFoundError('Closure period not found.');
@@ -102,8 +103,8 @@ export class RestaurantAvailabilityService {
     }
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'RESTAURANT_CLOSURE_ENDED',
       entityType: 'ClosurePeriod',
       entityId: closureId,
@@ -121,7 +122,7 @@ export class RestaurantAvailabilityService {
    */
   async setOrderingEnabled(
     restaurantId: string,
-    actorId: string,
+    actor: AuditActor,
     orderingEnabled: boolean,
   ): Promise<Restaurant> {
     const updated = await this.prisma.restaurant.update({
@@ -130,8 +131,8 @@ export class RestaurantAvailabilityService {
     });
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'RESTAURANT_ORDERING_TOGGLED',
       entityType: 'Restaurant',
       entityId: restaurantId,

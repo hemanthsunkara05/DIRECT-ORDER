@@ -53,7 +53,11 @@ export class MenuCategoryController {
     @Body() body: unknown,
   ) {
     const input = CreateCategoryDto.parse(body);
-    const category = await this.categories.create(tenant.restaurantId, user.id, input);
+    const category = await this.categories.create(
+      tenant.restaurantId,
+      { type: 'RESTAURANT_USER', id: user.id },
+      input,
+    );
     return ok(toPublicCategory(category));
   }
 
@@ -67,7 +71,11 @@ export class MenuCategoryController {
     @Body() body: unknown,
   ) {
     const input = ReorderDto.parse(body);
-    await this.categories.reorder(tenant.restaurantId, user.id, input);
+    await this.categories.reorder(
+      tenant.restaurantId,
+      { type: 'RESTAURANT_USER', id: user.id },
+      input,
+    );
     return ok({ status: 'ok' });
   }
 
@@ -82,7 +90,12 @@ export class MenuCategoryController {
     @Body() body: unknown,
   ) {
     const input = UpdateCategoryDto.parse(body);
-    const category = await this.categories.update(tenant.restaurantId, user.id, id, input);
+    const category = await this.categories.update(
+      tenant.restaurantId,
+      { type: 'RESTAURANT_USER', id: user.id },
+      id,
+      input,
+    );
     return ok(toPublicCategory(category));
   }
 
@@ -95,7 +108,11 @@ export class MenuCategoryController {
     @CurrentUser() user: User,
     @Param('id') id: string,
   ) {
-    await this.categories.archive(tenant.restaurantId, user.id, id);
+    await this.categories.archive(
+      tenant.restaurantId,
+      { type: 'RESTAURANT_USER', id: user.id },
+      id,
+    );
     return ok({ status: 'ok' });
   }
 }

@@ -1,11 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type {
+  AuditLog,
   Restaurant,
   RestaurantAddress,
   RestaurantBranding,
   RestaurantSettings,
 } from '@prisma/client';
 import { AuditService } from '../../../platform/audit/audit.service.js';
+import type { AuditActor } from '../../../platform/audit/audit.types.js';
 import { OutboxService } from '../../../platform/outbox/outbox.service.js';
 import { ConflictError, NotFoundError } from '../../../platform/errors/app-error.js';
 import { RestaurantRepository } from '../repositories/restaurant.repository.js';
@@ -62,7 +64,7 @@ export class RestaurantProfileService {
 
   async updateProfile(
     restaurantId: string,
-    actorId: string,
+    actor: AuditActor,
     input: UpdateProfileInput,
   ): Promise<RestaurantWithAddress> {
     const before = await this.requireRestaurant(restaurantId);
@@ -77,8 +79,8 @@ export class RestaurantProfileService {
       : await this.addresses.find(restaurantId);
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'RESTAURANT_PROFILE_UPDATED',
       entityType: 'Restaurant',
       entityId: restaurantId,
@@ -101,13 +103,13 @@ export class RestaurantProfileService {
 
   async updateBranding(
     restaurantId: string,
-    actorId: string,
+    actor: AuditActor,
     input: UpsertRestaurantBrandingInput,
   ): Promise<RestaurantBranding> {
     const updated = await this.branding.upsert(restaurantId, input);
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'RESTAURANT_BRANDING_UPDATED',
       entityType: 'RestaurantBranding',
       entityId: updated.id,
@@ -122,13 +124,13 @@ export class RestaurantProfileService {
 
   async updateSettings(
     restaurantId: string,
-    actorId: string,
+    actor: AuditActor,
     input: UpsertRestaurantSettingsInput,
   ): Promise<RestaurantSettings> {
     const updated = await this.settings.upsert(restaurantId, input);
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'RESTAURANT_SETTINGS_UPDATED',
       entityType: 'RestaurantSettings',
       entityId: updated.id,
@@ -151,7 +153,7 @@ export class RestaurantProfileService {
    * working once the guard accepts `REJECTED`, rather than a separate
    * `/resubmit` route calling identical logic.
    */
-  async submitOnboarding(restaurantId: string, actorId: string): Promise<Restaurant> {
+  async submitOnboarding(restaurantId: string, actor: AuditActor): Promise<Restaurant> {
     const restaurant = await this.requireRestaurant(restaurantId);
     // Captured as a primitive before `update()` runs below — see
     // `RestaurantStateService.transition()`'s identical doc comment: the
@@ -176,8 +178,8 @@ export class RestaurantProfileService {
     });
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'RESTAURANT_ONBOARDING_SUBMITTED',
       entityType: 'Restaurant',
       entityId: restaurantId,
@@ -196,6 +198,18 @@ export class RestaurantProfileService {
     );
 
     return updated;
+  }
+
+  /**
+   * Owner-facing "an admin changed something" surface (Phase 22, docs/06
+   * BR-172) — deliberately strips actorId/before/after: the owner learns
+   * that Direct-Order made a change and roughly what, not which admin or
+   * the raw diff. Backed entirely by the existing audit read path, no
+   * schema change.
+   */
+  async getRecentAdminActivity(restaurantId: string, limit = 20): Promise<AuditLog[]> {
+    const page = await this.audit.findByRestaurant(restaurantId, { actorType: 'ADMIN', limit });
+    return page.items;
   }
 
   private async requireRestaurant(restaurantId: string): Promise<Restaurant> {

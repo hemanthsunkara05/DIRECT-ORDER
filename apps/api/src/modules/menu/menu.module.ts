@@ -16,5 +16,8 @@ import { MenuItemController } from './controllers/menu-item.controller.js';
   imports: [IdentityModule],
   controllers: [MenuCategoryController, MenuItemController],
   providers: [MenuCategoryRepository, MenuItemRepository, MenuCategoryService, MenuItemService],
+  // Phase 22: exported so AdminModule can reuse the exact same menu CRUD
+  // logic the owner-side controllers call, rather than duplicating it.
+  exports: [MenuCategoryService, MenuItemService],
 })
 export class MenuModule {}

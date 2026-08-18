@@ -32,6 +32,8 @@ export const PERMISSIONS = [
   'restaurant:approve',
   'restaurant:reject',
   'restaurant:suspend',
+  'restaurant:create',
+  'restaurant:admin_edit',
   'menu:read',
   'menu:write',
   'menu:availability',
@@ -100,9 +102,26 @@ const MATRIX: Record<Permission, readonly Role[]> = {
   'restaurant:approve': ['ADMIN_OPERATIONS', 'SUPER_ADMIN'],
   'restaurant:reject': ['ADMIN_OPERATIONS', 'SUPER_ADMIN'],
   'restaurant:suspend': ['ADMIN_OPERATIONS', 'SUPER_ADMIN'],
+  // Phase 22: distinct from restaurant:approve/reject/suspend (which are
+  // decisions on a restaurant an owner already created) — these gate
+  // admin-initiated CREATION and CONTENT EDITS on an owner's behalf.
+  // ADMIN_OPERATIONS holds both: it's the realistic concierge-onboarding
+  // actor per the business driver (signing boycotting restaurants onto
+  // live links fast); restricting to SUPER_ADMIN-only would block the
+  // workflow this permission exists to enable (docs/06 BR-169).
+  'restaurant:create': ['ADMIN_OPERATIONS', 'SUPER_ADMIN'],
+  'restaurant:admin_edit': ['ADMIN_OPERATIONS', 'SUPER_ADMIN'],
   'menu:read': ['STAFF', 'MANAGER', 'OWNER', 'SUPPORT', 'ADMIN_OPERATIONS', 'SUPER_ADMIN'],
-  'menu:write': ['MANAGER', 'OWNER', 'SUPER_ADMIN'],
-  'menu:availability': ['STAFF', 'MANAGER', 'OWNER', 'SUPER_ADMIN'],
+  // Phase 22: ADMIN_OPERATIONS added so it can reach the new
+  // admin-only /admin/restaurants/:id/menu/* routes. Safe for the
+  // EXISTING owner-side tenant-scoped /restaurant/menu/* routes because
+  // AuthorizationGuard's @TenantScoped() branch resolves a role only from
+  // an actual RestaurantStaff membership row — an ADMIN_OPERATIONS
+  // principal has an AdminUser row, not a RestaurantStaff row, so it
+  // still can't reach those routes regardless of holding this permission
+  // (docs/05 §9.2 note).
+  'menu:write': ['MANAGER', 'OWNER', 'ADMIN_OPERATIONS', 'SUPER_ADMIN'],
+  'menu:availability': ['STAFF', 'MANAGER', 'OWNER', 'ADMIN_OPERATIONS', 'SUPER_ADMIN'],
   'orders:read': [
     'STAFF',
     'MANAGER',

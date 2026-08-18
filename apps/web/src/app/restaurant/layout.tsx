@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { restaurantApi, type RestaurantProfile } from '@/lib/api-client';
+import {
+  restaurantApi,
+  restaurantActivityApi,
+  type RestaurantActivityEntry,
+  type RestaurantProfile,
+} from '@/lib/api-client';
 import { useSession } from '@/lib/auth/session-context';
 import { RestaurantSidebar } from '@/components/ui/RestaurantSidebar';
 
@@ -47,6 +52,7 @@ export default function RestaurantLayout({ children }: { children: React.ReactNo
             onResubmitted={setProfile}
           />
         )}
+        {activeRestaurantId && <AdminActivityBanner restaurantId={activeRestaurantId} />}
         {children}
       </div>
     </div>
@@ -97,7 +103,8 @@ function StatusBanner({
     return (
       <Banner tone="warn">
         <span>
-          Submitted{profile.submittedAt ? ` on ${new Date(profile.submittedAt).toLocaleDateString()}` : ''} —
+          Submitted
+          {profile.submittedAt ? ` on ${new Date(profile.submittedAt).toLocaleDateString()}` : ''} —
           awaiting admin approval.
         </span>
       </Banner>
@@ -108,7 +115,8 @@ function StatusBanner({
     return (
       <Banner tone="error">
         <span>
-          Your submission was rejected{profile.rejectionReason ? `: ${profile.rejectionReason}` : '.'}
+          Your submission was rejected
+          {profile.rejectionReason ? `: ${profile.rejectionReason}` : '.'}
         </span>
         {error && <span className="font-medium">{error}</span>}
         <button
@@ -126,7 +134,9 @@ function StatusBanner({
   if (profile.status === 'SUSPENDED') {
     return (
       <Banner tone="error">
-        <span>Your restaurant is suspended and not accepting new orders. Contact support for details.</span>
+        <span>
+          Your restaurant is suspended and not accepting new orders. Contact support for details.
+        </span>
       </Banner>
     );
   }
@@ -134,10 +144,78 @@ function StatusBanner({
   return null;
 }
 
-function Banner({ tone, children }: { tone: 'warn' | 'error'; children: React.ReactNode }) {
-  const classes = tone === 'warn' ? 'bg-warn-100 text-warn-700 border-warn' : 'bg-error-100 text-error-700 border-error';
+/**
+ * Owner-facing "an admin changed something" surface (Phase 22, docs/06
+ * BR-172) — best-effort, same as StatusBanner: a failed fetch silently
+ * omits the banner. Deliberately shows action + relative time only, never
+ * which admin or the raw diff (matches what GET /restaurant/activity
+ * itself returns).
+ */
+function AdminActivityBanner({ restaurantId }: { restaurantId: string }) {
+  const [entries, setEntries] = useState<RestaurantActivityEntry[] | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    restaurantActivityApi
+      .list(restaurantId)
+      .then((rows) => {
+        if (!cancelled) setEntries(rows);
+      })
+      .catch(() => {
+        // Best-effort — see doc comment above.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [restaurantId]);
+
+  if (!entries || entries.length === 0) return null;
+
   return (
-    <div className={`flex flex-wrap items-center justify-center gap-3 border-b px-4 py-2 text-center text-sm ${classes}`}>
+    <Banner tone="warn">
+      <span>
+        Direct-Order support made {entries.length} change{entries.length === 1 ? '' : 's'} to your
+        listing recently.
+      </span>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="font-semibold underline"
+      >
+        {expanded ? 'Hide details' : 'View details'}
+      </button>
+      {expanded && (
+        <ul className="w-full text-left text-xs">
+          {entries.map((e) => (
+            <li key={e.id}>
+              {formatActivityAction(e.action)} — {new Date(e.createdAt).toLocaleString()}
+              {e.reason ? ` (${e.reason})` : ''}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Banner>
+  );
+}
+
+function formatActivityAction(action: string): string {
+  return action
+    .toLowerCase()
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function Banner({ tone, children }: { tone: 'warn' | 'error'; children: React.ReactNode }) {
+  const classes =
+    tone === 'warn'
+      ? 'bg-warn-100 text-warn-700 border-warn'
+      : 'bg-error-100 text-error-700 border-error';
+  return (
+    <div
+      className={`flex flex-wrap items-center justify-center gap-3 border-b px-4 py-2 text-center text-sm ${classes}`}
+    >
       {children}
     </div>
   );

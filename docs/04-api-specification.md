@@ -179,39 +179,40 @@ Errors: `CART_EMPTY`, `CART_NOT_FOUND`, `RESTAURANT_UNAVAILABLE`, `ITEM_UNAVAILA
 
 Every endpoint resolves the tenant from the authenticated membership. All return 404 for out-of-tenant resources.
 
-| Method       | Path                                      | Min role  | Purpose                                                      |
-| ------------ | ----------------------------------------- | --------- | ------------------------------------------------------------ |
-| GET/PATCH    | `/restaurant/profile`                     | MANAGER   | Profile. Response includes `submittedAt`/`decidedAt`/`rejectionReason` (Phase 21a) — internal moderation state, owner-facing only, never on the public restaurant endpoint |
+| Method       | Path                                      | Min role  | Purpose                                                                                                                                                                       |
+| ------------ | ----------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET/PATCH    | `/restaurant/profile`                     | MANAGER   | Profile. Response includes `submittedAt`/`decidedAt`/`rejectionReason` (Phase 21a) — internal moderation state, owner-facing only, never on the public restaurant endpoint    |
 | POST         | `/restaurant/onboarding/submit`           | MANAGER   | DRAFT/REJECTED → PENDING_APPROVAL. Requires a saved address. Phase 21a widened the guard to also accept REJECTED — the same endpoint doubles as "resubmit," no separate route |
-| GET/PATCH    | `/restaurant/branding`                    | MANAGER   | Branding                                                     |
-| GET/PATCH    | `/restaurant/settings`                    | MANAGER   | Settings                                                     |
-| GET/PUT      | `/restaurant/hours`                       | MANAGER   | Operating hours                                              |
-| POST         | `/restaurant/closures`                    | MANAGER   | Temporary closure                                            |
-| PATCH        | `/restaurant/availability`                | STAFF     | Toggle `ordering_enabled` — cannot override suspension       |
-| GET/POST     | `/restaurant/menu/categories`             | MANAGER   | Categories                                                   |
-| PATCH/DELETE | `/restaurant/menu/categories/:id`         | MANAGER   | Update / archive                                             |
-| POST         | `/restaurant/menu/categories/reorder`     | MANAGER   | Bulk reorder, transactional                                  |
-| GET/POST     | `/restaurant/menu/items`                  | MANAGER   | Items                                                        |
-| PATCH/DELETE | `/restaurant/menu/items/:id`              | MANAGER   | Update / archive                                             |
-| PATCH        | `/restaurant/menu/items/:id/availability` | **STAFF** | Toggle availability — the one menu action kitchen staff need |
-| POST         | `/restaurant/menu/items/reorder`          | MANAGER   | Bulk reorder                                                 |
-| POST         | `/restaurant/uploads/presign`             | MANAGER   | Presigned image upload                                       |
-| GET          | `/restaurant/orders`                      | STAFF     | Order queue — filter, cursor-paginated                       |
-| GET          | `/restaurant/orders/stream`               | STAFF     | **SSE** live order feed                                      |
-| GET          | `/restaurant/orders/:id`                  | STAFF     | Detail                                                       |
-| POST         | `/restaurant/orders/:id/accept`           | STAFF     | Idempotency-Key required                                     |
-| POST         | `/restaurant/orders/:id/reject`           | STAFF     | Reason required; triggers refund                             |
-| POST         | `/restaurant/orders/:id/preparing`        | STAFF     | —                                                            |
-| POST         | `/restaurant/orders/:id/ready`            | STAFF     | Triggers delivery dispatch                                   |
-| GET          | `/restaurant/staff`                       | MANAGER   | List                                                         |
-| POST         | `/restaurant/staff/invitations`           | OWNER     | Invite                                                       |
-| PATCH        | `/restaurant/staff/:id/role`              | OWNER     | Change role — cannot demote last owner                       |
-| DELETE       | `/restaurant/staff/:id`                   | OWNER     | Disable — revokes sessions                                   |
-| GET          | `/restaurant/reviews`                     | MANAGER   | Own reviews                                                  |
-| POST         | `/restaurant/reviews/:id/response`        | MANAGER   | Respond                                                      |
-| GET/POST     | `/restaurant/promotions`                  | MANAGER   | Own promotions only                                          |
-| GET          | `/restaurant/analytics/overview`          | MANAGER   | Own metrics only                                             |
-| GET/POST     | `/restaurant/support/cases`               | MANAGER   | Own cases                                                    |
+| GET/PATCH    | `/restaurant/branding`                    | MANAGER   | Branding                                                                                                                                                                      |
+| GET/PATCH    | `/restaurant/settings`                    | MANAGER   | Settings                                                                                                                                                                      |
+| GET/PUT      | `/restaurant/hours`                       | MANAGER   | Operating hours                                                                                                                                                               |
+| POST         | `/restaurant/closures`                    | MANAGER   | Temporary closure                                                                                                                                                             |
+| PATCH        | `/restaurant/availability`                | STAFF     | Toggle `ordering_enabled` — cannot override suspension                                                                                                                        |
+| GET/POST     | `/restaurant/menu/categories`             | MANAGER   | Categories                                                                                                                                                                    |
+| PATCH/DELETE | `/restaurant/menu/categories/:id`         | MANAGER   | Update / archive                                                                                                                                                              |
+| POST         | `/restaurant/menu/categories/reorder`     | MANAGER   | Bulk reorder, transactional                                                                                                                                                   |
+| GET/POST     | `/restaurant/menu/items`                  | MANAGER   | Items                                                                                                                                                                         |
+| PATCH/DELETE | `/restaurant/menu/items/:id`              | MANAGER   | Update / archive                                                                                                                                                              |
+| PATCH        | `/restaurant/menu/items/:id/availability` | **STAFF** | Toggle availability — the one menu action kitchen staff need                                                                                                                  |
+| POST         | `/restaurant/menu/items/reorder`          | MANAGER   | Bulk reorder                                                                                                                                                                  |
+| POST         | `/restaurant/uploads/presign`             | MANAGER   | Presigned image upload                                                                                                                                                        |
+| GET          | `/restaurant/orders`                      | STAFF     | Order queue — filter, cursor-paginated                                                                                                                                        |
+| GET          | `/restaurant/orders/stream`               | STAFF     | **SSE** live order feed                                                                                                                                                       |
+| GET          | `/restaurant/orders/:id`                  | STAFF     | Detail                                                                                                                                                                        |
+| POST         | `/restaurant/orders/:id/accept`           | STAFF     | Idempotency-Key required                                                                                                                                                      |
+| POST         | `/restaurant/orders/:id/reject`           | STAFF     | Reason required; triggers refund                                                                                                                                              |
+| POST         | `/restaurant/orders/:id/preparing`        | STAFF     | —                                                                                                                                                                             |
+| POST         | `/restaurant/orders/:id/ready`            | STAFF     | Triggers delivery dispatch                                                                                                                                                    |
+| GET          | `/restaurant/staff`                       | MANAGER   | List                                                                                                                                                                          |
+| POST         | `/restaurant/staff/invitations`           | OWNER     | Invite                                                                                                                                                                        |
+| PATCH        | `/restaurant/staff/:id/role`              | OWNER     | Change role — cannot demote last owner                                                                                                                                        |
+| DELETE       | `/restaurant/staff/:id`                   | OWNER     | Disable — revokes sessions                                                                                                                                                    |
+| GET          | `/restaurant/reviews`                     | MANAGER   | Own reviews                                                                                                                                                                   |
+| POST         | `/restaurant/reviews/:id/response`        | MANAGER   | Respond                                                                                                                                                                       |
+| GET/POST     | `/restaurant/promotions`                  | MANAGER   | Own promotions only                                                                                                                                                           |
+| GET          | `/restaurant/analytics/overview`          | MANAGER   | Own metrics only                                                                                                                                                              |
+| GET/POST     | `/restaurant/support/cases`               | MANAGER   | Own cases                                                                                                                                                                     |
+| GET          | `/restaurant/activity`                    | MANAGER   | Phase 22 — recent Direct-Order admin edits to this restaurant (action + timestamp only, no admin identity or diff)                                                            |
 
 ### GET /restaurant/orders/stream (SSE)
 
@@ -252,34 +253,46 @@ Processing happens in the worker. A processing failure is retried from the store
 
 ## 8.7 Admin
 
-| Method   | Path                                | Role        | Purpose                                                           |
-| -------- | ----------------------------------- | ----------- | ----------------------------------------------------------------- |
-| GET      | `/admin/overview`                   | Any admin   | Platform metrics from rollups                                     |
-| GET      | `/admin/restaurants`                | OPERATIONS+ | Search / filter. `order=oldest` (Phase 21a) sorts by `submittedAt` ascending — the Approval Queue's FIFO view; default (unspecified) sorts by `createdAt` descending, unchanged |
-| GET      | `/admin/restaurants/:id/detail`     | OPERATIONS+ | Phase 21a — address, branding, menu summary for a decision        |
-| POST     | `/admin/restaurants/:id/approve`    | OPERATIONS+ | Approve onboarding                                                |
-| POST     | `/admin/restaurants/:id/reject`     | OPERATIONS+ | Phase 21a — `restaurant:reject`; reason required, audited         |
-| POST     | `/admin/restaurants/:id/suspend`    | OPERATIONS+ | Reason required, audited                                          |
-| POST     | `/admin/restaurants/:id/reinstate`  | OPERATIONS+ | Audited                                                           |
-| GET      | `/admin/users`                      | OPERATIONS+ | Search — never returns hashes                                     |
-| POST     | `/admin/users/:id/disable`          | SUPER_ADMIN | Revokes sessions                                                  |
-| GET      | `/admin/orders`                     | Any admin   | Cross-tenant search                                               |
-| POST     | `/admin/orders/:id/cancel`          | OPERATIONS+ | Reason required; goes through the state machine                   |
-| GET      | `/admin/payments`                   | FINANCE+    | Masked provider references                                        |
-| GET      | `/admin/refunds`                    | FINANCE+    | List                                                              |
-| GET      | `/admin/deliveries`                 | OPERATIONS+ | List + failures                                                   |
-| GET      | `/admin/notifications`              | OPERATIONS+ | Delivery log + DLQ                                                |
-| POST     | `/admin/notifications/:id/retry`    | OPERATIONS+ | Idempotent                                                        |
-| GET      | `/admin/reviews`                    | OPERATIONS+ | Moderation queue                                                  |
-| POST     | `/admin/reviews/:id/moderate`       | OPERATIONS+ | Reason required, audited                                          |
-| GET/POST | `/admin/promotions`                 | OPERATIONS+ | Platform promotions                                               |
-| GET      | `/admin/loyalty/:customerId`        | SUPPORT+    | Balance + ledger                                                  |
-| POST     | `/admin/loyalty/:customerId/adjust` | SUPER_ADMIN | Reason required; **writes a ledger entry**, never mutates balance |
-| GET      | `/admin/support/cases`              | SUPPORT+    | Queue                                                             |
-| POST     | `/admin/support/cases/:id/assign`   | SUPPORT+    | Assign                                                            |
-| POST     | `/admin/support/cases/:id/messages` | SUPPORT+    | INTERNAL or PUBLIC                                                |
-| GET      | `/admin/audit-logs`                 | SUPER_ADMIN | Read-only. **No write endpoint exists**                           |
-| GET      | `/admin/health`                     | Any admin   | Dependency health                                                 |
+| Method       | Path                                                           | Role        | Purpose                                                                                                                                                                         |
+| ------------ | -------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET          | `/admin/overview`                                              | Any admin   | Platform metrics from rollups                                                                                                                                                   |
+| GET          | `/admin/restaurants`                                           | OPERATIONS+ | Search / filter. `order=oldest` (Phase 21a) sorts by `submittedAt` ascending — the Approval Queue's FIFO view; default (unspecified) sorts by `createdAt` descending, unchanged |
+| GET          | `/admin/restaurants/:id/detail`                                | OPERATIONS+ | Phase 21a — address, branding, menu summary for a decision                                                                                                                      |
+| POST         | `/admin/restaurants/:id/approve`                               | OPERATIONS+ | Approve onboarding                                                                                                                                                              |
+| POST         | `/admin/restaurants/:id/reject`                                | OPERATIONS+ | Phase 21a — `restaurant:reject`; reason required, audited                                                                                                                       |
+| POST         | `/admin/restaurants/:id/suspend`                               | OPERATIONS+ | Reason required, audited                                                                                                                                                        |
+| POST         | `/admin/restaurants/:id/reinstate`                             | OPERATIONS+ | Audited                                                                                                                                                                         |
+| POST         | `/admin/restaurants`                                           | OPERATIONS+ | Phase 22 — `restaurant:create`. Creates a restaurant on an owner's behalf; `ownerEmail`/`ownerPhone` optionally pre-claim it, else it's placeholder-owned (unclaimed)           |
+| GET/PATCH    | `/admin/restaurants/:id/profile`                               | OPERATIONS+ | Phase 22 — GET is `restaurant:read`, PATCH is `restaurant:admin_edit`. Same fields/validation as the owner-side profile endpoint                                                |
+| GET/PATCH    | `/admin/restaurants/:id/branding`                              | OPERATIONS+ | Phase 22 — same split as profile above                                                                                                                                          |
+| GET/PUT      | `/admin/restaurants/:id/hours`                                 | OPERATIONS+ | Phase 22 — same split as profile above                                                                                                                                          |
+| POST         | `/admin/restaurants/:id/submit-for-approval`                   | OPERATIONS+ | Phase 22 — `restaurant:admin_edit`. Admin-authorized equivalent of the owner's onboarding-submit; still requires a separate approve action                                      |
+| GET/POST     | `/admin/restaurants/:restaurantId/menu/categories`             | OPERATIONS+ | Phase 22 — `menu:read`/`menu:write`, same DTOs/logic as the owner-side menu controller                                                                                          |
+| PATCH/DELETE | `/admin/restaurants/:restaurantId/menu/categories/:id`         | OPERATIONS+ | Phase 22 — `menu:write`                                                                                                                                                         |
+| POST         | `/admin/restaurants/:restaurantId/menu/categories/reorder`     | OPERATIONS+ | Phase 22 — `menu:write`                                                                                                                                                         |
+| GET/POST     | `/admin/restaurants/:restaurantId/menu/items`                  | OPERATIONS+ | Phase 22 — `menu:read`/`menu:write`                                                                                                                                             |
+| PATCH/DELETE | `/admin/restaurants/:restaurantId/menu/items/:id`              | OPERATIONS+ | Phase 22 — `menu:write`                                                                                                                                                         |
+| PATCH        | `/admin/restaurants/:restaurantId/menu/items/:id/availability` | OPERATIONS+ | Phase 22 — `menu:availability`                                                                                                                                                  |
+| POST         | `/admin/restaurants/:restaurantId/menu/items/reorder`          | OPERATIONS+ | Phase 22 — `menu:write`                                                                                                                                                         |
+| GET          | `/admin/users`                                                 | OPERATIONS+ | Search — never returns hashes                                                                                                                                                   |
+| POST         | `/admin/users/:id/disable`                                     | SUPER_ADMIN | Revokes sessions                                                                                                                                                                |
+| GET          | `/admin/orders`                                                | Any admin   | Cross-tenant search                                                                                                                                                             |
+| POST         | `/admin/orders/:id/cancel`                                     | OPERATIONS+ | Reason required; goes through the state machine                                                                                                                                 |
+| GET          | `/admin/payments`                                              | FINANCE+    | Masked provider references                                                                                                                                                      |
+| GET          | `/admin/refunds`                                               | FINANCE+    | List                                                                                                                                                                            |
+| GET          | `/admin/deliveries`                                            | OPERATIONS+ | List + failures                                                                                                                                                                 |
+| GET          | `/admin/notifications`                                         | OPERATIONS+ | Delivery log + DLQ                                                                                                                                                              |
+| POST         | `/admin/notifications/:id/retry`                               | OPERATIONS+ | Idempotent                                                                                                                                                                      |
+| GET          | `/admin/reviews`                                               | OPERATIONS+ | Moderation queue                                                                                                                                                                |
+| POST         | `/admin/reviews/:id/moderate`                                  | OPERATIONS+ | Reason required, audited                                                                                                                                                        |
+| GET/POST     | `/admin/promotions`                                            | OPERATIONS+ | Platform promotions                                                                                                                                                             |
+| GET          | `/admin/loyalty/:customerId`                                   | SUPPORT+    | Balance + ledger                                                                                                                                                                |
+| POST         | `/admin/loyalty/:customerId/adjust`                            | SUPER_ADMIN | Reason required; **writes a ledger entry**, never mutates balance                                                                                                               |
+| GET          | `/admin/support/cases`                                         | SUPPORT+    | Queue                                                                                                                                                                           |
+| POST         | `/admin/support/cases/:id/assign`                              | SUPPORT+    | Assign                                                                                                                                                                          |
+| POST         | `/admin/support/cases/:id/messages`                            | SUPPORT+    | INTERNAL or PUBLIC                                                                                                                                                              |
+| GET          | `/admin/audit-logs`                                            | SUPER_ADMIN | Read-only. **No write endpoint exists**                                                                                                                                         |
+| GET          | `/admin/health`                                                | Any admin   | Dependency health                                                                                                                                                               |
 
 ---
 

@@ -55,7 +55,11 @@ export class ClosuresController {
     @Body() body: unknown,
   ) {
     const input = CreateClosureDto.parse(body);
-    const closure = await this.availability.createClosure(tenant.restaurantId, user.id, input);
+    const closure = await this.availability.createClosure(
+      tenant.restaurantId,
+      { type: 'RESTAURANT_USER', id: user.id },
+      input,
+    );
     return ok(toPublicClosure(closure));
   }
 
@@ -68,7 +72,11 @@ export class ClosuresController {
     @CurrentUser() user: User,
     @Param('id') id: string,
   ) {
-    await this.availability.endClosure(tenant.restaurantId, user.id, id);
+    await this.availability.endClosure(
+      tenant.restaurantId,
+      { type: 'RESTAURANT_USER', id: user.id },
+      id,
+    );
     return ok({ status: 'ok' });
   }
 }

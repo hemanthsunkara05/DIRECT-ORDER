@@ -325,6 +325,22 @@ export const restaurantApi = {
     ),
 };
 
+/** Phase 22 — recent Direct-Order admin edits to this restaurant. Deliberately just action + timestamp: no admin identity, no diff. */
+export interface RestaurantActivityEntry {
+  id: string;
+  action: string;
+  reason: string | null;
+  createdAt: string;
+}
+
+export const restaurantActivityApi = {
+  list: (restaurantId?: string) =>
+    request<RestaurantActivityEntry[]>('/restaurant/activity', {
+      method: 'GET',
+      ...restaurantHeaders(restaurantId),
+    }),
+};
+
 // ── Promotions (Phase 14) ──────────────────────────────────────────────
 
 export interface Promotion {
@@ -1101,6 +1117,29 @@ export interface AdminRestaurantDetail {
   menuSummary: { categoryCount: number; itemCount: number };
 }
 
+/** Phase 22 — admin-side restaurant creation. `ownerEmail`/`ownerPhone` optionally pre-claim it against an existing account; omitted, it's placeholder-owned (unclaimed), same as every other outreach listing. */
+export interface AdminCreateRestaurantInput {
+  name: string;
+  slug?: string;
+  description?: string;
+  phone?: string;
+  email?: string;
+  timezone?: string;
+  ownerEmail?: string;
+  ownerPhone?: string;
+  address?: RestaurantAddressInput;
+  branding?: Partial<RestaurantBrandingData>;
+}
+
+export interface AdminCreatedRestaurant {
+  id: string;
+  slug: string;
+  name: string;
+  status: AdminRestaurant['status'];
+  address: RestaurantAddress | null;
+  branding: RestaurantBrandingData | null;
+}
+
 export interface AdminUserSummary {
   id: string;
   email: string | null;
@@ -1185,7 +1224,11 @@ export const adminApi = {
     request<{
       restaurantsByStatus: Record<string, number>;
       activeAdmins: number;
-      metrics: { asOfDate: string | null; latest: DailyMetricsView | null; trend: DailyMetricsView[] };
+      metrics: {
+        asOfDate: string | null;
+        latest: DailyMetricsView | null;
+        trend: DailyMetricsView[];
+      };
     }>('/admin/overview', { method: 'GET' }),
 
   health: () =>
@@ -1196,7 +1239,12 @@ export const adminApi = {
 
   restaurants: {
     list: (
-      params: { status?: string; search?: string; cursor?: string; order?: 'newest' | 'oldest' } = {},
+      params: {
+        status?: string;
+        search?: string;
+        cursor?: string;
+        order?: 'newest' | 'oldest';
+      } = {},
     ) => requestPage<AdminRestaurant>(`/admin/restaurants${qs(params)}`, { method: 'GET' }),
     /** Phase 21a — the Approval Queue's per-row decision detail (address, branding, menu summary). */
     detail: (id: string) => get<AdminRestaurantDetail>(`/admin/restaurants/${id}/detail`),
@@ -1211,6 +1259,124 @@ export const adminApi = {
       post<{ id: string; status: string }>(`/admin/restaurants/${id}/reinstate`, {}),
     /** Outreach worklist — restaurants still owned only by the unclaimed-listing placeholder account. */
     unclaimed: () => get<UnclaimedListing[]>('/admin/restaurants/unclaimed'),
+
+    /** Phase 22 — concierge onboarding: an admin creates a restaurant on an owner's behalf. */
+    create: (input: AdminCreateRestaurantInput) =>
+      post<AdminCreatedRestaurant>('/admin/restaurants', input),
+
+    /** Phase 22 — admin-authorized profile/branding/hours edits, reusing the exact owner-side service logic. */
+    content: {
+      getProfile: (id: string) => get<RestaurantProfile>(`/admin/restaurants/${id}/profile`),
+      updateProfile: (
+        id: string,
+        input: Partial<{
+          name: string;
+          description: string;
+          phone: string;
+          email: string;
+          timezone: string;
+          address: RestaurantAddressInput;
+        }>,
+      ) =>
+        request<RestaurantProfile>(`/admin/restaurants/${id}/profile`, {
+          method: 'PATCH',
+          body: JSON.stringify(input),
+        }),
+      getBranding: (id: string) =>
+        get<RestaurantBrandingData | null>(`/admin/restaurants/${id}/branding`),
+      updateBranding: (id: string, input: Partial<RestaurantBrandingData>) =>
+        request<RestaurantBrandingData>(`/admin/restaurants/${id}/branding`, {
+          method: 'PATCH',
+          body: JSON.stringify(input),
+        }),
+      getHours: (id: string) => get<OperatingHoursRow[]>(`/admin/restaurants/${id}/hours`),
+      setHours: (
+        id: string,
+        days: { dayOfWeek: number; opensAt: string; closesAt: string; isClosed?: boolean }[],
+      ) =>
+        request<OperatingHoursRow[]>(`/admin/restaurants/${id}/hours`, {
+          method: 'PUT',
+          body: JSON.stringify({ days }),
+        }),
+      /** Admin-authorized equivalent of the owner's onboarding-submit — still requires a separate approve action. */
+      submitForApproval: (id: string) =>
+        post<RestaurantProfile>(`/admin/restaurants/${id}/submit-for-approval`, {}),
+    },
+
+    /** Phase 22 — admin-authorized menu CRUD, restaurantId in the path (not X-Restaurant-Id). */
+    menu: {
+      categories: {
+        list: (restaurantId: string) =>
+          get<MenuCategory[]>(`/admin/restaurants/${restaurantId}/menu/categories`),
+        create: (restaurantId: string, input: { name: string; description?: string }) =>
+          post<MenuCategory>(`/admin/restaurants/${restaurantId}/menu/categories`, input),
+        update: (
+          restaurantId: string,
+          categoryId: string,
+          input: Partial<{ name: string; description: string | null; isActive: boolean }>,
+        ) =>
+          request<MenuCategory>(
+            `/admin/restaurants/${restaurantId}/menu/categories/${categoryId}`,
+            { method: 'PATCH', body: JSON.stringify(input) },
+          ),
+        archive: (restaurantId: string, categoryId: string) =>
+          request<{ status: string }>(
+            `/admin/restaurants/${restaurantId}/menu/categories/${categoryId}`,
+            { method: 'DELETE' },
+          ),
+        reorder: (restaurantId: string, items: ReorderEntry[]) =>
+          post<{ status: string }>(`/admin/restaurants/${restaurantId}/menu/categories/reorder`, {
+            items,
+          }),
+      },
+      items: {
+        list: (restaurantId: string, categoryId?: string) =>
+          get<MenuItem[]>(
+            `/admin/restaurants/${restaurantId}/menu/items${categoryId ? `?categoryId=${categoryId}` : ''}`,
+          ),
+        create: (
+          restaurantId: string,
+          input: {
+            categoryId: string;
+            name: string;
+            description?: string;
+            priceMinor: string;
+            imageUrl?: string;
+            dietaryTag?: DietaryTag;
+          },
+        ) => post<MenuItem>(`/admin/restaurants/${restaurantId}/menu/items`, input),
+        update: (
+          restaurantId: string,
+          itemId: string,
+          input: Partial<{
+            categoryId: string;
+            name: string;
+            description: string | null;
+            priceMinor: string;
+            imageUrl: string | null;
+            dietaryTag: DietaryTag;
+            isActive: boolean;
+          }>,
+        ) =>
+          request<MenuItem>(`/admin/restaurants/${restaurantId}/menu/items/${itemId}`, {
+            method: 'PATCH',
+            body: JSON.stringify(input),
+          }),
+        archive: (restaurantId: string, itemId: string) =>
+          request<{ status: string }>(`/admin/restaurants/${restaurantId}/menu/items/${itemId}`, {
+            method: 'DELETE',
+          }),
+        setAvailability: (restaurantId: string, itemId: string, isAvailable: boolean) =>
+          request<MenuItem>(
+            `/admin/restaurants/${restaurantId}/menu/items/${itemId}/availability`,
+            { method: 'PATCH', body: JSON.stringify({ isAvailable }) },
+          ),
+        reorder: (restaurantId: string, items: ReorderEntry[]) =>
+          post<{ status: string }>(`/admin/restaurants/${restaurantId}/menu/items/reorder`, {
+            items,
+          }),
+      },
+    },
   },
 
   users: {
@@ -1243,12 +1409,24 @@ export const adminApi = {
       get<AdminSupportCase & { messages: AdminSupportMessage[] }>(`/admin/support/cases/${id}`),
     assign: (id: string, assignedToUserId: string) =>
       post<AdminSupportCase>(`/admin/support/cases/${id}/assign`, { assignedToUserId }),
-    reply: (id: string, body: string, visibility: 'INTERNAL' | 'PUBLIC', attachments?: SupportAttachmentInput[]) =>
-      post<AdminSupportMessage>(`/admin/support/cases/${id}/messages`, { body, visibility, attachments }),
+    reply: (
+      id: string,
+      body: string,
+      visibility: 'INTERNAL' | 'PUBLIC',
+      attachments?: SupportAttachmentInput[],
+    ) =>
+      post<AdminSupportMessage>(`/admin/support/cases/${id}/messages`, {
+        body,
+        visibility,
+        attachments,
+      }),
     resolve: (id: string, resolutionNote: string) =>
       post<AdminSupportCase>(`/admin/support/cases/${id}/resolve`, { resolutionNote }),
     presign: (id: string, contentType: string, sizeBytes: number) =>
-      post<SupportAttachmentPresign>(`/admin/support/cases/${id}/attachments/presign`, { contentType, sizeBytes }),
+      post<SupportAttachmentPresign>(`/admin/support/cases/${id}/attachments/presign`, {
+        contentType,
+        sizeBytes,
+      }),
     download: (id: string, attachmentId: string) =>
       get<{ url: string }>(`/admin/support/cases/${id}/attachments/${attachmentId}`),
   },
@@ -1313,7 +1491,15 @@ export interface SupportCaseSummary {
   caseNumber: string;
   category: 'ORDER' | 'PAYMENT' | 'DELIVERY' | 'ACCOUNT' | 'RESTAURANT' | 'OTHER';
   priority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
-  status: 'OPEN' | 'ASSIGNED' | 'IN_PROGRESS' | 'WAITING_CUSTOMER' | 'WAITING_RESTAURANT' | 'WAITING_PROVIDER' | 'RESOLVED' | 'CLOSED';
+  status:
+    | 'OPEN'
+    | 'ASSIGNED'
+    | 'IN_PROGRESS'
+    | 'WAITING_CUSTOMER'
+    | 'WAITING_RESTAURANT'
+    | 'WAITING_PROVIDER'
+    | 'RESOLVED'
+    | 'CLOSED';
   subject: string;
   description: string;
   orderId: string | null;
@@ -1365,12 +1551,17 @@ export interface CreateSupportCaseInput {
 export const supportApi = {
   listMine: (params: { cursor?: string } = {}) =>
     requestPage<SupportCaseSummary>(`/me/support/cases${qs(params)}`, { method: 'GET' }),
-  createMine: (input: CreateSupportCaseInput) => post<SupportCaseSummary>('/me/support/cases', input),
-  getMine: (id: string) => get<SupportCaseSummary & { messages: SupportMessageView[] }>(`/me/support/cases/${id}`),
+  createMine: (input: CreateSupportCaseInput) =>
+    post<SupportCaseSummary>('/me/support/cases', input),
+  getMine: (id: string) =>
+    get<SupportCaseSummary & { messages: SupportMessageView[] }>(`/me/support/cases/${id}`),
   replyMine: (id: string, body: string, attachments?: SupportAttachmentInput[]) =>
     post<SupportMessageView>(`/me/support/cases/${id}/messages`, { body, attachments }),
   presignMine: (id: string, contentType: string, sizeBytes: number) =>
-    post<SupportAttachmentPresign>(`/me/support/cases/${id}/attachments/presign`, { contentType, sizeBytes }),
+    post<SupportAttachmentPresign>(`/me/support/cases/${id}/attachments/presign`, {
+      contentType,
+      sizeBytes,
+    }),
   downloadMine: (id: string, attachmentId: string) =>
     get<{ url: string }>(`/me/support/cases/${id}/attachments/${attachmentId}`),
 
@@ -1386,11 +1577,19 @@ export const supportApi = {
       ...restaurantHeaders(restaurantId),
     }),
   getRestaurant: (id: string, restaurantId?: string) =>
-    request<SupportCaseSummary & { messages: SupportMessageView[] }>(`/restaurant/support/cases/${id}`, {
-      method: 'GET',
-      ...restaurantHeaders(restaurantId),
-    }),
-  replyRestaurant: (id: string, body: string, attachments?: SupportAttachmentInput[], restaurantId?: string) =>
+    request<SupportCaseSummary & { messages: SupportMessageView[] }>(
+      `/restaurant/support/cases/${id}`,
+      {
+        method: 'GET',
+        ...restaurantHeaders(restaurantId),
+      },
+    ),
+  replyRestaurant: (
+    id: string,
+    body: string,
+    attachments?: SupportAttachmentInput[],
+    restaurantId?: string,
+  ) =>
     request<SupportMessageView>(`/restaurant/support/cases/${id}/messages`, {
       method: 'POST',
       body: JSON.stringify({ body, attachments }),

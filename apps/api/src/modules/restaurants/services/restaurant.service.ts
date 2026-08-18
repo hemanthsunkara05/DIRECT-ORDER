@@ -2,7 +2,12 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { Restaurant } from '@prisma/client';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { AuditService } from '../../../platform/audit/audit.service.js';
-import { ConflictError, NotFoundError, ValidationError } from '../../../platform/errors/app-error.js';
+import type { AuditActor } from '../../../platform/audit/audit.types.js';
+import {
+  ConflictError,
+  NotFoundError,
+  ValidationError,
+} from '../../../platform/errors/app-error.js';
 import { RestaurantMembershipRepository } from '../../../platform/authorization/restaurant-membership.repository.js';
 import { UNCLAIMED_PLACEHOLDER_EMAIL } from '../../../platform/unclaimed-listings.js';
 import { RestaurantRepository } from '../repositories/restaurant.repository.js';
@@ -37,16 +42,31 @@ export class RestaurantService {
     private readonly memberships: RestaurantMembershipRepository,
   ) {}
 
-  async createRestaurant(ownerId: string, input: CreateRestaurantInput): Promise<Restaurant> {
+  async createRestaurant(
+    ownerId: string,
+    input: CreateRestaurantInput,
+    actor: AuditActor,
+    options: { skipOwnershipGuard?: boolean } = {},
+  ): Promise<Restaurant> {
     // Same one-owner-one-restaurant invariant claimRestaurant() enforces
     // below — without it, a caller who reaches this step with a stale
     // client-side session (e.g. mid-claim-flow) silently ends up owning
-    // two restaurants instead of hitting a clear error.
-    const alreadyOwnsOne = (await this.memberships.findActiveByUser(ownerId)).length > 0;
-    if (alreadyOwnsOne) {
-      throw new ConflictError(
-        'Your account already manages a restaurant — one owner, one restaurant for now.',
-      );
+    // two restaurants instead of hitting a clear error. Skippable
+    // (Phase 22) ONLY when the resolved owner is the shared unclaimed-
+    // listing placeholder account — that account is meant to "own" many
+    // restaurants simultaneously (every unclaimed listing), so this guard
+    // would otherwise let the FIRST admin-created unclaimed listing
+    // succeed and every subsequent one fail with a misleading "already
+    // manages a restaurant" error. The caller (AdminRestaurantContentService)
+    // computes this once, since it already knows whether it resolved a
+    // real owner or fell back to the placeholder.
+    if (!options.skipOwnershipGuard) {
+      const alreadyOwnsOne = (await this.memberships.findActiveByUser(ownerId)).length > 0;
+      if (alreadyOwnsOne) {
+        throw new ConflictError(
+          'Your account already manages a restaurant — one owner, one restaurant for now.',
+        );
+      }
     }
 
     const slug = input.slug
@@ -83,8 +103,8 @@ export class RestaurantService {
     });
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId: ownerId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'RESTAURANT_CREATED',
       entityType: 'Restaurant',
       entityId: restaurant.id,
@@ -133,7 +153,9 @@ export class RestaurantService {
 
     const alreadyOwnsOne = (await this.memberships.findActiveByUser(userId)).length > 0;
     if (alreadyOwnsOne) {
-      throw new ConflictError('Your account already manages a restaurant — one owner, one restaurant for now.');
+      throw new ConflictError(
+        'Your account already manages a restaurant — one owner, one restaurant for now.',
+      );
     }
 
     const claimed = await this.prisma.$transaction(async (tx) => {

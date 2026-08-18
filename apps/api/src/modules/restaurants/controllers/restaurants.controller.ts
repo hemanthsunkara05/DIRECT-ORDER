@@ -23,7 +23,10 @@ export class RestaurantsController {
   @HttpCode(201)
   async create(@CurrentUser() user: User, @Body() body: unknown) {
     const input = CreateRestaurantDto.parse(body);
-    const restaurant = await this.restaurants.createRestaurant(user.id, input);
+    const restaurant = await this.restaurants.createRestaurant(user.id, input, {
+      type: 'RESTAURANT_USER',
+      id: user.id,
+    });
     return ok(toPublicRestaurant(restaurant));
   }
 

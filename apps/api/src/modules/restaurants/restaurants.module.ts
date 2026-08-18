@@ -46,5 +46,9 @@ import { AcceptInvitationController } from './controllers/accept-invitation.cont
     UploadService,
     { provide: STORAGE_PORT, useClass: S3StorageAdapter },
   ],
+  // Phase 22: AdminModule needs RestaurantService/RestaurantProfileService
+  // to build the admin-authorized content-management surface on top of
+  // the SAME owner-side logic, rather than duplicating it.
+  exports: [RestaurantService, RestaurantProfileService],
 })
 export class RestaurantsModule {}

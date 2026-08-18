@@ -21,6 +21,10 @@ export const ignores = [
   // (triple-slash references and all) is dictated by Next.js, not by
   // our conventions.
   '**/next-env.d.ts',
+  // External reference-only design mockups/support scripts, not
+  // application source — untracked, never meant to be committed or
+  // linted (see .gitignore).
+  '**/Admin console build verification package/**',
 ];
 
 /**

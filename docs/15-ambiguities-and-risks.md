@@ -198,6 +198,20 @@ Financial-record retention in India is commonly cited as 7–8 years, but the ex
 
 ---
 
+## AMB-19 — Admin-created restaurant / unclaimed-listing reconciliation (Phase 22)
+
+Phase 22 needed a policy for how an admin creating a restaurant on an owner's behalf reconciles with the pre-existing "unclaimed listing" (Prospects) concept. Investigation found there is no separate `Prospect`/`Claim` data model to reconcile with — an unclaimed listing is, and has always been, a plain `Restaurant` row owned only by the shared placeholder account (`unclaimed-listings@direct-order.local`). "Reconciliation" therefore reduces to one decision at creation time, not an ongoing sync problem.
+
+**Decided (implemented, not just recommended):**
+
+- Admin-side creation resolves an owner from an optional `ownerEmail`/`ownerPhone`. A match assigns that account as owner immediately (the restaurant is "pre-claimed," same one-owner-one-restaurant guard as self-serve creation/claiming applies). No match, or nothing supplied, falls back to the shared placeholder — the restaurant is then structurally identical to every other unclaimed listing, with zero special-casing anywhere else in the codebase.
+- The existing `POST /restaurants/claim` endpoint is left completely unmodified. If a real owner later claims a restaurant an admin already fully built (menu, branding, hours), the existing claim logic already does the right thing: it swaps the `RestaurantStaff` row's owner and resets `status`/`onboardingStatus`, while leaving all the admin-entered content (menu, branding, hours) untouched.
+- Duplicate-listing detection at creation time is **advisory only** — the admin-create UI surfaces name matches from the existing restaurant search, but creation is never blocked on it. Outreach happens under time pressure and name collisions (e.g. common restaurant names) are expected; a hard block would obstruct the acquisition motion this phase exists to support.
+
+No further reconciliation mechanism (a merge tool, a dedup job, a second "Prospect" table) is planned — the placeholder-ownership convention already generalizes to every creation path without one.
+
+---
+
 # 23. Risk Register
 
 | ID      | Risk                                                                                                                                  | Category             | Severity     | Likelihood | Mitigation                                                                                                                        |

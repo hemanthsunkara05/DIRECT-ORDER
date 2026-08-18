@@ -32,8 +32,8 @@ columns added to `Restaurant` (harmless overlap, not a real dependency).
 
 **Effort:** XL
 **Priority:** P1
-**Depends on:** None (Phase 21's approval fast-path unblocks *using* it in practice, but doesn't
-block *building* it)
+**Depends on:** None (Phase 21's approval fast-path unblocks _using_ it in practice, but doesn't
+block _building_ it)
 
 ### Admin notification reader endpoint
 
@@ -56,4 +56,46 @@ Phase 21 adds, where a real in-app list starts pulling its weight over email alo
 
 **Effort:** M
 **Priority:** P3
+**Depends on:** None
+
+### Promotions admin UI
+
+**What:** A `/admin/promotions` frontend page for the existing `promotions:platform`-gated
+backend (`apps/api/src/modules/promotions/`), which already works end-to-end via direct API call.
+
+**Why:** Explicitly out of scope for Phase 22 (which built admin-assisted restaurant/menu
+management) — the backend already exists and works; only the page is missing, and the need is
+rare enough pre-launch that a direct API call covers it for now.
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** None
+
+### Admin user creation
+
+**What:** An endpoint + UI to create `AdminUser` accounts, enforcing the already-declared
+`admin:role_manage` permission (currently in the catalogue but checked nowhere — confirmed via
+grep, only `prisma/seed.ts`'s one hardcoded admin exists today).
+
+**Why:** Explicitly out of scope for Phase 22. Matters once there's an admin team beyond one
+person; there isn't one yet. Interim path: seed-file or direct-DB insert of an `AdminUser` row.
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** None
+
+### Admin-authorized menu-image upload
+
+**What:** A presigned upload endpoint for the new admin-side menu editor (Phase 22), mirroring
+`apps/api/src/modules/restaurants/controllers/upload.controller.ts`'s shape but gated by
+`restaurant:admin_edit` instead of tenant membership.
+
+**Why:** Found while implementing Phase 22's admin menu surface — the existing upload endpoint is
+tenant-scoped (`restaurant:branding`, membership-gated), so an admin has no way to host a menu
+photo and can only paste an already-hosted `imageUrl`. This is a real, direct gap in Phase 22's
+own headline use case ("load a menu from photos an owner texted you") — the admin can enter every
+other field from a photo, but not attach the photo itself as an item image.
+
+**Effort:** S
+**Priority:** P2
 **Depends on:** None

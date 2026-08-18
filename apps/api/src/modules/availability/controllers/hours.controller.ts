@@ -40,12 +40,16 @@ export class HoursController {
     @Body() body: unknown,
   ) {
     const input = SetHoursDto.parse(body);
-    const rows = await this.availability.setHours(tenant.restaurantId, user.id, input);
+    const rows = await this.availability.setHours(
+      tenant.restaurantId,
+      { type: 'RESTAURANT_USER', id: user.id },
+      input,
+    );
     return ok(rows.map(toPublicHoursRow));
   }
 }
 
-function toPublicHoursRow(row: OperatingHours) {
+export function toPublicHoursRow(row: OperatingHours) {
   return {
     id: row.id,
     dayOfWeek: row.dayOfWeek,

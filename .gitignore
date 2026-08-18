@@ -39,3 +39,7 @@ Thumbs.db
 # Docker volumes (local dev data)
 infrastructure/.data/
 .gstack/
+
+# Reference-only design package (external mockups/support scripts, not
+# application source) — never meant to be committed or linted.
+/Admin console build verification package/

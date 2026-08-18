@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { DietaryTag, MenuItem } from '@prisma/client';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { AuditService } from '../../../platform/audit/audit.service.js';
+import type { AuditActor } from '../../../platform/audit/audit.types.js';
 import { NotFoundError, ValidationError } from '../../../platform/errors/app-error.js';
 import { MenuCategoryRepository } from '../repositories/menu-category.repository.js';
 import { MenuItemRepository } from '../repositories/menu-item.repository.js';
@@ -46,7 +47,7 @@ export class MenuItemService {
     return this.items.list(restaurantId, { categoryId });
   }
 
-  async create(restaurantId: string, actorId: string, input: CreateItemInput): Promise<MenuItem> {
+  async create(restaurantId: string, actor: AuditActor, input: CreateItemInput): Promise<MenuItem> {
     await this.assertCategoryUsable(restaurantId, input.categoryId);
 
     const siblingCount = await this.items.countInCategory(restaurantId, input.categoryId);
@@ -62,8 +63,8 @@ export class MenuItemService {
     });
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'MENU_ITEM_CREATED',
       entityType: 'MenuItem',
       entityId: item.id,
@@ -76,7 +77,7 @@ export class MenuItemService {
 
   async update(
     restaurantId: string,
-    actorId: string,
+    actor: AuditActor,
     itemId: string,
     input: UpdateItemInput,
   ): Promise<MenuItem> {
@@ -94,8 +95,8 @@ export class MenuItemService {
     }
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'MENU_ITEM_UPDATED',
       entityType: 'MenuItem',
       entityId: itemId,
@@ -107,7 +108,7 @@ export class MenuItemService {
     return (await this.items.findById(restaurantId, itemId))!;
   }
 
-  async archive(restaurantId: string, actorId: string, itemId: string): Promise<void> {
+  async archive(restaurantId: string, actor: AuditActor, itemId: string): Promise<void> {
     const existing = await this.items.findById(restaurantId, itemId);
     if (!existing) {
       throw new NotFoundError('Menu item not found.');
@@ -119,8 +120,8 @@ export class MenuItemService {
     }
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'MENU_ITEM_ARCHIVED',
       entityType: 'MenuItem',
       entityId: itemId,
@@ -135,7 +136,7 @@ export class MenuItemService {
    */
   async setAvailability(
     restaurantId: string,
-    actorId: string,
+    actor: AuditActor,
     itemId: string,
     isAvailable: boolean,
   ): Promise<MenuItem> {
@@ -150,8 +151,8 @@ export class MenuItemService {
     }
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'MENU_ITEM_AVAILABILITY_CHANGED',
       entityType: 'MenuItem',
       entityId: itemId,
@@ -164,7 +165,7 @@ export class MenuItemService {
   }
 
   /** See MenuCategoryService.reorder — same validate-before-write, single-transaction approach. */
-  async reorder(restaurantId: string, actorId: string, input: ReorderInput): Promise<void> {
+  async reorder(restaurantId: string, actor: AuditActor, input: ReorderInput): Promise<void> {
     const existing = await this.items.list(restaurantId, { includeArchived: true });
     const existingIds = new Set(existing.map((i) => i.id));
     for (const item of input.items) {
@@ -183,8 +184,8 @@ export class MenuItemService {
     );
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'MENU_ITEMS_REORDERED',
       entityType: 'MenuItem',
       restaurantId,

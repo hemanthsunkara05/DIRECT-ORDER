@@ -32,7 +32,7 @@ export class RestaurantAvailabilityController {
     const input = ToggleOrderingDto.parse(body);
     const restaurant = await this.availability.setOrderingEnabled(
       tenant.restaurantId,
-      user.id,
+      { type: 'RESTAURANT_USER', id: user.id },
       input.orderingEnabled,
     );
     return ok({ orderingEnabled: restaurant.orderingEnabled });

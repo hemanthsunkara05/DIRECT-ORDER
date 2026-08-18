@@ -25,6 +25,9 @@ import { RestaurantAvailabilityController } from './controllers/restaurant-avail
     AvailabilityService,
     RestaurantAvailabilityService,
   ],
-  exports: [AvailabilityService, OperatingHoursRepository],
+  // Phase 22: RestaurantAvailabilityService exported so AdminModule can
+  // reuse the exact hours-management logic the owner-side controllers
+  // call, rather than duplicating it.
+  exports: [AvailabilityService, OperatingHoursRepository, RestaurantAvailabilityService],
 })
 export class AvailabilityModule {}

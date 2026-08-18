@@ -52,9 +52,11 @@ The guard resolves the tenant from the authenticated principal, loads the resour
 | `restaurant:approve`      |       |         |       |         |  ✓  |         |   ✓   |
 | `restaurant:reject`       |       |         |       |         |  ✓  |         |   ✓   |
 | `restaurant:suspend`      |       |         |       |         |  ✓  |         |   ✓   |
+| `restaurant:create`       |       |         |       |         |  ✓  |         |   ✓   |
+| `restaurant:admin_edit`   |       |         |       |         |  ✓  |         |   ✓   |
 | `menu:read`               |   ✓   |    ✓    |   ✓   |    ✓    |  ✓  |         |   ✓   |
-| `menu:write`              |       |    ✓    |   ✓   |         |     |         |   ✓   |
-| `menu:availability`       |   ✓   |    ✓    |   ✓   |         |     |         |   ✓   |
+| `menu:write`              |       |    ✓    |   ✓   |         |  ✓  |         |   ✓   |
+| `menu:availability`       |   ✓   |    ✓    |   ✓   |         |  ✓  |         |   ✓   |
 | `orders:read`             |   ✓   |    ✓    |   ✓   |    ✓    |  ✓  |    ✓    |   ✓   |
 | `orders:accept`           |   ✓   |    ✓    |   ✓   |         |     |         |       |
 | `orders:reject`           |   ✓   |    ✓    |   ✓   |         |     |         |       |
@@ -90,6 +92,24 @@ The guard resolves the tenant from the authenticated principal, loads the resour
 
 Restaurant permissions are always **additionally** tenant-scoped: `menu:write` permits writing _this restaurant's_ menu only.
 
+**Phase 22 — `restaurant:create` / `restaurant:admin_edit`.** Distinct from
+`restaurant:approve`/`reject`/`suspend` (decisions on a restaurant an owner
+already created) — these gate admin-INITIATED creation and content edits
+(profile/address/branding/hours) on an owner's behalf, via the new
+non-tenant-scoped `/admin/restaurants/*` content controller. `OPS` holds
+both: it is the realistic concierge-onboarding actor, and restricting to
+`SUPER_ADMIN`-only would block that workflow. Kept as two permissions
+(not one) matching this table's own precedent of splitting distinct
+actions with identical role sets (e.g. `orders:accept`/`orders:reject`).
+
+**Phase 22 — `menu:write`/`menu:availability` now include OPS.** This only
+opens the NEW `/admin/restaurants/:id/menu/*` routes to `ADMIN_OPERATIONS`
+— the existing owner-side, tenant-scoped `/restaurant/menu/*` routes stay
+closed to it, because their `@TenantScoped()` guard resolves a role only
+from an actual `restaurant_staff` membership row, which an admin
+principal never has (see the Implementation snippet above — the guard
+never conflates an `admin_users` row with tenant membership).
+
 ---
 
 ## 9.3 Ownership rules
@@ -119,21 +139,23 @@ Guests receive a signed, expiring token in the confirmation URL: HMAC over `orde
 
 These must be explicitly tested — each represents a plausible real attack.
 
-| Attempt                                                        | Required outcome                                     |
-| -------------------------------------------------------------- | ---------------------------------------------------- |
-| Customer sets `role` in a registration or profile body         | Field stripped by Zod; role never client-assignable  |
-| Restaurant staff calls any `/admin/*` endpoint                 | 403                                                  |
-| Restaurant user sends `X-Restaurant-Id` for another restaurant | 403; logged as a tenant-isolation event              |
-| STAFF calls `staff:role_change` on self                        | 403                                                  |
-| OWNER demotes/removes the last active OWNER                    | 409 `LAST_OWNER`                                     |
-| SUPPORT agent issues a refund                                  | 403 — refund needs `payments:refund`                 |
-| SUPPORT agent adjusts loyalty balance                          | 403 — SUPER_ADMIN only                               |
-| Admin attempts to write to `/admin/audit-logs`                 | 404 — no such route exists                           |
-| Admin moves a DELIVERED order to PREPARING                     | 409 — no override path exists                        |
-| Disabled staff uses an unexpired access token                  | Rejected at guard: membership re-checked per request |
-| Customer requests another customer's order                     | 404                                                  |
-| Customer supplies another customer's `customerId` in checkout  | Ignored; derived from session or guest token         |
-| Restaurant reads another restaurant's reviews/orders/menu      | 404                                                  |
-| Guest token from order A used for order B                      | 401                                                  |
+| Attempt                                                                                                           | Required outcome                                     |
+| ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Customer sets `role` in a registration or profile body                                                            | Field stripped by Zod; role never client-assignable  |
+| Restaurant staff calls any `/admin/*` endpoint                                                                    | 403                                                  |
+| Restaurant user sends `X-Restaurant-Id` for another restaurant                                                    | 403; logged as a tenant-isolation event              |
+| STAFF calls `staff:role_change` on self                                                                           | 403                                                  |
+| OWNER demotes/removes the last active OWNER                                                                       | 409 `LAST_OWNER`                                     |
+| SUPPORT agent issues a refund                                                                                     | 403 — refund needs `payments:refund`                 |
+| SUPPORT agent adjusts loyalty balance                                                                             | 403 — SUPER_ADMIN only                               |
+| Admin attempts to write to `/admin/audit-logs`                                                                    | 404 — no such route exists                           |
+| Admin moves a DELIVERED order to PREPARING                                                                        | 409 — no override path exists                        |
+| Disabled staff uses an unexpired access token                                                                     | Rejected at guard: membership re-checked per request |
+| Customer requests another customer's order                                                                        | 404                                                  |
+| Customer supplies another customer's `customerId` in checkout                                                     | Ignored; derived from session or guest token         |
+| Restaurant reads another restaurant's reviews/orders/menu                                                         | 404                                                  |
+| Guest token from order A used for order B                                                                         | 401                                                  |
+| Restaurant staff calls the new `/admin/restaurants/*` content or menu routes, even for their own restaurant       | 403 — no `admin_users` row                           |
+| Admin without `restaurant:create`/`restaurant:admin_edit`/`menu:write` calls the new admin content/menu endpoints | 403                                                  |
 
 **Membership and status are re-verified on every request**, not trusted from JWT claims. A staff member disabled 30 seconds ago must not act on a token minted a minute ago. The access token carries identity; it does not carry authority.

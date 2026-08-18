@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { MenuCategory } from '@prisma/client';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { AuditService } from '../../../platform/audit/audit.service.js';
+import type { AuditActor } from '../../../platform/audit/audit.types.js';
 import { ConflictError, NotFoundError } from '../../../platform/errors/app-error.js';
 import { MenuCategoryRepository } from '../repositories/menu-category.repository.js';
 import type { ReorderInput } from '../dto/reorder.dto.js';
@@ -38,7 +39,7 @@ export class MenuCategoryService {
 
   async create(
     restaurantId: string,
-    actorId: string,
+    actor: AuditActor,
     input: CreateCategoryInput,
   ): Promise<MenuCategory> {
     await this.assertNameAvailable(restaurantId, input.name);
@@ -54,8 +55,8 @@ export class MenuCategoryService {
     });
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'MENU_CATEGORY_CREATED',
       entityType: 'MenuCategory',
       entityId: category.id,
@@ -68,7 +69,7 @@ export class MenuCategoryService {
 
   async update(
     restaurantId: string,
-    actorId: string,
+    actor: AuditActor,
     categoryId: string,
     input: UpdateCategoryInput,
   ): Promise<MenuCategory> {
@@ -86,8 +87,8 @@ export class MenuCategoryService {
     }
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'MENU_CATEGORY_UPDATED',
       entityType: 'MenuCategory',
       entityId: categoryId,
@@ -99,7 +100,7 @@ export class MenuCategoryService {
     return (await this.categories.findById(restaurantId, categoryId))!;
   }
 
-  async archive(restaurantId: string, actorId: string, categoryId: string): Promise<void> {
+  async archive(restaurantId: string, actor: AuditActor, categoryId: string): Promise<void> {
     const existing = await this.categories.findById(restaurantId, categoryId);
     if (!existing) {
       throw new NotFoundError('Menu category not found.');
@@ -111,8 +112,8 @@ export class MenuCategoryService {
     }
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'MENU_CATEGORY_ARCHIVED',
       entityType: 'MenuCategory',
       entityId: categoryId,
@@ -128,7 +129,7 @@ export class MenuCategoryService {
    * Phase 6). The writes themselves run inside one `$transaction` as a
    * second layer of atomicity for a real database.
    */
-  async reorder(restaurantId: string, actorId: string, input: ReorderInput): Promise<void> {
+  async reorder(restaurantId: string, actor: AuditActor, input: ReorderInput): Promise<void> {
     const existing = await this.categories.list(restaurantId, { includeArchived: true });
     const existingIds = new Set(existing.map((c) => c.id));
     for (const item of input.items) {
@@ -147,8 +148,8 @@ export class MenuCategoryService {
     );
 
     await this.audit.record({
-      actorType: 'RESTAURANT_USER',
-      actorId,
+      actorType: actor.type,
+      actorId: actor.id,
       action: 'MENU_CATEGORIES_REORDERED',
       entityType: 'MenuCategory',
       restaurantId,

@@ -70,9 +70,12 @@ export class AuditService {
 
   async findByRestaurant(
     restaurantId: string,
-    options: { limit?: number; cursor?: string } = {},
+    options: { limit?: number; cursor?: string; actorType?: string } = {},
   ): Promise<Page<AuditLog>> {
-    return this.paginate({ restaurantId }, options);
+    return this.paginate(
+      { restaurantId, ...(options.actorType ? { actorType: options.actorType } : {}) },
+      options,
+    );
   }
 
   /** `GET /admin/audit-logs` (Phase 13, SUPER_ADMIN-only, read-only — see this class's own doc comment for why there is no corresponding write method). */

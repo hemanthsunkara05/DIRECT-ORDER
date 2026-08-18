@@ -229,6 +229,24 @@ Testable conditions per phase. "Feature works" is not acceptance. Every criterio
 - [ ] `restaurant:reject` is gated correctly: a restaurant role gets 403; an admin without the permission (e.g. FINANCE-only) gets 403
 - [ ] No auto-approval path exists — every approve/reject is a human admin action
 
+## Phase 22 — Admin-assisted restaurant management
+
+- [ ] An admin can create a restaurant with no owner info; it starts DRAFT and appears in `GET /admin/restaurants/unclaimed`
+- [ ] A second admin-created unclaimed listing succeeds after the first exists (the one-owner-one-restaurant guard exempts the shared placeholder)
+- [ ] An admin can create a restaurant with an `ownerEmail`/`ownerPhone` matching an existing account; that account becomes OWNER immediately and the restaurant never appears as unclaimed
+- [ ] Creating with an owner identifier matching an account that already owns a restaurant returns 409
+- [ ] A restaurant an admin created unclaimed can be claimed through the existing, unmodified `POST /restaurants/claim` — no new reconciliation code is exercised
+- [ ] An admin can view and edit a restaurant's profile, address, branding, and hours through the admin-authorized surface, reusing the exact owner-side service logic
+- [ ] Every admin-made edit is audited with `actorType: ADMIN` and the acting admin's id, never mislabeled as a restaurant-user action
+- [ ] An admin can submit a restaurant for approval; it reaches PENDING_APPROVAL only, and still requires a separate, explicit approve action before ACTIVE
+- [ ] An admin can view and edit a restaurant's menu (categories, items, pricing, availability) through the admin-authorized surface
+- [ ] Restaurant staff (a real membership, no `AdminUser` row) get 403 on every new admin content/menu route, even for their own restaurant
+- [ ] An `ADMIN_OPERATIONS` admin holding the new `menu:write`/`menu:availability` grant still cannot reach the owner-side tenant-scoped `/restaurant/menu/*` routes (no membership row)
+- [ ] An admin-entered menu item is invisible on the public storefront until the restaurant is ACTIVE, regardless of who entered it
+- [ ] A restaurant owner can see that Direct-Order made recent changes to their listing (action + timestamp), without exposing which admin or the raw diff; the owner's own edits never appear in this list
+- [ ] `restaurant:create` and `restaurant:admin_edit` are gated correctly: a non-admin gets 403; an admin without the permission gets 403
+- [ ] Admin-side restaurant creation surfaces potential duplicate names as an advisory only — creation is never blocked on it
+
 ---
 
 ## Definition of Done — per change

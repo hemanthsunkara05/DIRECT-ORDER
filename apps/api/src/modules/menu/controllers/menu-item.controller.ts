@@ -56,7 +56,11 @@ export class MenuItemController {
     @Body() body: unknown,
   ) {
     const input = CreateItemDto.parse(body);
-    const item = await this.items.create(tenant.restaurantId, user.id, input);
+    const item = await this.items.create(
+      tenant.restaurantId,
+      { type: 'RESTAURANT_USER', id: user.id },
+      input,
+    );
     return ok(toPublicItem(item));
   }
 
@@ -70,7 +74,7 @@ export class MenuItemController {
     @Body() body: unknown,
   ) {
     const input = ReorderDto.parse(body);
-    await this.items.reorder(tenant.restaurantId, user.id, input);
+    await this.items.reorder(tenant.restaurantId, { type: 'RESTAURANT_USER', id: user.id }, input);
     return ok({ status: 'ok' });
   }
 
@@ -87,7 +91,7 @@ export class MenuItemController {
     const input = ToggleAvailabilityDto.parse(body);
     const item = await this.items.setAvailability(
       tenant.restaurantId,
-      user.id,
+      { type: 'RESTAURANT_USER', id: user.id },
       id,
       input.isAvailable,
     );
@@ -105,7 +109,12 @@ export class MenuItemController {
     @Body() body: unknown,
   ) {
     const input = UpdateItemDto.parse(body);
-    const item = await this.items.update(tenant.restaurantId, user.id, id, input);
+    const item = await this.items.update(
+      tenant.restaurantId,
+      { type: 'RESTAURANT_USER', id: user.id },
+      id,
+      input,
+    );
     return ok(toPublicItem(item));
   }
 
@@ -118,7 +127,7 @@ export class MenuItemController {
     @CurrentUser() user: User,
     @Param('id') id: string,
   ) {
-    await this.items.archive(tenant.restaurantId, user.id, id);
+    await this.items.archive(tenant.restaurantId, { type: 'RESTAURANT_USER', id: user.id }, id);
     return ok({ status: 'ok' });
   }
 }

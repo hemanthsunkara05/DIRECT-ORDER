@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, Inject, Patch, Post, UseGuards } from '@nestjs/common';
 import type {
+  AuditLog,
   Restaurant,
   RestaurantAddress,
   RestaurantBranding,
@@ -55,7 +56,7 @@ export class RestaurantController {
     const input = UpdateProfileDto.parse(body);
     const { restaurant, address } = await this.profile.updateProfile(
       tenant.restaurantId,
-      user.id,
+      { type: 'RESTAURANT_USER', id: user.id },
       input,
     );
     return ok({ ...toOwnerRestaurant(restaurant), address: toPublicAddress(address) });
@@ -79,7 +80,11 @@ export class RestaurantController {
     @Body() body: unknown,
   ) {
     const input = UpsertBrandingDto.parse(body);
-    const updated = await this.profile.updateBranding(tenant.restaurantId, user.id, input);
+    const updated = await this.profile.updateBranding(
+      tenant.restaurantId,
+      { type: 'RESTAURANT_USER', id: user.id },
+      input,
+    );
     return ok(toPublicBranding(updated));
   }
 
@@ -101,7 +106,11 @@ export class RestaurantController {
     @Body() body: unknown,
   ) {
     const input = UpsertSettingsDto.parse(body);
-    const updated = await this.profile.updateSettings(tenant.restaurantId, user.id, input);
+    const updated = await this.profile.updateSettings(
+      tenant.restaurantId,
+      { type: 'RESTAURANT_USER', id: user.id },
+      input,
+    );
     return ok(toPublicSettings(updated));
   }
 
@@ -110,8 +119,25 @@ export class RestaurantController {
   @Permissions('restaurant:update')
   @HttpCode(200)
   async submitOnboarding(@CurrentTenant() tenant: TenantContext, @CurrentUser() user: User) {
-    const restaurant = await this.profile.submitOnboarding(tenant.restaurantId, user.id);
+    const restaurant = await this.profile.submitOnboarding(tenant.restaurantId, {
+      type: 'RESTAURANT_USER',
+      id: user.id,
+    });
     return ok(toOwnerRestaurant(restaurant));
+  }
+
+  /**
+   * Owner-facing "an admin changed something" surface (Phase 22, docs/06
+   * BR-172) — see RestaurantProfileService.getRecentAdminActivity for
+   * what's deliberately omitted (actorId, before/after).
+   */
+  @Get('activity')
+  @TenantScoped()
+  @Permissions('restaurant:read')
+  @HttpCode(200)
+  async getRecentActivity(@CurrentTenant() tenant: TenantContext) {
+    const entries = await this.profile.getRecentAdminActivity(tenant.restaurantId);
+    return ok(entries.map(toActivityEntry));
   }
 }
 
@@ -123,7 +149,7 @@ export class RestaurantController {
  * customer-facing endpoint. Every call site in this file is owner-
  * facing and tenant-scoped, so it's safe here specifically.
  */
-function toOwnerRestaurant(restaurant: Restaurant) {
+export function toOwnerRestaurant(restaurant: Restaurant) {
   return {
     ...toPublicRestaurant(restaurant),
     submittedAt: restaurant.submittedAt,
@@ -132,7 +158,7 @@ function toOwnerRestaurant(restaurant: Restaurant) {
   };
 }
 
-function toPublicAddress(address: RestaurantAddress | null) {
+export function toPublicAddress(address: RestaurantAddress | null) {
   if (!address) return null;
   return {
     line1: address.line1,
@@ -147,7 +173,7 @@ function toPublicAddress(address: RestaurantAddress | null) {
   };
 }
 
-function toPublicBranding(branding: RestaurantBranding | null) {
+export function toPublicBranding(branding: RestaurantBranding | null) {
   if (!branding) return null;
   return {
     logoUrl: branding.logoUrl,
@@ -170,4 +196,8 @@ function toPublicSettings(settings: RestaurantSettings | null) {
     notificationEmails: settings.notificationEmails,
     notificationPhones: settings.notificationPhones,
   };
+}
+
+function toActivityEntry(entry: AuditLog) {
+  return { id: entry.id, action: entry.action, reason: entry.reason, createdAt: entry.createdAt };
 }
