@@ -293,8 +293,21 @@ async function seedRestaurant(spec: SeedRestaurant, passwordHash: string): Promi
  */
 const DEMO_ADMIN_EMAIL = 'admin@direct-order.local';
 const DEMO_ADMIN_PASSWORD = 'correct-horse-battery-staple-admin';
-/** Base32, RFC 4648 alphabet only (A–Z, 2–7) — decodes to arbitrary bytes used as the TOTP HMAC key; the string itself has no other meaning. */
-const DEMO_ADMIN_MFA_SECRET = 'DIRECTORDERSUPERADMINMFASECRET';
+/**
+ * Base32, RFC 4648 alphabet only (A–Z, 2–7) — decodes to arbitrary
+ * bytes used as the TOTP HMAC key; the string itself has no other
+ * meaning. Must be a whole number of bytes (a multiple of 8 base32
+ * characters, unpadded) — this codebase's own decoder is lenient and
+ * silently drops leftover bits from a short string, but a real
+ * third-party authenticator app validates strictly and rejects
+ * anything else as malformed. The previous value here (30 chars, 150
+ * bits) worked against this app's own /auth/mfa endpoints but could
+ * never be entered into an actual authenticator app — found live when
+ * trying to enroll it in one. 32 chars (160 bits, `TotpService.
+ * generateSecret()`'s own output length) is what a real enrollment
+ * would produce.
+ */
+const DEMO_ADMIN_MFA_SECRET = 'M3MYO55TSBKAZBRDEDZ3TLHWLE4HCMJQ';
 
 async function seedSuperAdmin(): Promise<void> {
   const passwordHash = await argon2.hash(DEMO_ADMIN_PASSWORD, {
