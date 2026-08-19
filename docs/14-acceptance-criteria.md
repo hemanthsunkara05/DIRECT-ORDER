@@ -247,6 +247,19 @@ Testable conditions per phase. "Feature works" is not acceptance. Every criterio
 - [ ] `restaurant:create` and `restaurant:admin_edit` are gated correctly: a non-admin gets 403; an admin without the permission gets 403
 - [ ] Admin-side restaurant creation surfaces potential duplicate names as an advisory only — creation is never blocked on it
 
+## Phase 23a — Admin command center, delivery visibility, admin upload
+
+- [ ] Every number on `/admin` (KPIs, funnel, alerts, top restaurants) matches a direct database query for the same window — no panel shows a fabricated, estimated, or hardcoded value
+- [ ] `platformFeeRevenueMinor` is now aggregated on both `DailyPlatformMetrics` and `DailyRestaurantMetrics` — previously tracked per-order but never summed anywhere
+- [ ] The order-lifecycle funnel's five active-status counts are live (today's OR any earlier day's still-open order); the three terminal counts (delivered/cancelled/rejected) are scoped to today only, never an unbounded running total
+- [ ] Clicking a funnel stage filters `/admin/orders` to that status; clicking a stuck-order or overdue-approval alert filters/navigates to the relevant restaurant's orders
+- [ ] An order is flagged "stuck" only past 45 minutes since its last status change, and stops being flagged once it moves to a new status or crosses back under the threshold (boundary-tested: 44:59 not flagged, 45:01 flagged)
+- [ ] A restaurant is flagged "overdue for approval" only past 24 hours since `submittedAt`
+- [ ] `GET /admin/overview/command-center` is gated on `analytics:platform` — a restaurant role and an admin without that permission (e.g. SUPPORT-only) both get 403
+- [ ] `GET /admin/orders/:id/detail` returns full cross-tenant order detail including delivery status/courier info, and 404s for a nonexistent id — this endpoint did not exist before this phase
+- [ ] An admin can upload a menu item photo directly through the admin menu editor (presign + verify), gated by `restaurant:admin_edit`; a restaurant owner (no `AdminUser` row) gets 403 on the admin upload endpoints even for their own restaurant
+- [ ] No reconciliation-issue tile ships on the command center — `ReconciliationIssue` has no writer anywhere in the codebase yet (tracked separately in `TODOS.md`)
+
 ---
 
 ## Definition of Done — per change

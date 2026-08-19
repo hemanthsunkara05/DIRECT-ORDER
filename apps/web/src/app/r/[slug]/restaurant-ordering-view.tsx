@@ -171,6 +171,15 @@ export function RestaurantOrderingView({
     setCart((prev) => prev.filter((c) => c.itemId !== itemId));
   }
 
+  function decrementInCart(itemId: string) {
+    setCart((prev) => {
+      const existing = prev.find((c) => c.itemId === itemId);
+      if (!existing) return prev;
+      if (existing.quantity <= 1) return prev.filter((c) => c.itemId !== itemId);
+      return prev.map((c) => (c.itemId === itemId ? { ...c, quantity: c.quantity - 1 } : c));
+    });
+  }
+
   const cartCount = cart.reduce((sum, c) => sum + c.quantity, 0);
   const cartSubtotalMinor = cart.reduce(
     (sum, c) => sum + BigInt(c.priceMinor) * BigInt(c.quantity),
@@ -195,7 +204,10 @@ export function RestaurantOrderingView({
   const canOrder = restaurant.availability.accepting;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-6 pb-28" style={{ background: 'var(--bg)' }}>
+    <main
+      className="mx-auto flex min-h-screen max-w-3xl flex-col gap-6 pb-28"
+      style={{ background: 'var(--bg)' }}
+    >
       <header className="flex flex-col gap-2 border-b border-ink-200 p-6">
         <div className="flex items-center gap-3">
           {restaurant.branding?.logoUrl && (
@@ -268,14 +280,19 @@ export function RestaurantOrderingView({
             <h2 className="text-lg font-bold text-ink-900">{category.name}</h2>
             {category.description && <p className="text-sm text-ink-500">{category.description}</p>}
             <ul className="flex flex-col gap-3">
-              {category.items.map((item) => (
-                <ItemCard
-                  key={item.id}
-                  item={item}
-                  canOrder={canOrder}
-                  onAdd={() => addToCart(item)}
-                />
-              ))}
+              {category.items.map((item) => {
+                const quantity = cart.find((c) => c.itemId === item.id)?.quantity ?? 0;
+                return (
+                  <ItemCard
+                    key={item.id}
+                    item={item}
+                    canOrder={canOrder}
+                    quantity={quantity}
+                    onIncrement={() => addToCart(item)}
+                    onDecrement={() => decrementInCart(item.id)}
+                  />
+                );
+              })}
             </ul>
           </section>
         ))}
@@ -291,7 +308,10 @@ export function RestaurantOrderingView({
             <div className="max-h-80 overflow-y-auto border-b border-ink-200 px-6 py-3">
               <ul>
                 {cart.map((c) => (
-                  <li key={c.itemId} className="flex items-center justify-between border-t border-dashed border-ink-200 py-2 text-sm first:border-t-0">
+                  <li
+                    key={c.itemId}
+                    className="flex items-center justify-between border-t border-dashed border-ink-200 py-2 text-sm first:border-t-0"
+                  >
                     <span className="text-ink-800">
                       {c.quantity}× {c.name}
                     </span>
@@ -340,7 +360,9 @@ export function RestaurantOrderingView({
                     )}
                     <div className="flex items-center justify-between pt-1 font-semibold text-ink-900">
                       <span>Total</span>
-                      <span className="font-mono">{formatINR(BigInt(quote.breakdown.payableTotalMinor))}</span>
+                      <span className="font-mono">
+                        {formatINR(BigInt(quote.breakdown.payableTotalMinor))}
+                      </span>
                     </div>
                   </>
                 )}
@@ -391,7 +413,10 @@ function Reviews({ slug }: { slug: string }) {
       <h2 className="text-lg font-bold text-ink-900">Reviews</h2>
       <ul className="flex flex-col gap-3">
         {reviews.map((review) => (
-          <li key={review.id} className="rounded-card border border-ink-200 bg-surface p-3 text-sm shadow-1">
+          <li
+            key={review.id}
+            className="rounded-card border border-ink-200 bg-surface p-3 text-sm shadow-1"
+          >
             <div className="flex items-center justify-between">
               <span className="font-medium text-brand-600">{'★'.repeat(review.rating)}</span>
               <span className="text-xs text-ink-400">{review.authorFirstName}</span>
@@ -416,18 +441,26 @@ function Row({ label, valueMinor }: { label: string; valueMinor: string }) {
 function ItemCard({
   item,
   canOrder,
-  onAdd,
+  quantity,
+  onIncrement,
+  onDecrement,
 }: {
   item: PublicMenuItem;
   canOrder: boolean;
-  onAdd: () => void;
+  quantity: number;
+  onIncrement: () => void;
+  onDecrement: () => void;
 }) {
   const addable = canOrder && item.isAvailable;
   // FSSAI marks only define two colors (veg/non-veg); EGG follows the
   // common Indian labeling convention of using the non-veg mark, since
   // the design system's token set has no third color for it.
   const dietaryColor =
-    item.dietaryTag === 'VEG' ? 'var(--veg)' : item.dietaryTag === 'UNKNOWN' ? null : 'var(--nonveg)';
+    item.dietaryTag === 'VEG'
+      ? 'var(--veg)'
+      : item.dietaryTag === 'UNKNOWN'
+        ? null
+        : 'var(--nonveg)';
   return (
     <li className="flex items-center justify-between gap-4 rounded-card border border-ink-200 bg-surface p-3 shadow-1">
       <div className="flex items-center gap-3">
@@ -448,7 +481,10 @@ function ItemCard({
                 className="inline-block h-2.5 w-2.5 rounded-sm border"
                 style={{ borderColor: dietaryColor }}
               >
-                <span className="block h-full w-full scale-50 rounded-full" style={{ background: dietaryColor }} />
+                <span
+                  className="block h-full w-full scale-50 rounded-full"
+                  style={{ background: dietaryColor }}
+                />
               </span>
             )}
             {item.name}
@@ -458,9 +494,34 @@ function ItemCard({
           {!item.isAvailable && <p className="text-xs font-semibold text-error">Sold out</p>}
         </div>
       </div>
-      <Button disabled={!addable} onClick={onAdd} className="shrink-0">
-        Add
-      </Button>
+      {quantity > 0 ? (
+        <div className="flex shrink-0 items-center gap-1 rounded-pill border border-ink-200 p-1">
+          <button
+            type="button"
+            onClick={onDecrement}
+            aria-label={`Remove one ${item.name}`}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-ink-700 hover:bg-ink-100"
+          >
+            −
+          </button>
+          <span className="w-4 text-center font-mono text-sm font-semibold text-ink-900">
+            {quantity}
+          </span>
+          <button
+            type="button"
+            disabled={!addable}
+            onClick={onIncrement}
+            aria-label={`Add one more ${item.name}`}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-ink-700 hover:bg-ink-100 disabled:opacity-40"
+          >
+            +
+          </button>
+        </div>
+      ) : (
+        <Button disabled={!addable} onClick={onIncrement} className="shrink-0">
+          Add
+        </Button>
+      )}
     </li>
   );
 }

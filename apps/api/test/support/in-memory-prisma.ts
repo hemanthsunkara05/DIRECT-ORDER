@@ -672,6 +672,7 @@ export interface DailyRestaurantMetricsRow {
   netOrderValueMinor: bigint;
   avgOrderValueMinor: bigint;
   avgPrepSeconds: number;
+  platformFeeRevenueMinor: bigint;
   computedAt: Date;
 }
 
@@ -688,6 +689,7 @@ export interface DailyPlatformMetricsRow {
   netOrderValueMinor: bigint;
   avgOrderValueMinor: bigint;
   avgPrepSeconds: number;
+  platformFeeRevenueMinor: bigint;
   paymentsAttempted: number;
   paymentsSucceeded: number;
   deliveriesAttempted: number;
@@ -1249,7 +1251,7 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       );
     },
     /**
-     * Two real callers: `AnalyticsRollupService.rollupYesterdayForAllRestaurants`
+     * Two real callers: `AnalyticsRollupService.rollupRecentDaysForAllRestaurants`
      * (Phase 17, `select` ignored — returning the full row is harmless
      * since every caller only reads the fields it asked for) and
      * `AdminQueryRepository.listRestaurants` (Phase 13, extended Phase
@@ -1264,7 +1266,12 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       skip,
       take,
     }: {
-      where?: { status?: string; name?: { contains: string; mode?: string } };
+      where?: {
+        status?: string;
+        name?: { contains: string; mode?: string };
+        /** Phase 23a: overdue-approvals alert (`listOverdueApprovals`). */
+        submittedAt?: { lt?: Date; gte?: Date };
+      };
       orderBy?: { createdAt: 'asc' | 'desc' } | { submittedAt: 'asc' | 'desc' };
       cursor?: { id: string };
       skip?: number;
@@ -1276,6 +1283,10 @@ export function createInMemoryPrisma(): InMemoryPrisma {
           const needle = where.name.contains.toLowerCase();
           if (!r.name.toLowerCase().includes(needle)) return false;
         }
+        if (where?.submittedAt?.lt && (!r.submittedAt || r.submittedAt.getTime() >= where.submittedAt.lt.getTime()))
+          return false;
+        if (where?.submittedAt?.gte && (!r.submittedAt || r.submittedAt.getTime() < where.submittedAt.gte.getTime()))
+          return false;
         return true;
       });
       if (orderBy && 'submittedAt' in orderBy) {
@@ -1863,6 +1874,13 @@ export function createInMemoryPrisma(): InMemoryPrisma {
     customerPhone?: string;
     status?: string | { in: string[] } | { notIn: string[] };
     createdAt?: { lt?: Date; gte?: Date };
+    /** Live queue's "today" scoping + history export's date-range scoping (both new, restaurant-order.repository.ts). */
+    placedAt?: { lt?: Date; gte?: Date };
+    /** Phase 23a: admin command-center funnel's "delivered/cancelled today" counts. */
+    deliveredAt?: { lt?: Date; gte?: Date };
+    cancelledAt?: { lt?: Date; gte?: Date };
+    /** Phase 23a: stuck-order alert (`listStuckOrders`) — "time since last status change". */
+    updatedAt?: { lt?: Date; gte?: Date };
     OR?: OrderDateRangeClause[];
   }
 
@@ -1891,6 +1909,20 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       }
       if (where.createdAt?.lt && o.createdAt.getTime() >= where.createdAt.lt.getTime())
         return false;
+      if (where.placedAt?.gte && (!o.placedAt || o.placedAt.getTime() < where.placedAt.gte.getTime()))
+        return false;
+      if (where.placedAt?.lt && (!o.placedAt || o.placedAt.getTime() >= where.placedAt.lt.getTime()))
+        return false;
+      if (where.deliveredAt?.gte && (!o.deliveredAt || o.deliveredAt.getTime() < where.deliveredAt.gte.getTime()))
+        return false;
+      if (where.deliveredAt?.lt && (!o.deliveredAt || o.deliveredAt.getTime() >= where.deliveredAt.lt.getTime()))
+        return false;
+      if (where.cancelledAt?.gte && (!o.cancelledAt || o.cancelledAt.getTime() < where.cancelledAt.gte.getTime()))
+        return false;
+      if (where.cancelledAt?.lt && (!o.cancelledAt || o.cancelledAt.getTime() >= where.cancelledAt.lt.getTime()))
+        return false;
+      if (where.updatedAt?.gte && o.updatedAt.getTime() < where.updatedAt.gte.getTime()) return false;
+      if (where.updatedAt?.lt && o.updatedAt.getTime() >= where.updatedAt.lt.getTime()) return false;
       if (where.OR) {
         const matchesOr = where.OR.some((clause) => {
           if ('placedAt' in clause) return inRange(o.placedAt, clause.placedAt);
@@ -2097,25 +2129,41 @@ export function createInMemoryPrisma(): InMemoryPrisma {
       cursor,
       skip,
       take,
+      include,
     }: {
       where?: OrderListWhere;
-      orderBy?: { createdAt: 'asc' | 'desc' };
+      orderBy?: { createdAt: 'asc' | 'desc' } | { placedAt: 'asc' | 'desc' } | { updatedAt: 'asc' | 'desc' };
       cursor?: { id: string };
       skip?: number;
       take?: number;
+      include?: OrderInclude;
     } = {}) => {
       let matches = orders.filter(matchOrderList(where ?? {}));
-      if (orderBy?.createdAt === 'desc') {
-        matches = [...matches].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-      } else if (orderBy?.createdAt === 'asc') {
-        matches = [...matches].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      if (orderBy && 'createdAt' in orderBy) {
+        matches = [...matches].sort((a, b) =>
+          orderBy.createdAt === 'desc'
+            ? b.createdAt.getTime() - a.createdAt.getTime()
+            : a.createdAt.getTime() - b.createdAt.getTime(),
+        );
+      } else if (orderBy && 'placedAt' in orderBy) {
+        matches = [...matches].sort((a, b) => {
+          const at = a.placedAt?.getTime() ?? 0;
+          const bt = b.placedAt?.getTime() ?? 0;
+          return orderBy.placedAt === 'desc' ? bt - at : at - bt;
+        });
+      } else if (orderBy && 'updatedAt' in orderBy) {
+        matches = [...matches].sort((a, b) =>
+          orderBy.updatedAt === 'desc'
+            ? b.updatedAt.getTime() - a.updatedAt.getTime()
+            : a.updatedAt.getTime() - b.updatedAt.getTime(),
+        );
       }
       if (cursor) {
         const cursorIndex = matches.findIndex((o) => o.id === cursor.id);
         matches = cursorIndex === -1 ? [] : matches.slice(cursorIndex + (skip ?? 0));
       }
       if (take !== undefined) matches = matches.slice(0, take);
-      return Promise.resolve(matches);
+      return Promise.resolve(include ? matches.map((row) => withOrderRelations(row, include)) : matches);
     },
     findFirst: ({ where, include }: { where: OrderListWhere; include?: OrderInclude }) => {
       const row = orders.find(matchOrderList(where)) ?? null;

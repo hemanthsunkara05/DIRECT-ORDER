@@ -48,7 +48,12 @@ import { AcceptInvitationController } from './controllers/accept-invitation.cont
   ],
   // Phase 22: AdminModule needs RestaurantService/RestaurantProfileService
   // to build the admin-authorized content-management surface on top of
-  // the SAME owner-side logic, rather than duplicating it.
-  exports: [RestaurantService, RestaurantProfileService],
+  // the SAME owner-side logic, rather than duplicating it. Phase 23a
+  // adds UploadService for the identical reason — AdminUploadController
+  // reuses this exact service (it already takes `restaurantId` as a
+  // plain parameter, not derived from tenant context), just gated by a
+  // different permission and fed `restaurantId` from a route param
+  // instead of `CurrentTenant()`.
+  exports: [RestaurantService, RestaurantProfileService, UploadService],
 })
 export class RestaurantsModule {}

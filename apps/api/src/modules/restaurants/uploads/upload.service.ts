@@ -86,6 +86,13 @@ export class UploadService {
     actorId: string,
     key: string,
     declaredContentType: string,
+    // Phase 23a: an admin-gated caller (`AdminUploadController`) passes
+    // 'ADMIN' here instead — same method, same tenant-namespace check
+    // below (still correct: the target restaurant is still whichever
+    // `restaurantId` the key namespace names), just attributed
+    // correctly in the audit log rather than misrecorded as the
+    // restaurant's own staff acting.
+    actorType: 'RESTAURANT_USER' | 'ADMIN' = 'RESTAURANT_USER',
   ): Promise<VerifyUploadResult> {
     // The key namespace (restaurants/{restaurantId}/...) is itself a
     // tenant check — a caller cannot verify (and thereby probe the
@@ -102,7 +109,7 @@ export class UploadService {
     if (!contentMatchesDeclaredType(bytes, declaredContentType)) {
       await this.storage.deleteObject(key);
       await this.audit.record({
-        actorType: 'RESTAURANT_USER',
+        actorType,
         actorId,
         action: 'UPLOAD_CONTENT_MISMATCH_REJECTED',
         entityType: 'Upload',

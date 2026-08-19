@@ -10,10 +10,11 @@ import {
   Post,
   Query,
   Req,
+  Res,
   Sse,
   UseGuards,
 } from '@nestjs/common';
-import type { FastifyRequest } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { Observable } from 'rxjs';
 import type {
   Delivery,
@@ -36,6 +37,7 @@ import { CurrentUser } from '../../identity/decorators/current-user.decorator.js
 import { RejectOrderDto } from '../dto/reject-order.dto.js';
 import { RestaurantOrderService } from '../services/restaurant-order.service.js';
 import { OrderStreamService } from '../services/order-stream.service.js';
+import type { OrderWithItems } from '../repositories/order.repository.js';
 
 const ORDER_STATUSES: OrderStatus[] = [
   'PENDING_PAYMENT',
@@ -78,6 +80,7 @@ export class RestaurantOrderController {
     @Query('status') status?: string,
     @Query('cursor') cursor?: string,
     @Query('limit') limitRaw?: string,
+    @Query('today') todayRaw?: string,
   ) {
     const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
     if (limitRaw !== undefined && (!Number.isFinite(limit) || limit! < 1)) {
@@ -87,6 +90,7 @@ export class RestaurantOrderController {
       status: parseStatusFilter(status),
       cursor,
       limit,
+      today: todayRaw === 'true',
     });
     return okPage(page.items.map(toPublicOrderSummary), {
       nextCursor: page.hasMore ? (page.items.at(-1)?.id ?? null) : null,
@@ -114,6 +118,36 @@ export class RestaurantOrderController {
     const headerValue = request.headers['last-event-id'];
     const lastEventIdHeader = Array.isArray(headerValue) ? headerValue[0] : headerValue;
     return this.stream.stream(tenant.restaurantId, lastEventIdQuery ?? lastEventIdHeader);
+  }
+
+  /**
+   * History export (docs feedback: "month data should be stored in
+   * excel kind of data") — a CSV download of every placed order in
+   * `[from, to]`, restaurant-timezone bounded. Declared before `:id`
+   * for the same routing-order reason as `stream` above: Nest matches
+   * in declaration order, so `:id` would otherwise swallow the literal
+   * `export` segment. Bypasses the JSON response envelope entirely
+   * (`@Res()`, not a return value) — this endpoint's whole purpose is a
+   * downloadable file, not a `{data: ...}` API response.
+   */
+  @Get('export')
+  @TenantScoped()
+  @Permissions('orders:read')
+  async export(
+    @CurrentTenant() tenant: TenantContext,
+    @Res() reply: FastifyReply,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      throw new ValidationError('`from` and `to` are required, formatted YYYY-MM-DD.');
+    }
+    const orders = await this.orders.exportOrders(tenant.restaurantId, from, to);
+    const csv = toOrdersCsv(orders);
+    reply
+      .header('Content-Type', 'text/csv; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename="orders_${from}_to_${to}.csv"`)
+      .send(csv);
   }
 
   @Get(':id')
@@ -158,6 +192,24 @@ export class RestaurantOrderController {
     requireIdempotencyKey(idempotencyKey);
     const input = RejectOrderDto.parse(body);
     const result = await this.orders.reject(tenant.restaurantId, id, user.id, input.reason);
+    return ok({ status: result.order.status, applied: result.applied });
+  }
+
+  /** Restaurant-initiated cancellation-after-accept (docs/06 BR-174) — MANAGER/OWNER only (`orders:cancel`), reason required, full refund. */
+  @Post(':id/cancel')
+  @TenantScoped()
+  @Permissions('orders:cancel')
+  @HttpCode(200)
+  async cancel(
+    @CurrentTenant() tenant: TenantContext,
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    requireIdempotencyKey(idempotencyKey);
+    const input = RejectOrderDto.parse(body);
+    const result = await this.orders.cancel(tenant.restaurantId, id, user.id, input.reason);
     return ok({ status: result.order.status, applied: result.applied });
   }
 
@@ -211,7 +263,34 @@ function parseStatusFilter(status: string | undefined): OrderStatus[] | undefine
   return values as OrderStatus[];
 }
 
-function toPublicOrderSummary(order: Order) {
+/** Excel/Sheets opens this directly (docs feedback) — one row per order, quoted fields, CRLF line endings per RFC 4180. */
+function toOrdersCsv(orders: OrderWithItems[]): string {
+  const header = [
+    'Order number',
+    'Placed at',
+    'Status',
+    'Customer',
+    'Phone',
+    'Items',
+    'Payable total (INR)',
+  ];
+  const rows = orders.map((order) => [
+    order.orderNumber,
+    order.placedAt ? order.placedAt.toISOString() : '',
+    order.status,
+    order.customerName,
+    order.customerPhone,
+    order.items.map((item) => `${item.quantity}x ${item.nameSnapshot}`).join('; '),
+    (Number(order.payableTotalMinor) / 100).toFixed(2),
+  ]);
+  return [header, ...rows].map((row) => row.map(csvEscape).join(',')).join('\r\n') + '\r\n';
+}
+
+function csvEscape(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function toPublicOrderSummary(order: OrderWithItems) {
   return {
     id: order.id,
     orderNumber: order.orderNumber,
@@ -220,6 +299,11 @@ function toPublicOrderSummary(order: Order) {
     payableTotalMinor: order.payableTotalMinor.toString(),
     createdAt: order.createdAt,
     placedAt: order.placedAt,
+    // Queue preview (docs feedback: "better to show the items of order
+    // rather than name of customer") — name + quantity only, matching
+    // the summary's own "preview, not full detail" scope; full pricing
+    // per line still comes from GET :id.
+    items: order.items.map((item) => ({ name: item.nameSnapshot, quantity: item.quantity })),
   };
 }
 

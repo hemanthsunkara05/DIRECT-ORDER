@@ -3,7 +3,14 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatINR } from '@direct-order/money';
-import { ApiError, cartApi, checkoutApi, orderApi, type CartIssue } from '@/lib/api-client';
+import {
+  ApiError,
+  cartApi,
+  checkoutApi,
+  generateUuid,
+  orderApi,
+  type CartIssue,
+} from '@/lib/api-client';
 import { fetchPublicRestaurant, type PublicRestaurant } from '@/lib/public-api';
 import { Button } from '@/components/ui/Button';
 
@@ -63,7 +70,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
   // "Place order" reuses the same key rather than minting a second one
   // (docs/04 §8.2's Idempotency-Key contract is what actually prevents
   // a duplicate order either way; this just makes the common case clean).
-  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const [idempotencyKey] = useState(() => generateUuid());
 
   useEffect(() => {
     void params.then(({ slug: s }) => {
@@ -244,7 +251,9 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
               <span>
                 {c.quantity}× {c.name}
               </span>
-              <span className="font-mono">{formatINR(BigInt(c.priceMinor) * BigInt(c.quantity))}</span>
+              <span className="font-mono">
+                {formatINR(BigInt(c.priceMinor) * BigInt(c.quantity))}
+              </span>
             </li>
           ))}
         </ul>
@@ -367,7 +376,11 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
 
         {error && <p className="text-sm font-medium text-error">{error}</p>}
 
-        <Button type="submit" disabled={submitting || Boolean(belowMinimumIssue)} loading={submitting}>
+        <Button
+          type="submit"
+          disabled={submitting || Boolean(belowMinimumIssue)}
+          loading={submitting}
+        >
           {belowMinimumIssue
             ? 'Add more to meet the minimum order'
             : `Place order — ${formatINR(subtotalMinor)}`}

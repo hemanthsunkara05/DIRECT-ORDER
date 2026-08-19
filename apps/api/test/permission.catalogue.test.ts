@@ -33,7 +33,7 @@ orders:read             | x | x | x | x | x | x | x
 orders:accept           | x | x | x |   |   |   |
 orders:reject           | x | x | x |   |   |   |
 orders:transition       | x | x | x |   |   |   |
-orders:cancel           |   |   |   |   | x |   | x
+orders:cancel           |   | x | x |   | x |   | x
 payments:read           |   | x | x | x | x | x | x
 payments:refund         |   |   |   |   |   | x | x
 payments:reconcile      |   |   |   |   |   | x | x

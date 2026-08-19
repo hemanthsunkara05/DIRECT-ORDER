@@ -41,6 +41,13 @@ function MenuManagement() {
   const restaurantId = activeRestaurantId ?? undefined;
   const canWrite = membership?.role === 'MANAGER' || membership?.role === 'OWNER';
 
+  // Defaults to the read-only customer-facing preview (docs feedback:
+  // "should be like a preview for the menu shown to customer") —
+  // editing is an explicit, deliberate action via the top button, not
+  // the page's default state, which matches how rarely a menu actually
+  // changes compared to how often someone just wants to glance at it.
+  const [mode, setMode] = useState<'preview' | 'edit'>('preview');
+
   const [categories, setCategories] = useState<MenuCategory[] | null>(null);
   const [items, setItems] = useState<MenuItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -117,41 +124,131 @@ function MenuManagement() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-8 p-8" style={{ background: 'var(--bg)' }}>
-      <h1 className="text-xl font-bold text-ink-900">Menu</h1>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-ink-900">Menu</h1>
+          {mode === 'preview' && (
+            <p className="text-xs text-ink-400">This is what customers see on your ordering page.</p>
+          )}
+        </div>
+        {canWrite && (
+          <button
+            type="button"
+            onClick={() => setMode(mode === 'preview' ? 'edit' : 'preview')}
+            className={
+              mode === 'edit'
+                ? 'rounded-ctrl border border-ink-200 px-3.5 py-1.5 text-xs font-semibold text-ink-700 hover:bg-ink-100'
+                : 'rounded-ctrl bg-brand-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-brand-700'
+            }
+          >
+            {mode === 'edit' ? 'Done editing' : 'Edit menu'}
+          </button>
+        )}
+      </div>
       {error && <p className="text-sm font-medium text-error">{error}</p>}
       {/* Announces reorder outcomes to screen-reader users, who won't see a drag-and-drop's visual reshuffle. */}
       <p role="status" aria-live="polite" className="sr-only">
         {announcement}
       </p>
 
-      {canWrite && <CreateCategoryForm restaurantId={restaurantId} onCreated={() => void load()} />}
-
       {!categories && <p className="text-sm text-ink-500">Loading…</p>}
-      {categories?.length === 0 && (
-        <EmptyState message="No menu categories yet. Add one above to start building your menu." />
+      {categories?.length === 0 && mode === 'edit' && (
+        <EmptyState message="No menu categories yet. Add one below to start building your menu." />
+      )}
+      {categories?.length === 0 && mode === 'preview' && (
+        <EmptyState message="Your menu is empty. Switch to Edit menu to add categories and items." />
       )}
 
-      {categories?.map((category, index) => (
-        <CategoryCard
-          key={category.id}
-          category={category}
-          items={itemsByCategory.get(category.id) ?? []}
-          restaurantId={restaurantId}
-          canWrite={canWrite}
-          isFirst={index === 0}
-          isLast={index === categories.length - 1}
-          onMoveUp={() => void reorderCategories(moveItem(categories, index, index - 1))}
-          onMoveDown={() => void reorderCategories(moveItem(categories, index, index + 1))}
-          onDrop={(fromId) => {
-            const from = categories.findIndex((c) => c.id === fromId);
-            if (from === -1 || from === index) return;
-            void reorderCategories(moveItem(categories, from, index));
-          }}
-          onChanged={() => void load()}
-          onItemsReordered={(next) => void reorderItems(category.id, next)}
-        />
-      ))}
+      {mode === 'preview' &&
+        categories?.map((category) => (
+          <CategoryPreview
+            key={category.id}
+            category={category}
+            items={itemsByCategory.get(category.id) ?? []}
+          />
+        ))}
+
+      {mode === 'edit' && (
+        <>
+          <CreateCategoryForm restaurantId={restaurantId} onCreated={() => void load()} />
+
+          {categories?.map((category, index) => (
+            <CategoryCard
+              key={category.id}
+              category={category}
+              items={itemsByCategory.get(category.id) ?? []}
+              restaurantId={restaurantId}
+              canWrite={canWrite}
+              isFirst={index === 0}
+              isLast={index === categories.length - 1}
+              onMoveUp={() => void reorderCategories(moveItem(categories, index, index - 1))}
+              onMoveDown={() => void reorderCategories(moveItem(categories, index, index + 1))}
+              onDrop={(fromId) => {
+                const from = categories.findIndex((c) => c.id === fromId);
+                if (from === -1 || from === index) return;
+                void reorderCategories(moveItem(categories, from, index));
+              }}
+              onChanged={() => void load()}
+              onItemsReordered={(next) => void reorderItems(category.id, next)}
+            />
+          ))}
+        </>
+      )}
     </main>
+  );
+}
+
+/**
+ * Read-only mirror of the customer storefront's own category/item
+ * layout (`ItemCard` in `restaurant-ordering-view.tsx`) — same veg/
+ * non-veg dot, price, and "Sold out" treatment, minus the cart controls
+ * that only make sense for an actual customer. Archived items/categories
+ * never reach here (`menuApi.categories/items.list()` already excludes
+ * them), matching what a customer would actually see.
+ */
+function CategoryPreview({ category, items }: { category: MenuCategory; items: MenuItem[] }) {
+  if (items.length === 0) return null;
+  return (
+    <section className="flex flex-col gap-3">
+      <div>
+        <h2 className="text-lg font-bold text-ink-900">{category.name}</h2>
+        {category.description && <p className="text-sm text-ink-500">{category.description}</p>}
+      </div>
+      <ul className="flex flex-col gap-3">
+        {items.map((item) => (
+          <ItemPreviewCard key={item.id} item={item} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function ItemPreviewCard({ item }: { item: MenuItem }) {
+  // FSSAI marks only define two colors (veg/non-veg); EGG follows the
+  // common Indian labeling convention of using the non-veg mark, same
+  // convention the customer storefront's own ItemCard uses.
+  const dietaryColor =
+    item.dietaryTag === 'VEG' ? 'var(--veg)' : item.dietaryTag === 'UNKNOWN' ? null : 'var(--nonveg)';
+  return (
+    <li className="flex items-center justify-between gap-4 rounded-card border border-ink-200 bg-surface p-3 shadow-1">
+      <div>
+        <p className="flex items-center gap-1.5 text-sm font-medium text-ink-900">
+          {dietaryColor && (
+            <span
+              aria-hidden="true"
+              className="inline-block h-2.5 w-2.5 rounded-sm border"
+              style={{ borderColor: dietaryColor }}
+            >
+              <span className="block h-full w-full scale-50 rounded-full" style={{ background: dietaryColor }} />
+            </span>
+          )}
+          {item.name}
+        </p>
+        {item.description && <p className="text-xs text-ink-500">{item.description}</p>}
+        <p className="font-mono text-sm text-ink-700">{formatINR(BigInt(item.priceMinor))}</p>
+        {!item.isAvailable && <p className="text-xs font-semibold text-error">Sold out</p>}
+      </div>
+    </li>
   );
 }
 

@@ -18,8 +18,15 @@ export type OrderWithRelations = Order & {
   delivery: Delivery | null;
 };
 
+/** The queue list's per-order preview needs item names, not the full detail relations `OrderWithRelations` carries. */
+export type OrderWithItems = Order & { items: OrderItem[] };
+
 export interface RestaurantOrderFilters {
   status?: OrderStatus[];
+  /** Inclusive lower bound on `placedAt` — the live queue's "today only" scoping (docs feedback). */
+  placedSince?: Date;
+  /** Exclusive upper bound on `placedAt` — history export's date-range scoping. */
+  placedBefore?: Date;
 }
 
 export interface ListForRestaurantOptions {
@@ -113,22 +120,54 @@ export class OrderRepository extends TenantScopedRepository {
    * AuditService's pagination already established. Callers request
    * `limit + 1` rows and treat the extra row's presence as `hasMore`
    * (RestaurantOrderService does this, never this method) rather than
-   * returning it.
+   * returning it. Includes `items` so the queue can preview what's in
+   * each order (more useful to kitchen staff triaging a queue than the
+   * customer's name) without an extra per-order detail fetch.
    */
   async listForRestaurant(
     restaurantId: string,
     filters: RestaurantOrderFilters,
     options: ListForRestaurantOptions = {},
-  ): Promise<Order[]> {
+  ): Promise<OrderWithItems[]> {
     const limit = Math.min(options.limit ?? 20, 100);
     return this.prisma.order.findMany({
-      where: this.withTenant(
-        restaurantId,
-        filters.status?.length ? { status: { in: filters.status } } : {},
-      ),
+      where: this.withTenant(restaurantId, {
+        ...(filters.status?.length ? { status: { in: filters.status } } : {}),
+        ...(filters.placedSince || filters.placedBefore
+          ? {
+              placedAt: {
+                ...(filters.placedSince ? { gte: filters.placedSince } : {}),
+                ...(filters.placedBefore ? { lt: filters.placedBefore } : {}),
+              },
+            }
+          : {}),
+      }),
+      include: { items: true },
       orderBy: { createdAt: 'desc' },
       take: limit + 1,
       ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+    });
+  }
+
+  /**
+   * History export (`GET /restaurant/orders/export`) — every order in a
+   * date range, unpaginated (bounded by the caller-supplied range, not a
+   * page size) since it feeds a one-shot CSV download rather than an
+   * infinite-scroll queue. No status filter: an export is a ledger, not
+   * a live-triage view, so it deliberately includes every terminal state
+   * (DELIVERED, REJECTED, CANCELLED, DELIVERY_FAILED) the live queue
+   * leaves out.
+   */
+  async listForRestaurantExport(
+    restaurantId: string,
+    range: { from: Date; to: Date },
+  ): Promise<OrderWithItems[]> {
+    return this.prisma.order.findMany({
+      where: this.withTenant(restaurantId, {
+        placedAt: { gte: range.from, lt: range.to },
+      }),
+      include: { items: true },
+      orderBy: { placedAt: 'asc' },
     });
   }
 

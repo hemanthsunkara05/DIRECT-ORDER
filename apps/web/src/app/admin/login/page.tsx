@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ApiError, authApi, mfaApi } from '@/lib/api-client';
 import { useSession } from '@/lib/auth/session-context';
+import { PasswordInput } from '@/components/ui/PasswordInput';
 
 /**
  * A separate login flow from the restaurant-facing `/login` page — Phase
@@ -77,13 +78,12 @@ export default function AdminLoginPage() {
             onChange={(e) => setEmail(e.target.value)}
             className="rounded-md border border-slate-300 px-3 py-2 text-sm"
           />
-          <input
-            type="password"
+          <PasswordInput
             placeholder="Password"
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
           />
           {error && <p className="text-sm text-red-600">{error}</p>}
           <button type="submit" disabled={busy} className="btn-primary disabled:cursor-not-allowed">

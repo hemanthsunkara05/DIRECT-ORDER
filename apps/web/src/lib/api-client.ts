@@ -107,6 +107,26 @@ function get<T>(path: string): Promise<T> {
   return request<T>(path, { method: 'GET' });
 }
 
+/**
+ * `crypto.randomUUID()` requires a secure context (HTTPS, or the
+ * `localhost` exemption) — it's `undefined` when this app is loaded over
+ * plain HTTP from a LAN address (e.g. testing from a phone against a dev
+ * server by IP), which throws "crypto.randomUUID is not a function" the
+ * instant an Idempotency-Key is generated. `crypto.getRandomValues()` has
+ * no such restriction, so this falls back to building a v4 UUID from it
+ * rather than assuming the newer API is always present.
+ */
+export function generateUuid(): string {
+  if (typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80; // variant 10xx
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export interface RestaurantMembershipSummary {
   restaurantId: string;
   restaurantName: string;
@@ -771,8 +791,8 @@ export interface OrderTrackingView {
 /**
  * `Idempotency-Key` (docs/04-api-specification.md §8.2, "client-
  * generated UUID") is generated once per checkout ATTEMPT and reused
- * across retries within that attempt — `crypto.randomUUID()` is
- * available in every browser this app targets, no polyfill needed.
+ * across retries within that attempt — via `generateUuid()` above, not a
+ * bare `crypto.randomUUID()` call (see that function's doc comment).
  */
 export const orderApi = {
   checkout: (
@@ -863,6 +883,8 @@ export interface RestaurantOrderSummary {
   payableTotalMinor: string;
   createdAt: string;
   placedAt: string | null;
+  /** Name + quantity only — a queue preview, not full per-line pricing (that's `RestaurantOrderDetail.items`). */
+  items: { name: string; quantity: number }[];
 }
 
 export interface RestaurantOrderDetail {
@@ -934,7 +956,7 @@ export interface TransitionResult {
 
 /**
  * Every mutating call here sends a fresh `Idempotency-Key`
- * (`crypto.randomUUID()`) — required by the API (docs/04 §8.5) even
+ * (`generateUuid()`) — required by the API (docs/04 §8.5) even
  * though the underlying transition is already safely idempotent by
  * target state; see OrderStateService's own doc comment. `restaurantId`
  * is only needed when the caller belongs to more than one restaurant
@@ -943,13 +965,14 @@ export interface TransitionResult {
  */
 export const restaurantOrdersApi = {
   list: (
-    params: { status?: string[]; cursor?: string; limit?: number } = {},
+    params: { status?: string[]; cursor?: string; limit?: number; today?: boolean } = {},
     restaurantId?: string,
   ) => {
     const query = new URLSearchParams();
     if (params.status?.length) query.set('status', params.status.join(','));
     if (params.cursor) query.set('cursor', params.cursor);
     if (params.limit) query.set('limit', String(params.limit));
+    if (params.today) query.set('today', 'true');
     const qs = query.toString();
     return requestPage<RestaurantOrderSummary>(`/restaurant/orders${qs ? `?${qs}` : ''}`, {
       method: 'GET',
@@ -966,30 +989,39 @@ export const restaurantOrdersApi = {
   accept: (orderId: string, restaurantId?: string) =>
     request<TransitionResult>(`/restaurant/orders/${orderId}/accept`, {
       method: 'POST',
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
-      ...restaurantHeaders(restaurantId),
+      // Merged, not spread-after: `...restaurantHeaders(restaurantId)`
+      // spreading a SECOND `headers` key here would silently overwrite
+      // this whole object (later key wins in an object literal) whenever
+      // restaurantId is truthy — which on this page it always is —
+      // dropping Idempotency-Key entirely and 422ing every action.
+      headers: { 'Idempotency-Key': generateUuid(), ...restaurantHeaders(restaurantId).headers },
     }),
 
   reject: (orderId: string, reason: string, restaurantId?: string) =>
     request<TransitionResult>(`/restaurant/orders/${orderId}/reject`, {
       method: 'POST',
       body: JSON.stringify({ reason }),
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
-      ...restaurantHeaders(restaurantId),
+      headers: { 'Idempotency-Key': generateUuid(), ...restaurantHeaders(restaurantId).headers },
     }),
 
   preparing: (orderId: string, restaurantId?: string) =>
     request<TransitionResult>(`/restaurant/orders/${orderId}/preparing`, {
       method: 'POST',
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
-      ...restaurantHeaders(restaurantId),
+      headers: { 'Idempotency-Key': generateUuid(), ...restaurantHeaders(restaurantId).headers },
     }),
 
   ready: (orderId: string, restaurantId?: string) =>
     request<TransitionResult>(`/restaurant/orders/${orderId}/ready`, {
       method: 'POST',
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
-      ...restaurantHeaders(restaurantId),
+      headers: { 'Idempotency-Key': generateUuid(), ...restaurantHeaders(restaurantId).headers },
+    }),
+
+  /** Cancellation-after-accept (docs/06 BR-174) — MANAGER/OWNER only, reason required, always a full refund for now. */
+  cancel: (orderId: string, reason: string, restaurantId?: string) =>
+    request<TransitionResult>(`/restaurant/orders/${orderId}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+      headers: { 'Idempotency-Key': generateUuid(), ...restaurantHeaders(restaurantId).headers },
     }),
 
   /**
@@ -1016,6 +1048,42 @@ export const restaurantOrdersApi = {
     if (lastEventId) query.set('lastEventId', lastEventId);
     const qs = query.toString();
     return `${API_BASE_URL}/api/v1/restaurant/orders/stream${qs ? `?${qs}` : ''}`;
+  },
+
+  /**
+   * History export (docs feedback: "month data should be stored in
+   * excel kind of data") — fetched via `fetch()` + a Blob download
+   * rather than a plain `<a href>` navigation, because a staff member
+   * belonging to more than one restaurant needs `X-Restaurant-Id` set on
+   * the request (the same header every other call here needs — see
+   * `restaurantHeaders`), and a bare link navigation can't carry a
+   * custom header.
+   */
+  exportCsv: async (from: string, to: string, restaurantId?: string): Promise<void> => {
+    const query = new URLSearchParams({ from, to });
+    const res = await fetch(`${API_BASE_URL}/api/v1/restaurant/orders/export?${query.toString()}`, {
+      method: 'GET',
+      credentials: 'include',
+      ...restaurantHeaders(restaurantId),
+    });
+    if (!res.ok) {
+      const json: unknown = await res.json().catch(() => null);
+      const body = (json as { error?: ApiErrorBody } | null)?.error ?? {
+        code: 'UNKNOWN_ERROR',
+        message: 'Something went wrong. Please try again.',
+        requestId: '',
+      };
+      throw new ApiError(res.status, body);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `orders_${from}_to_${to}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   },
 };
 
@@ -1166,6 +1234,14 @@ export interface AdminOrderSummary {
   createdAt: string;
 }
 
+export interface AdminOrderDirectoryEntry {
+  restaurantId: string;
+  name: string;
+  slug: string;
+  city: string | null;
+  orderCount: number;
+}
+
 export interface AdminPaymentSummary {
   id: string;
   orderId: string;
@@ -1218,6 +1294,87 @@ export interface DailyMetricsView {
   supportCasesOpened: number;
 }
 
+export interface CommandCenterKpis {
+  ordersToday: number;
+  ordersYesterday: number | null;
+  ordersThisWeek: number;
+  gmvTodayMinor: string;
+  gmvYesterdayMinor: string | null;
+  gmvThisWeekMinor: string;
+  platformFeeRevenueTodayMinor: string;
+  platformFeeRevenueYesterdayMinor: string | null;
+  platformFeeRevenueThisWeekMinor: string;
+  refundMinorToday: string;
+  restaurantsLive: number;
+  restaurantsPendingApproval: number;
+}
+
+export interface CommandCenterFunnel {
+  PLACED: number;
+  ACCEPTED: number;
+  PREPARING: number;
+  READY_FOR_PICKUP: number;
+  OUT_FOR_DELIVERY: number;
+  DELIVERED_TODAY: number;
+  CANCELLED_TODAY: number;
+  REJECTED_TODAY: number;
+}
+
+export interface StuckOrderAlert {
+  id: string;
+  orderNumber: string;
+  restaurantId: string;
+  status: string;
+  minutesSinceUpdate: number;
+}
+
+export interface OverdueApprovalAlert {
+  id: string;
+  name: string;
+  slug: string;
+  hoursWaiting: number | null;
+}
+
+export interface CommandCenterTopRestaurant {
+  restaurantId: string;
+  name: string;
+  orderCount: number;
+}
+
+export interface CommandCenterView {
+  kpis: CommandCenterKpis;
+  funnel: CommandCenterFunnel;
+  alerts: {
+    stuckOrders: StuckOrderAlert[];
+    overdueApprovals: OverdueApprovalAlert[];
+  };
+  topRestaurants: CommandCenterTopRestaurant[];
+}
+
+export interface AdminOrderDetail {
+  id: string;
+  orderNumber: string;
+  restaurantId: string;
+  status: string;
+  customerName: string;
+  customerPhone: string;
+  payableTotalMinor: string;
+  rejectionReason: string | null;
+  cancellationReason: string | null;
+  items: { id: string; nameSnapshot: string; quantity: number; lineTotalMinor: string }[];
+  history: { fromStatus: string | null; toStatus: string; actorType: string; reason: string | null; createdAt: string }[];
+  payment: { status: string; amountMinor: string; capturedMinor: string; refundedMinor: string; method: string | null } | null;
+  delivery: {
+    status: string;
+    provider: string;
+    providerDeliveryId: string | null;
+    courierName: string | null;
+    courierPhone: string | null;
+    trackingUrl: string | null;
+    failureReason: string | null;
+  } | null;
+}
+
 export const adminApi = {
   /** `ordersToday` (a live `orders.count()` placeholder — see PHASE_REPORTS.md's Phase 13 entry) is replaced by `metrics`, sourced from `DailyPlatformMetrics` rollups (Phase 17) — necessarily "as of yesterday", never a still-accumulating "today". */
   overview: () =>
@@ -1230,6 +1387,9 @@ export const adminApi = {
         trend: DailyMetricsView[];
       };
     }>('/admin/overview', { method: 'GET' }),
+
+  /** Command center (Phase 23a) — real data only, see that endpoint's own doc comment for exactly what each figure reads from. */
+  commandCenter: () => request<CommandCenterView>('/admin/overview/command-center', { method: 'GET' }),
 
   health: () =>
     request<{
@@ -1388,8 +1548,24 @@ export const adminApi = {
   orders: {
     list: (params: { status?: string; restaurantId?: string; cursor?: string } = {}) =>
       requestPage<AdminOrderSummary>(`/admin/orders${qs(params)}`, { method: 'GET' }),
+    /** City -> restaurant navigation tree (docs feedback) — counts only, not the order rows themselves. */
+    directory: (params: { status?: string } = {}) =>
+      get<AdminOrderDirectoryEntry[]>(`/admin/orders/directory${qs(params)}`),
+    /** Full cross-tenant order detail (Phase 23a) — didn't exist before; also the host for the delivery-status panel. */
+    detail: (id: string) => get<AdminOrderDetail>(`/admin/orders/${id}/detail`),
     cancel: (id: string, reason: string) =>
       post<{ status: string; applied: boolean }>(`/admin/orders/${id}/cancel`, { reason }),
+  },
+
+  /** Admin-authorized upload (Phase 23a, TODOS.md) — same two-step presign/verify flow as `restaurantApi`'s own uploads, just restaurant-agnostic (an admin isn't tenant-scoped to any one restaurant, so `restaurantId` is a real parameter here, not implicit). */
+  uploads: {
+    presign: (restaurantId: string, input: { contentType: string; sizeBytes: number }) =>
+      post<{ key: string; uploadUrl: string; publicUrl: string; expiresInSeconds: number }>(
+        `/admin/restaurants/${restaurantId}/uploads/presign`,
+        input,
+      ),
+    verify: (restaurantId: string, input: { key: string; contentType: string }) =>
+      post<{ status: string }>(`/admin/restaurants/${restaurantId}/uploads/verify`, input),
   },
 
   payments: {

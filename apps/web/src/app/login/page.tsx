@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ApiError, authApi, restaurantApi } from '@/lib/api-client';
 import { useSession } from '@/lib/auth/session-context';
+import { PasswordInput } from '@/components/ui/PasswordInput';
 
 export default function LoginPage() {
   return (
@@ -83,12 +84,11 @@ function LoginForm() {
         </label>
         <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
           Password
-          <input
-            type="password"
+          <PasswordInput
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="input"
+            className="input w-full"
           />
         </label>
         {error && <p className="text-sm text-red-600">{error}</p>}

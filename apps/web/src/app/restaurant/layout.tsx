@@ -42,7 +42,7 @@ export default function RestaurantLayout({ children }: { children: React.ReactNo
   }, [load]);
 
   return (
-    <div className="flex" style={{ minHeight: '100vh' }}>
+    <div className="flex flex-col lg:flex-row" style={{ minHeight: '100vh' }}>
       <RestaurantSidebar />
       <div className="min-w-0 flex-1">
         {activeRestaurantId && profile && (

@@ -134,7 +134,13 @@ const MATRIX: Record<Permission, readonly Role[]> = {
   'orders:accept': ['STAFF', 'MANAGER', 'OWNER'],
   'orders:reject': ['STAFF', 'MANAGER', 'OWNER'],
   'orders:transition': ['STAFF', 'MANAGER', 'OWNER'],
-  'orders:cancel': ['ADMIN_OPERATIONS', 'SUPER_ADMIN'],
+  // Restaurant-initiated cancellation-after-accept (docs/06 BR-174) is
+  // MANAGER/OWNER only, not STAFF — unlike accept/reject/transition
+  // (uniformly STAFF+), this undoes an already-accepted order and
+  // triggers a refund, matching this catalogue's existing convention of
+  // reserving higher-consequence actions (staff:invite, restaurant:update)
+  // for MANAGER+ rather than every restaurant tier.
+  'orders:cancel': ['MANAGER', 'OWNER', 'ADMIN_OPERATIONS', 'SUPER_ADMIN'],
   'payments:read': [
     'MANAGER',
     'OWNER',

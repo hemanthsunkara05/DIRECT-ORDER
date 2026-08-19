@@ -341,6 +341,162 @@ describe('Restaurant order management (Phase 10, e2e)', () => {
     expect(ctx.db.orders.find((o) => o.id === order.id)!.status).toBe('REJECTED');
   });
 
+  // ── Restaurant-initiated cancellation-after-accept (docs/06 BR-174) ──
+
+  function addMembership(
+    userId: string,
+    restaurantId: string,
+    role: 'STAFF' | 'MANAGER' | 'OWNER',
+    invitedByUserId: string,
+  ) {
+    ctx.db.restaurantStaff.push({
+      id: randomUUID(),
+      userId,
+      restaurantId,
+      role,
+      status: 'ACTIVE',
+      invitedByUserId,
+      joinedAt: new Date(),
+      disabledAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }
+
+  it('OWNER cancelling an ACCEPTED order triggers a full refund and records the reason', async () => {
+    ctx = await createTestApp();
+    const { owner, order } = await setUpRestaurantWithPlacedOrder('20000');
+    await mutate(ctx, 'post', `/api/v1/restaurant/orders/${order.id}/accept`, owner.cookie)
+      .set('Idempotency-Key', randomUUID())
+      .send({})
+      .expect(200);
+
+    const res = await mutate(
+      ctx,
+      'post',
+      `/api/v1/restaurant/orders/${order.id}/cancel`,
+      owner.cookie,
+    )
+      .set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Delivery partner unavailable' })
+      .expect(200);
+
+    expect(res.body.data.status).toBe('CANCELLED');
+    expect(ctx.db.refunds).toHaveLength(1);
+    expect(ctx.db.refunds[0]!.amountMinor).toBe(20000n);
+    const payment = ctx.db.payments.find((p) => p.orderId === order.id)!;
+    expect(payment.status).toBe('REFUNDED');
+    const cancelled = ctx.db.orders.find((o) => o.id === order.id)!;
+    expect(cancelled.cancellationReason).toBe('Delivery partner unavailable');
+  });
+
+  it('cancel also works from PREPARING and READY_FOR_PICKUP', async () => {
+    ctx = await createTestApp();
+    const { owner, order } = await setUpRestaurantWithPlacedOrder();
+    await mutate(ctx, 'post', `/api/v1/restaurant/orders/${order.id}/accept`, owner.cookie)
+      .set('Idempotency-Key', randomUUID())
+      .send({})
+      .expect(200);
+    await mutate(ctx, 'post', `/api/v1/restaurant/orders/${order.id}/preparing`, owner.cookie)
+      .set('Idempotency-Key', randomUUID())
+      .send({})
+      .expect(200);
+
+    const res = await mutate(
+      ctx,
+      'post',
+      `/api/v1/restaurant/orders/${order.id}/cancel`,
+      owner.cookie,
+    )
+      .set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Kitchen equipment failure' })
+      .expect(200);
+    expect(res.body.data.status).toBe('CANCELLED');
+  });
+
+  it('cancel requires a reason (422)', async () => {
+    ctx = await createTestApp();
+    const { owner, order } = await setUpRestaurantWithPlacedOrder();
+    await mutate(ctx, 'post', `/api/v1/restaurant/orders/${order.id}/accept`, owner.cookie)
+      .set('Idempotency-Key', randomUUID())
+      .send({})
+      .expect(200);
+
+    await mutate(ctx, 'post', `/api/v1/restaurant/orders/${order.id}/cancel`, owner.cookie)
+      .set('Idempotency-Key', randomUUID())
+      .send({})
+      .expect(422);
+  });
+
+  it('cancel requires the Idempotency-Key header (422)', async () => {
+    ctx = await createTestApp();
+    const { owner, order } = await setUpRestaurantWithPlacedOrder();
+    await mutate(ctx, 'post', `/api/v1/restaurant/orders/${order.id}/accept`, owner.cookie)
+      .set('Idempotency-Key', randomUUID())
+      .send({})
+      .expect(200);
+
+    await mutate(ctx, 'post', `/api/v1/restaurant/orders/${order.id}/cancel`, owner.cookie)
+      .send({ reason: 'x' })
+      .expect(422);
+  });
+
+  it('cancel is gated on orders:cancel — STAFF (no MANAGER/OWNER) gets 403, even for their own restaurant', async () => {
+    ctx = await createTestApp();
+    const { owner, restaurantId, order } = await setUpRestaurantWithPlacedOrder();
+    await mutate(ctx, 'post', `/api/v1/restaurant/orders/${order.id}/accept`, owner.cookie)
+      .set('Idempotency-Key', randomUUID())
+      .send({})
+      .expect(200);
+
+    const staff = await registerAndLogin(ctx, { email: `staff-${randomUUID()}@spiceroute.test` });
+    addMembership(staff.userId, restaurantId, 'STAFF', owner.userId);
+
+    await mutate(ctx, 'post', `/api/v1/restaurant/orders/${order.id}/cancel`, staff.cookie)
+      .set('Idempotency-Key', randomUUID())
+      .send({ reason: 'trying anyway' })
+      .expect(403);
+  });
+
+  it('a PLACED (not yet accepted) order cannot be cancelled — reject is the only exit from PLACED (409)', async () => {
+    ctx = await createTestApp();
+    const { owner, order } = await setUpRestaurantWithPlacedOrder();
+
+    const res = await mutate(
+      ctx,
+      'post',
+      `/api/v1/restaurant/orders/${order.id}/cancel`,
+      owner.cookie,
+    )
+      .set('Idempotency-Key', randomUUID())
+      .send({ reason: 'too early' })
+      .expect(409);
+    expect(res.body.error.code).toBe('CONFLICT');
+  });
+
+  it('double cancellation (concurrent) creates exactly one refund', async () => {
+    ctx = await createTestApp();
+    const { owner, order } = await setUpRestaurantWithPlacedOrder('20000');
+    await mutate(ctx, 'post', `/api/v1/restaurant/orders/${order.id}/accept`, owner.cookie)
+      .set('Idempotency-Key', randomUUID())
+      .send({})
+      .expect(200);
+
+    const [a, b] = await Promise.all([
+      mutate(ctx, 'post', `/api/v1/restaurant/orders/${order.id}/cancel`, owner.cookie)
+        .set('Idempotency-Key', randomUUID())
+        .send({ reason: 'concurrent A' }),
+      mutate(ctx, 'post', `/api/v1/restaurant/orders/${order.id}/cancel`, owner.cookie)
+        .set('Idempotency-Key', randomUUID())
+        .send({ reason: 'concurrent B' }),
+    ]);
+
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect([a.body.data.applied, b.body.data.applied].sort()).toEqual([false, true]);
+    expect(ctx.db.refunds).toHaveLength(1);
+    expect(ctx.db.orders.find((o) => o.id === order.id)!.status).toBe('CANCELLED');
+  });
+
   // ── SSE replay logic (OutboxService.findSinceForRestaurant) ─────────
 
   it("replay returns only this restaurant's events, strictly after the given cursor", async () => {

@@ -343,8 +343,39 @@ function CreateItemForm({
   const [name, setName] = useState('');
   const [priceRupees, setPriceRupees] = useState('');
   const [dietaryTag, setDietaryTag] = useState<DietaryTag>('UNKNOWN');
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  /**
+   * Admin-authorized upload (Phase 23a, TODOS.md "Admin-authorized
+   * menu-image upload") — closes the one gap in this page's own
+   * headline use case: every OTHER field here can already be typed in
+   * from a photo an owner texted, but there was no way to attach the
+   * photo itself. Same two-step presign/verify flow the owner-side menu
+   * page's own upload would use, just via the admin-gated endpoints.
+   */
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setError(null);
+    setUploading(true);
+    try {
+      const presigned = await adminApi.uploads.presign(restaurantId, {
+        contentType: file.type,
+        sizeBytes: file.size,
+      });
+      await fetch(presigned.uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
+      await adminApi.uploads.verify(restaurantId, { key: presigned.key, contentType: file.type });
+      setImageUrl(presigned.publicUrl);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.body.message : 'Upload failed.');
+    } finally {
+      setUploading(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -357,10 +388,12 @@ function CreateItemForm({
         name,
         priceMinor,
         dietaryTag,
+        ...(imageUrl ? { imageUrl } : {}),
       });
       setName('');
       setPriceRupees('');
       setDietaryTag('UNKNOWN');
+      setImageUrl(null);
       onCreated();
     } catch (err) {
       setError(err instanceof ApiError ? err.body.message : 'Something went wrong.');
@@ -400,9 +433,26 @@ function CreateItemForm({
           </option>
         ))}
       </select>
+      <label className="flex shrink-0 items-center gap-2 text-xs text-slate-500">
+        {imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- a tiny form-inline thumbnail, not worth Image's layout machinery here
+          <img src={imageUrl} alt="" className="h-8 w-8 rounded object-cover" />
+        ) : (
+          <span className="rounded-md border border-dashed border-slate-300 px-2 py-1.5">
+            {uploading ? 'Uploading…' : 'Photo'}
+          </span>
+        )}
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          disabled={uploading}
+          onChange={(e) => void handleFileSelect(e)}
+          className="hidden"
+        />
+      </label>
       <button
         type="submit"
-        disabled={submitting}
+        disabled={submitting || uploading}
         className="rounded-md bg-slate-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
       >
         Add item

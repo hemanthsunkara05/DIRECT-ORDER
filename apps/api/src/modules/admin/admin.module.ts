@@ -25,6 +25,7 @@ import { AdminSupportService } from './services/admin-support.service.js';
 import { AdminRestaurantsController } from './controllers/admin-restaurants.controller.js';
 import { AdminRestaurantContentController } from './controllers/admin-restaurant-content.controller.js';
 import { AdminRestaurantMenuController } from './controllers/admin-restaurant-menu.controller.js';
+import { AdminUploadController } from './controllers/admin-upload.controller.js';
 import { AdminUsersController } from './controllers/admin-users.controller.js';
 import { AdminOrdersController } from './controllers/admin-orders.controller.js';
 import { AdminPaymentsController } from './controllers/admin-payments.controller.js';
@@ -78,6 +79,7 @@ import { AdminSupportController } from './controllers/admin-support.controller.j
     AdminRestaurantsController,
     AdminRestaurantContentController,
     AdminRestaurantMenuController,
+    AdminUploadController,
     AdminUsersController,
     AdminOrdersController,
     AdminPaymentsController,

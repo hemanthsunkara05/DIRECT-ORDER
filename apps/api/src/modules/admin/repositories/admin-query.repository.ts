@@ -211,6 +211,153 @@ export class AdminQueryRepository {
     return this.prisma.order.findUnique({ where: { id } });
   }
 
+  /** Admin order detail (`GET /admin/orders/:id/detail`) — full relations, cross-tenant (no restaurantId scoping, unlike `OrderRepository.findByIdForRestaurant`). */
+  async findOrderDetailById(id: string) {
+    return this.prisma.order.findUnique({
+      where: { id },
+      include: {
+        items: true,
+        history: { orderBy: { createdAt: 'asc' } },
+        payments: { orderBy: { createdAt: 'desc' } },
+        delivery: true,
+      },
+    });
+  }
+
+  /**
+   * Admin command center's order-lifecycle funnel (Phase 23a). The five
+   * active statuses are LIVE counts (an order sits in one of these
+   * regardless of which day it was placed, so no date filter — same
+   * "cheap, indexed, no rollup equivalent" justification as
+   * `restaurantsByStatus` above). The three terminal statuses would
+   * otherwise grow unbounded forever, so those three are scoped to
+   * "today" specifically, each against the timestamp that actually
+   * marks the transition: `deliveredAt`/`cancelledAt` columns exist
+   * directly on `Order`, but REJECTED has no dedicated timestamp column
+   * — `OrderStatusHistory` is the same source `AnalyticsRollupService`
+   * already reads for its own `ordersRejected` rollup count, reused
+   * here rather than inventing a second way to answer "was this
+   * rejected today".
+   */
+  async orderFunnel(todayStart: Date): Promise<{
+    PLACED: number;
+    ACCEPTED: number;
+    PREPARING: number;
+    READY_FOR_PICKUP: number;
+    OUT_FOR_DELIVERY: number;
+    DELIVERED_TODAY: number;
+    CANCELLED_TODAY: number;
+    REJECTED_TODAY: number;
+  }> {
+    const [PLACED, ACCEPTED, PREPARING, READY_FOR_PICKUP, OUT_FOR_DELIVERY, DELIVERED_TODAY, CANCELLED_TODAY, REJECTED_TODAY] =
+      await Promise.all([
+        this.prisma.order.count({ where: { status: 'PLACED' } }),
+        this.prisma.order.count({ where: { status: 'ACCEPTED' } }),
+        this.prisma.order.count({ where: { status: 'PREPARING' } }),
+        this.prisma.order.count({ where: { status: 'READY_FOR_PICKUP' } }),
+        this.prisma.order.count({ where: { status: 'OUT_FOR_DELIVERY' } }),
+        this.prisma.order.count({ where: { status: 'DELIVERED', deliveredAt: { gte: todayStart } } }),
+        this.prisma.order.count({ where: { status: 'CANCELLED', cancelledAt: { gte: todayStart } } }),
+        this.prisma.orderStatusHistory.count({ where: { toStatus: 'REJECTED', createdAt: { gte: todayStart } } }),
+      ]);
+    return { PLACED, ACCEPTED, PREPARING, READY_FOR_PICKUP, OUT_FOR_DELIVERY, DELIVERED_TODAY, CANCELLED_TODAY, REJECTED_TODAY };
+  }
+
+  /**
+   * Priority alerts: orders that have been sitting in one non-terminal
+   * status past `thresholdMinutes` (D2: 45 minutes, a documented,
+   * user-confirmed starting threshold — see the controller's own
+   * comment for why no pre-existing business rule covers this). Uses
+   * `updatedAt` as "time since last status change" — every transition
+   * through `OrderStateService.transition()` updates the row, so this
+   * is accurate without needing a dedicated "status changed at" column.
+   */
+  async listStuckOrders(thresholdMinutes: number): Promise<Order[]> {
+    const cutoff = new Date(Date.now() - thresholdMinutes * 60_000);
+    return this.prisma.order.findMany({
+      where: {
+        status: { in: ['PLACED', 'ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP', 'OUT_FOR_DELIVERY'] },
+        updatedAt: { lt: cutoff },
+      },
+      orderBy: { updatedAt: 'asc' },
+    });
+  }
+
+  /** Priority alerts: restaurants PENDING_APPROVAL longer than `thresholdHours` (D2: 24 hours). */
+  async listOverdueApprovals(thresholdHours: number): Promise<Restaurant[]> {
+    const cutoff = new Date(Date.now() - thresholdHours * 60 * 60_000);
+    return this.prisma.restaurant.findMany({
+      where: { status: 'PENDING_APPROVAL', submittedAt: { lt: cutoff } },
+      orderBy: { submittedAt: 'asc' },
+    });
+  }
+
+  /**
+   * Top restaurants by order count over a window (Phase 23a). GMV
+   * ranking is deferred to a follow-up — order count is a live,
+   * per-restaurant `count()` (same cost class as `listOrderDirectory`
+   * above, already proven fine at this scale); a GMV ranking would need
+   * a live `sum()` per restaurant instead of a `count()`, which is a
+   * heavier query for the same small restaurant list — fine to add
+   * later if the order-count ranking proves insufficient, not blocking
+   * this phase.
+   */
+  async topRestaurantsByOrderCount(
+    windowStart: Date,
+    limit: number,
+  ): Promise<{ restaurantId: string; name: string; orderCount: number }[]> {
+    const restaurants = await this.prisma.restaurant.findMany({ where: { status: 'ACTIVE' } });
+    const withCounts = await Promise.all(
+      restaurants.map(async (restaurant) => ({
+        restaurantId: restaurant.id,
+        name: restaurant.name,
+        orderCount: await this.prisma.order.count({
+          where: { restaurantId: restaurant.id, createdAt: { gte: windowStart } },
+        }),
+      })),
+    );
+    return withCounts.sort((a, b) => b.orderCount - a.orderCount).slice(0, limit);
+  }
+
+  /**
+   * Orders & payments' city → restaurant drill-down (docs feedback:
+   * "orders should be sorted according to the restaurants. city ->
+   * restaurant -> orders"). A one-shot summary, not cursor-paginated —
+   * same "small, bounded batches, flat/nested list rather than cursor
+   * pagination is the honest shape" reasoning `listUnclaimed()` above
+   * already established: this is a pilot with a handful of restaurants
+   * per city, not an open-ended feed. The actual per-restaurant ORDERS
+   * are still fetched through the existing paginated `listOrders()`
+   * once an admin drills into one — this method only returns enough to
+   * build the navigation tree (name, slug, city, and a status-filtered
+   * order count per restaurant).
+   */
+  async listOrderDirectory(filters: {
+    status?: OrderStatus;
+  }): Promise<{ restaurantId: string; name: string; slug: string; city: string | null; orderCount: number }[]> {
+    const restaurants = await this.prisma.restaurant.findMany({});
+    return Promise.all(
+      restaurants.map(async (restaurant) => {
+        const [address, orderCount] = await Promise.all([
+          this.prisma.restaurantAddress.findUnique({ where: { restaurantId: restaurant.id } }),
+          this.prisma.order.count({
+            where: {
+              restaurantId: restaurant.id,
+              ...(filters.status ? { status: filters.status } : {}),
+            },
+          }),
+        ]);
+        return {
+          restaurantId: restaurant.id,
+          name: restaurant.name,
+          slug: restaurant.slug,
+          city: address?.city ?? null,
+          orderCount,
+        };
+      }),
+    );
+  }
+
   async listPayments(
     filters: { status?: string },
     options: PageOptions = {},

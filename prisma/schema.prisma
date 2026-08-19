@@ -1823,6 +1823,12 @@ model DailyRestaurantMetrics {
   netOrderValueMinor   BigInt   @default(0) @map("net_order_value_minor")
   avgOrderValueMinor   BigInt   @default(0) @map("avg_order_value_minor")
   avgPrepSeconds       Int      @default(0) @map("avg_prep_seconds")
+  /// Phase 23a: sum of `Order.platformFeeMinor` for orders placed this day
+  /// — added for symmetry with `DailyPlatformMetrics`'s identical column
+  /// (see that model's own comment); not yet surfaced by any restaurant-
+  /// facing UI, only the platform-wide figure is used by the admin
+  /// command center today.
+  platformFeeRevenueMinor BigInt @default(0) @map("platform_fee_revenue_minor")
   computedAt           DateTime @default(now()) @map("computed_at") @db.Timestamptz
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
@@ -1853,6 +1859,11 @@ model DailyPlatformMetrics {
   netOrderValueMinor   BigInt   @default(0) @map("net_order_value_minor")
   avgOrderValueMinor   BigInt   @default(0) @map("avg_order_value_minor")
   avgPrepSeconds       Int      @default(0) @map("avg_prep_seconds")
+  /// Phase 23a: sum of `Order.platformFeeMinor` across every order placed
+  /// this day — this is the actual "platform fee revenue" KPI on the
+  /// admin command center. Not aggregated anywhere before this phase
+  /// despite `platformFeeMinor` existing per-order since Phase 9.
+  platformFeeRevenueMinor BigInt @default(0) @map("platform_fee_revenue_minor")
   paymentsAttempted    Int      @default(0) @map("payments_attempted")
   paymentsSucceeded    Int      @default(0) @map("payments_succeeded")
   deliveriesAttempted  Int      @default(0) @map("deliveries_attempted")

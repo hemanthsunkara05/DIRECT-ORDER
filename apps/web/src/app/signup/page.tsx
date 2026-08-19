@@ -4,6 +4,7 @@ import { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ApiError, authApi } from '@/lib/api-client';
+import { PasswordInput } from '@/components/ui/PasswordInput';
 
 type Step = 'register' | 'verify';
 
@@ -85,13 +86,12 @@ function SignupForm() {
             />
           </Field>
           <Field label="Password">
-            <input
-              type="password"
+            <PasswordInput
               required
               minLength={10}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="input"
+              className="input w-full"
             />
           </Field>
           {error && <p className="text-sm text-red-600">{error}</p>}

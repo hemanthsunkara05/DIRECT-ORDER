@@ -61,7 +61,7 @@ The guard resolves the tenant from the authenticated principal, loads the resour
 | `orders:accept`           |   ✓   |    ✓    |   ✓   |         |     |         |       |
 | `orders:reject`           |   ✓   |    ✓    |   ✓   |         |     |         |       |
 | `orders:transition`       |   ✓   |    ✓    |   ✓   |         |     |         |       |
-| `orders:cancel`           |       |         |       |         |  ✓  |         |   ✓   |
+| `orders:cancel`           |       |    ✓    |   ✓   |         |  ✓  |         |   ✓   |
 | `payments:read`           |       |    ✓    |   ✓   |    ✓    |  ✓  |    ✓    |   ✓   |
 | `payments:refund`         |       |         |       |         |     |    ✓    |   ✓   |
 | `payments:reconcile`      |       |         |       |         |     |    ✓    |   ✓   |
@@ -101,6 +101,15 @@ both: it is the realistic concierge-onboarding actor, and restricting to
 `SUPER_ADMIN`-only would block that workflow. Kept as two permissions
 (not one) matching this table's own precedent of splitting distinct
 actions with identical role sets (e.g. `orders:accept`/`orders:reject`).
+
+**`orders:cancel` now includes MANAGER/OWNER (docs/06 BR-174).** A
+restaurant can now cancel an order after accepting it (full refund, reason
+required) through the same tenant-scoped `/restaurant/orders/*` surface —
+previously cancellation-after-accept was admin-only. STAFF is deliberately
+excluded, unlike accept/reject/transition — this undoes an already-accepted
+order and triggers a refund, a higher-consequence action reserved for
+MANAGER+ matching this table's existing convention elsewhere
+(`staff:invite`, `restaurant:update`).
 
 **Phase 22 — `menu:write`/`menu:availability` now include OPS.** This only
 opens the NEW `/admin/restaurants/:id/menu/*` routes to `ADMIN_OPERATIONS`

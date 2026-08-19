@@ -4,6 +4,7 @@ import { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ApiError, authApi } from '@/lib/api-client';
+import { PasswordInput } from '@/components/ui/PasswordInput';
 
 export default function ResetPasswordPage() {
   return (
@@ -58,13 +59,12 @@ function ResetPasswordForm() {
       <form onSubmit={(e) => void handleSubmit(e)} className="flex flex-col gap-4">
         <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
           New password
-          <input
-            type="password"
+          <PasswordInput
             required
             minLength={10}
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
-            className="input"
+            className="input w-full"
           />
         </label>
         {error && <p className="text-sm text-red-600">{error}</p>}

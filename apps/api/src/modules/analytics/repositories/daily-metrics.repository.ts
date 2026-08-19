@@ -15,6 +15,7 @@ export interface RestaurantDayCounters {
   netOrderValueMinor: bigint;
   avgOrderValueMinor: bigint;
   avgPrepSeconds: number;
+  platformFeeRevenueMinor: bigint;
 }
 
 export interface PlatformDayCounters {
@@ -29,6 +30,7 @@ export interface PlatformDayCounters {
   netOrderValueMinor: bigint;
   avgOrderValueMinor: bigint;
   avgPrepSeconds: number;
+  platformFeeRevenueMinor: bigint;
   paymentsAttempted: number;
   paymentsSucceeded: number;
   deliveriesAttempted: number;

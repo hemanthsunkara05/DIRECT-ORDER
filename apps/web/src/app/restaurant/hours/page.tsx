@@ -110,15 +110,28 @@ function AvailabilityToggle({ restaurantId }: { restaurantId: string }) {
         This switch alone can never make the restaurant orderable while the platform has it
         suspended — operating hours and platform status are checked first.
       </p>
-      <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-        <input
-          type="checkbox"
-          checked={enabled ?? false}
-          disabled={busy}
-          onChange={(e) => void handleToggle(e.target.checked)}
-        />
-        Ordering enabled
-      </label>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled ?? false}
+          aria-label="Ordering enabled"
+          disabled={busy || enabled === null}
+          onClick={() => void handleToggle(!enabled)}
+          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-pill transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            enabled ? 'bg-brand-600' : 'bg-ink-200'
+          }`}
+        >
+          <span
+            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-1 transition-transform ${
+              enabled ? 'translate-x-5' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+        <span className="text-sm font-medium text-slate-700">
+          {enabled === null ? 'Loading…' : enabled ? 'Ordering enabled' : 'Ordering paused'}
+        </span>
+      </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
     </section>
   );

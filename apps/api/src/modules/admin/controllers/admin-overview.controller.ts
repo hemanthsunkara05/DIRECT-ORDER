@@ -7,8 +7,24 @@ import { AuthGuard } from '../../identity/guards/auth.guard.js';
 import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { RedisService } from '../../../platform/redis/redis.service.js';
 import { DailyMetricsRepository } from '../../analytics/repositories/daily-metrics.repository.js';
+import { AdminQueryRepository } from '../repositories/admin-query.repository.js';
+import { localMidnightToUtc, toLocalMoment } from '../../availability/timezone.js';
 
 const TREND_DAYS = 7;
+
+/**
+ * Priority-alert thresholds for the command center (Phase 23a, D2).
+ * Neither number is derived from an existing documented business rule
+ * — docs/03-state-machines.md and docs/06-business-rules.md were
+ * searched in full and neither defines "stuck" or "waiting too long"
+ * for these cases. Confirmed with sash as a defensible starting point
+ * (roughly double a typical restaurant prep window; a same-business-
+ * day approval expectation), deliberately kept as plain constants
+ * rather than schema so they're trivially tunable later.
+ */
+const STUCK_ORDER_MINUTES = 45;
+const PENDING_APPROVAL_HOURS = 24;
+const TOP_RESTAURANTS_LIMIT = 10;
 
 /**
  * `GET /admin/overview`, `GET /admin/health` (docs/04 §8.7, "Any
@@ -41,6 +57,7 @@ export class AdminOverviewController {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(RedisService) private readonly redis: RedisService,
     @Inject(DailyMetricsRepository) private readonly dailyMetrics: DailyMetricsRepository,
+    @Inject(AdminQueryRepository) private readonly admin: AdminQueryRepository,
   ) {}
 
   @Get('overview')
@@ -65,6 +82,87 @@ export class AdminOverviewController {
         latest: latest ? toMetricsView(latest) : null,
         trend: trend.map(toMetricsView),
       },
+    });
+  }
+
+  /**
+   * Admin command center (Phase 23a). Gated by `analytics:platform` —
+   * the existing permission for platform-wide analytics, already held
+   * by exactly ADMIN_OPERATIONS/ADMIN_FINANCE/SUPER_ADMIN (docs/05
+   * §9.2), a better fit than reusing `restaurant:read`'s "any admin"
+   * stand-in the way `overview()` above does, since this genuinely is
+   * an analytics surface, not a generic admin capability.
+   *
+   * `kpis` reads `DailyPlatformMetrics` exclusively for money/order
+   * figures (today's row now exists thanks to the rollup fix earlier
+   * this session — `metrics.latest` here is genuinely today, not
+   * "yesterday" the way `overview()`'s own doc comment still correctly
+   * describes for ITS OWN unrelated historical-trend use). `funnel`,
+   * `alerts`, and `topRestaurants` are live, indexed queries — same
+   * "cheap, no rollup equivalent" justification as `restaurantsByStatus`
+   * above, not a violation of the rollup-only rule (that rule is about
+   * unbounded scans over the full order/payment history, not a handful
+   * of indexed counts at pilot scale).
+   */
+  @Get('overview/command-center')
+  @Permissions('analytics:platform')
+  @HttpCode(200)
+  async commandCenter() {
+    const [restaurantsByStatus, trendRaw, funnel, stuckOrders, overdueApprovals, topRestaurants] =
+      await Promise.all([
+        this.prisma.restaurant.groupBy({ by: ['status'], _count: true }),
+        this.dailyMetrics.findPlatformRange(rangeStart(new Date(), TREND_DAYS), new Date()),
+        this.admin.orderFunnel(startOfTodayIst()),
+        this.admin.listStuckOrders(STUCK_ORDER_MINUTES),
+        this.admin.listOverdueApprovals(PENDING_APPROVAL_HOURS),
+        this.admin.topRestaurantsByOrderCount(rangeStart(new Date(), 7), TOP_RESTAURANTS_LIMIT),
+      ]);
+
+    // Trend rows are ascending by date; the last entry is "today" (if
+    // the rollup has run today already) and the second-to-last is
+    // "yesterday" — the day-over-day comparison this KPI set uses.
+    const today = trendRaw.at(-1) ?? null;
+    const yesterday = trendRaw.length > 1 ? trendRaw.at(-2)! : null;
+    const weekSum = sumWeek(trendRaw);
+
+    const byStatus = Object.fromEntries(restaurantsByStatus.map((r) => [r.status, r._count]));
+
+    return ok({
+      kpis: {
+        ordersToday: today?.ordersPlaced ?? 0,
+        ordersYesterday: yesterday?.ordersPlaced ?? null,
+        ordersThisWeek: weekSum.ordersPlaced,
+        gmvTodayMinor: (today?.grossOrderValueMinor ?? 0n).toString(),
+        gmvYesterdayMinor: yesterday ? yesterday.grossOrderValueMinor.toString() : null,
+        gmvThisWeekMinor: weekSum.grossOrderValueMinor.toString(),
+        platformFeeRevenueTodayMinor: (today?.platformFeeRevenueMinor ?? 0n).toString(),
+        platformFeeRevenueYesterdayMinor: yesterday ? yesterday.platformFeeRevenueMinor.toString() : null,
+        platformFeeRevenueThisWeekMinor: weekSum.platformFeeRevenueMinor.toString(),
+        refundMinorToday: (today?.refundMinor ?? 0n).toString(),
+        restaurantsLive: byStatus.ACTIVE ?? 0,
+        restaurantsPendingApproval: byStatus.PENDING_APPROVAL ?? 0,
+      },
+      funnel,
+      alerts: {
+        stuckOrders: stuckOrders.map((o) => ({
+          id: o.id,
+          orderNumber: o.orderNumber,
+          restaurantId: o.restaurantId,
+          status: o.status,
+          // eslint-disable-next-line no-restricted-syntax -- not money: elapsed minutes
+          minutesSinceUpdate: Math.round((Date.now() - o.updatedAt.getTime()) / 60_000),
+        })),
+        overdueApprovals: overdueApprovals.map((r) => ({
+          id: r.id,
+          name: r.name,
+          slug: r.slug,
+          hoursWaiting: r.submittedAt
+            ? // eslint-disable-next-line no-restricted-syntax -- not money: elapsed hours
+              Math.round((Date.now() - r.submittedAt.getTime()) / 3_600_000)
+            : null,
+        })),
+      },
+      topRestaurants,
     });
   }
 
@@ -98,6 +196,28 @@ function rangeStart(latestDate: Date, days: number): Date {
   return start;
 }
 
+/** Platform-wide "today" boundary — Asia/Kolkata, matching `AnalyticsRollupService.rollupPlatformDay`'s own timezone choice for the platform-level rollup, never the server's local time. */
+function startOfTodayIst(): Date {
+  const dateKey = toLocalMoment(new Date(), 'Asia/Kolkata').dateKey;
+  return localMidnightToUtc(dateKey, 'Asia/Kolkata');
+}
+
+function sumWeek(rows: DailyPlatformMetrics[]): {
+  ordersPlaced: number;
+  grossOrderValueMinor: bigint;
+  platformFeeRevenueMinor: bigint;
+} {
+  let ordersPlaced = 0;
+  let grossOrderValueMinor = 0n;
+  let platformFeeRevenueMinor = 0n;
+  for (const row of rows) {
+    ordersPlaced += row.ordersPlaced;
+    grossOrderValueMinor += row.grossOrderValueMinor;
+    platformFeeRevenueMinor += row.platformFeeRevenueMinor;
+  }
+  return { ordersPlaced, grossOrderValueMinor, platformFeeRevenueMinor };
+}
+
 function toMetricsView(row: DailyPlatformMetrics) {
   return {
     date: row.date.toISOString().slice(0, 10),
@@ -108,6 +228,7 @@ function toMetricsView(row: DailyPlatformMetrics) {
     grossOrderValueMinor: row.grossOrderValueMinor.toString(),
     netOrderValueMinor: row.netOrderValueMinor.toString(),
     refundMinor: row.refundMinor.toString(),
+    platformFeeRevenueMinor: row.platformFeeRevenueMinor.toString(),
     paymentsAttempted: row.paymentsAttempted,
     paymentsSucceeded: row.paymentsSucceeded,
     deliveriesAttempted: row.deliveriesAttempted,

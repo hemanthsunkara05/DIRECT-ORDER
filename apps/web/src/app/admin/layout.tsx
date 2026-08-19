@@ -17,7 +17,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className="flex" style={{ minHeight: '100vh', background: 'var(--ink-100)' }}>
+    <div
+      className="flex flex-col lg:flex-row"
+      style={{ minHeight: '100vh', background: 'var(--ink-100)' }}
+    >
       <AdminSidebar />
       <div className="min-w-0 flex-1">{children}</div>
     </div>

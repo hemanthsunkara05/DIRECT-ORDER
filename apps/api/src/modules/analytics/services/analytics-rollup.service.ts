@@ -29,6 +29,8 @@ interface AggregatedCounters {
   ordersCancelled: number;
   grossOrderValueMinor: bigint;
   discountMinor: bigint;
+  /** Phase 23a: sum of `Order.platformFeeMinor` for orders placed this day — the admin command center's "platform fee revenue" KPI. */
+  platformFeeRevenueMinor: bigint;
   avgOrderValueMinor: bigint;
   avgPrepSeconds: number;
 }
@@ -64,23 +66,40 @@ export class AnalyticsRollupService implements OnModuleInit, OnModuleDestroy {
   /**
    * Same lightweight self-starting in-process poller shape as
    * `OrderExpiryScheduler`/`LoyaltyReconciliationService` — checks
-   * hourly whether "yesterday" (platform-wide, Asia/Kolkata) has been
-   * rolled up yet for every ACTIVE restaurant, and does so if not.
-   * Idempotent (`DailyMetricsRepository` always upserts), so running
-   * this check more often than the once-a-day cadence the docs name
-   * ("Daily 01:00 IST") is harmless — it just means the rollup for a
-   * new day appears within an hour of midnight rather than exactly at
+   * hourly whether "yesterday" AND "today" (platform-wide, Asia/Kolkata)
+   * have been rolled up yet for every ACTIVE restaurant, and does so if
+   * not. Idempotent (`DailyMetricsRepository` always upserts), so
+   * running this check more often than the once-a-day cadence the docs
+   * name ("Daily 01:00 IST") is harmless — it just means the rollup for
+   * a new day appears within an hour of midnight rather than exactly at
    * 01:00, and re-checking an already-rolled-up day is a fast no-op
-   * upsert of identical values. Phase 19: stores and clears its own
-   * timer on `onModuleDestroy` — see `LoyaltyReconciliationService`'s
-   * identical fix for why `.unref()` alone wasn't enough.
+   * upsert of identical values.
+   *
+   * Today is rolled up too, not just yesterday — found live: a
+   * restaurant accepting/rejecting orders during the current day saw
+   * every dashboard count (including the one they'd just acted on) sit
+   * at zero until the NEXT day's job finally treated today as
+   * "yesterday". `overview()`'s own range always includes today (see
+   * that controller's doc comment), so a same-day gap here is a
+   * same-day gap on the dashboard, not a cosmetic one-rollup-late lag.
+   * Today's row is necessarily a partial-day snapshot (recomputed from
+   * scratch each run, same as any other day) rather than a running
+   * live total — acceptable since this poller re-checks hourly, and
+   * still satisfies "never a live table scan on the read path" (the
+   * *write* path recomputing periodically is exactly what a rollup is).
+   *
+   * Runs once immediately on startup, not only after the first interval
+   * tick — found live: a freshly restarted dev/staging server left
+   * today's (and possibly yesterday's, if restarted right after
+   * midnight) row stale or missing for up to a full hour, since
+   * `setInterval` alone doesn't fire until its first delay elapses.
+   * Phase 19: stores and clears its own timer on `onModuleDestroy` —
+   * see `LoyaltyReconciliationService`'s identical fix for why
+   * `.unref()` alone wasn't enough.
    */
   onModuleInit(): void {
-    this.timer = setInterval(() => {
-      this.rollupYesterdayForAllRestaurants().catch(() => {
-        /* best-effort background job — see LoyaltyReconciliationService's identical reasoning. */
-      });
-    }, ROLLUP_CHECK_INTERVAL_MS);
+    this.runRollupSweep();
+    this.timer = setInterval(() => this.runRollupSweep(), ROLLUP_CHECK_INTERVAL_MS);
     this.timer.unref();
   }
 
@@ -88,22 +107,30 @@ export class AnalyticsRollupService implements OnModuleInit, OnModuleDestroy {
     if (this.timer) clearInterval(this.timer);
   }
 
-  async rollupYesterdayForAllRestaurants(): Promise<void> {
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  private runRollupSweep(): void {
+    this.rollupRecentDaysForAllRestaurants().catch(() => {
+      /* best-effort background job — see LoyaltyReconciliationService's identical reasoning. */
+    });
+  }
+
+  async rollupRecentDaysForAllRestaurants(): Promise<void> {
+    const now = new Date();
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const restaurants = await this.prisma.restaurant.findMany({
       where: { status: 'ACTIVE' },
       select: { id: true, timezone: true },
     });
     for (const restaurant of restaurants) {
-      // "Yesterday" is computed independently in EACH restaurant's own
-      // timezone, not derived from the platform default — a restaurant
-      // in a different IANA zone would otherwise have its rollup keyed
-      // to the wrong local calendar date.
+      // Each day boundary is computed independently in EACH restaurant's
+      // own timezone, not derived from the platform default — a
+      // restaurant in a different IANA zone would otherwise have its
+      // rollup keyed to the wrong local calendar date.
       const timezone = restaurant.timezone;
-      const localDateKey = toLocalMoment(oneDayAgo, timezone).dateKey;
-      await this.rollupRestaurantDay(restaurant.id, localDateKey, timezone);
+      await this.rollupRestaurantDay(restaurant.id, toLocalMoment(oneDayAgo, timezone).dateKey, timezone);
+      await this.rollupRestaurantDay(restaurant.id, toLocalMoment(now, timezone).dateKey, timezone);
     }
     await this.rollupPlatformDay(toLocalMoment(oneDayAgo, 'Asia/Kolkata').dateKey);
+    await this.rollupPlatformDay(toLocalMoment(now, 'Asia/Kolkata').dateKey);
   }
 
   async rollupRestaurantDay(restaurantId: string, dateKey: string, timezone: string) {
@@ -133,6 +160,7 @@ export class AnalyticsRollupService implements OnModuleInit, OnModuleDestroy {
       netOrderValueMinor: counters.grossOrderValueMinor - counters.discountMinor - refundMinor,
       avgOrderValueMinor: counters.avgOrderValueMinor,
       avgPrepSeconds: counters.avgPrepSeconds,
+      platformFeeRevenueMinor: counters.platformFeeRevenueMinor,
     });
   }
 
@@ -174,6 +202,7 @@ export class AnalyticsRollupService implements OnModuleInit, OnModuleDestroy {
       netOrderValueMinor: counters.grossOrderValueMinor - counters.discountMinor - refundMinor,
       avgOrderValueMinor: counters.avgOrderValueMinor,
       avgPrepSeconds: counters.avgPrepSeconds,
+      platformFeeRevenueMinor: counters.platformFeeRevenueMinor,
       paymentsAttempted,
       paymentsSucceeded,
       deliveriesAttempted,
@@ -231,6 +260,7 @@ function aggregateOrders(orders: OrderDayRow[]): AggregatedCounters {
   let ordersCancelled = 0;
   let grossOrderValueMinor = 0n;
   let discountMinor = 0n;
+  let platformFeeRevenueMinor = 0n;
   let prepSecondsSum = 0;
   let prepSamples = 0;
 
@@ -244,6 +274,7 @@ function aggregateOrders(orders: OrderDayRow[]): AggregatedCounters {
         order.platformFeeMinor +
         order.taxMinor;
       discountMinor += order.discountMinor + order.loyaltyDiscountMinor;
+      platformFeeRevenueMinor += order.platformFeeMinor;
     }
     if (order.deliveredAt) {
       ordersCompleted += 1;
@@ -264,6 +295,7 @@ function aggregateOrders(orders: OrderDayRow[]): AggregatedCounters {
     ordersCancelled,
     grossOrderValueMinor,
     discountMinor,
+    platformFeeRevenueMinor,
     avgOrderValueMinor: ordersPlaced > 0 ? grossOrderValueMinor / BigInt(ordersPlaced) : 0n,
     // eslint-disable-next-line no-restricted-syntax -- not money: average prep time in seconds
     avgPrepSeconds: prepSamples > 0 ? Math.round(prepSecondsSum / prepSamples) : 0,
