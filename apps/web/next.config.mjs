@@ -6,6 +6,12 @@
 // why this was required, not just cleanup.
 const cdnOrigin = process.env.CDN_BASE_URL ?? 'http://localhost:9000';
 
+// Reverse-proxy target for browser API calls. The browser talks to the
+// web app's own origin (same-site → SameSite=Lax auth/CSRF cookies work);
+// Next proxies /api/* to the real API service server-side. Set on the
+// web service in production; falls back to the local API in dev.
+const API_PROXY_TARGET = process.env.API_PROXY_TARGET ?? 'http://localhost:4000';
+
 const SECURITY_HEADERS = [
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
@@ -47,6 +53,11 @@ const nextConfig = {
   },
   async headers() {
     return [{ source: '/:path*', headers: SECURITY_HEADERS }];
+  },
+  async rewrites() {
+    return [
+      { source: '/api/:path*', destination: `${API_PROXY_TARGET}/api/:path*` },
+    ];
   },
 };
 
