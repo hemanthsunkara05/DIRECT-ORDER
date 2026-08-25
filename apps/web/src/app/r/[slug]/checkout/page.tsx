@@ -36,6 +36,37 @@ function loadCart(slug: string): CartItem[] {
 }
 
 /**
+ * Soft, client-side-only duplicate-order guard (no server-side block —
+ * a customer genuinely splitting a group order into two separate
+ * checkouts is a real, valid case). Scoped to this browser + this
+ * restaurant, not tied to identity, so it can't be used to infer
+ * anything about a customer server-side never sees this data.
+ */
+const RECENT_ORDER_WINDOW_MS = 15 * 60 * 1000;
+
+function lastOrderStorageKey(slug: string): string {
+  return `do_last_order:${slug}`;
+}
+
+function minutesSinceLastOrder(slug: string): number | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(lastOrderStorageKey(slug));
+    if (!raw) return null;
+    const { placedAt } = JSON.parse(raw) as { placedAt: number };
+    const elapsedMs = Date.now() - placedAt;
+    if (elapsedMs < 0 || elapsedMs > RECENT_ORDER_WINDOW_MS) return null;
+    return Math.max(1, Math.round(elapsedMs / 60_000));
+  } catch {
+    return null;
+  }
+}
+
+function recordOrderPlaced(slug: string): void {
+  window.localStorage.setItem(lastOrderStorageKey(slug), JSON.stringify({ placedAt: Date.now() }));
+}
+
+/**
  * `POST /public/carts` → `POST /public/checkout` (docs/04-api-
  * specification.md §8.3). The local (browser) cart built up on the
  * restaurant page is only ever persisted server-side right here, at
@@ -66,6 +97,8 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [duplicateWarningMinutes, setDuplicateWarningMinutes] = useState<number | null>(null);
+  const [duplicateConfirmed, setDuplicateConfirmed] = useState(false);
   // Stable for the lifetime of this page instance — a double-click on
   // "Place order" reuses the same key rather than minting a second one
   // (docs/04 §8.2's Idempotency-Key contract is what actually prevents
@@ -175,6 +208,21 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!slug || submitting) return;
+
+    // First submit: if a very recent order to this same restaurant exists
+    // in this browser, stop and ask instead of placing it — a real second
+    // order (splitting a group order) is fine, but an accidental
+    // double-tap on "Place order" becomes a paid-for duplicate with no
+    // recovery path otherwise. `duplicateConfirmed` makes this a one-time
+    // gate per page load, not a repeated nag on the actual re-submit.
+    if (!duplicateConfirmed) {
+      const minutesAgo = minutesSinceLastOrder(slug);
+      if (minutesAgo !== null) {
+        setDuplicateWarningMinutes(minutesAgo);
+        return;
+      }
+    }
+
     setSubmitting(true);
     setError(null);
 
@@ -202,6 +250,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
       // The cart converted server-side — clear the local copy so a
       // browser-back doesn't resubmit a now-stale cart.
       window.localStorage.removeItem(cartStorageKey(slug));
+      recordOrderPlaced(slug);
 
       const token = result.accessToken;
       if (token) {
@@ -375,6 +424,34 @@ export default function CheckoutPage({ params }: { params: Promise<{ slug: strin
         </fieldset>
 
         {error && <p className="text-sm font-medium text-error">{error}</p>}
+
+        {duplicateWarningMinutes !== null && (
+          <div className="flex flex-col gap-2 rounded-ctrl bg-warn-100 px-3 py-2 text-sm text-warn-700">
+            <p>
+              You placed an order at this restaurant {duplicateWarningMinutes}{' '}
+              {duplicateWarningMinutes === 1 ? 'minute' : 'minutes'} ago. Continue with this one
+              too?
+            </p>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setDuplicateWarningMinutes(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  setDuplicateConfirmed(true);
+                  setDuplicateWarningMinutes(null);
+                }}
+              >
+                Continue anyway
+              </Button>
+            </div>
+          </div>
+        )}
 
         <Button
           type="submit"

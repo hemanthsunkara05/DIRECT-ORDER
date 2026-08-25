@@ -78,7 +78,7 @@ export function AdminSidebar() {
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-[224px] shrink-0 -translate-x-full flex-col bg-ink-900 text-white transition-transform duration-200 lg:relative lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-[224px] shrink-0 -translate-x-full flex-col overflow-y-auto bg-ink-900 text-white transition-transform duration-200 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${
           mobileOpen ? 'translate-x-0' : ''
         }`}
         style={{ minHeight: '100vh' }}
@@ -96,7 +96,17 @@ export function AdminSidebar() {
         </div>
         <nav className="flex flex-1 flex-col gap-px px-2.5 py-3">
           {NAV_ITEMS.map((item) => {
-            const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            // "/admin" (Overview) is a prefix of every other admin route
+            // ("/admin/restaurants", "/admin/orders", ...), so it needs an
+            // exact match only — every other item still matches its own
+            // sub-routes too (e.g. "/admin/restaurants/:id/edit" should
+            // still highlight "Restaurants"). Without this, Overview lit
+            // up as active on literally every admin page, alongside
+            // whichever page was actually open.
+            const isActive =
+              item.href === '/admin'
+                ? pathname === '/admin'
+                : pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
               <Link
                 key={item.href}

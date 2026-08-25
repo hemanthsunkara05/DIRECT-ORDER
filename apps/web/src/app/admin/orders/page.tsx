@@ -76,12 +76,12 @@ function OrdersDashboard() {
   }, []);
   // Lifted out of OrderDirectory (rather than local state there): that
   // component unmounts every time a restaurant is selected, so local
-  // state would reset — and re-seed itself back open — on every single
-  // trip back from a restaurant's order list ("dropping down after
-  // every move"). Living here, it survives navigation between the two
-  // views untouched.
+  // state would reset to empty (every city snapping shut) on every
+  // single trip back from a restaurant's order list. Living here, it
+  // survives navigation between the two views untouched. Starts empty
+  // (every city collapsed) and stays that way until the admin actually
+  // clicks one — no auto-opening, however many orders a city has.
   const [openCities, setOpenCities] = useState<Set<string>>(new Set());
-  const [seededOpenCities, setSeededOpenCities] = useState(false);
 
   return (
     <main className="mx-auto max-w-4xl p-6">
@@ -107,8 +107,6 @@ function OrdersDashboard() {
           statusFilter={statusFilter}
           openCities={openCities}
           setOpenCities={setOpenCities}
-          seededOpenCities={seededOpenCities}
-          setSeededOpenCities={setSeededOpenCities}
           onSelectRestaurant={(id, name) => setSelectedRestaurant({ id, name })}
         />
       )}
@@ -120,15 +118,11 @@ function OrderDirectory({
   statusFilter,
   openCities,
   setOpenCities,
-  seededOpenCities,
-  setSeededOpenCities,
   onSelectRestaurant,
 }: {
   statusFilter: string;
   openCities: Set<string>;
   setOpenCities: React.Dispatch<React.SetStateAction<Set<string>>>;
-  seededOpenCities: boolean;
-  setSeededOpenCities: (v: boolean) => void;
   onSelectRestaurant: (id: string, name: string) => void;
 }) {
   const [entries, setEntries] = useState<AdminOrderDirectoryEntry[] | null>(null);
@@ -161,23 +155,6 @@ function OrderDirectory({
     }
     return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [entries]);
-
-  // First load ONLY (guarded by the lifted `seededOpenCities` flag, not
-  // just "openCities is currently empty" — an admin who manually
-  // collapses every city ends up with an empty set too, and that must
-  // stay collapsed, not get treated as "never seeded"): open every city
-  // with at least one order so the tree isn't a wall of collapsed rows
-  // to click through one by one. A city with zero orders stays
-  // collapsed since there's nothing to see inside it.
-  useEffect(() => {
-    if (entries === null || seededOpenCities) return;
-    const withOrders = cities
-      .filter(([, list]) => list.some((r) => r.orderCount > 0))
-      .map(([city]) => city);
-    setOpenCities(new Set(withOrders));
-    setSeededOpenCities(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only seed once, on first successful load
-  }, [entries, seededOpenCities]);
 
   function toggleCity(city: string) {
     setOpenCities((prev) => {
