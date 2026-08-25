@@ -1784,6 +1784,43 @@ export const supportApi = {
     }),
 };
 
+export interface CreateGuestSupportCaseInput {
+  category: SupportCaseSummary['category'];
+  subject: string;
+  description: string;
+}
+
+/** `/public/orders/:orderNumber/support-cases*` — the guest complaint path. Same shapes as `supportApi`'s `*Mine` methods; the guest order-access token (already in the tracking page's URL) proves identity in place of a login session, the same pattern `orderApi.track`/`submitReview` already use. */
+export const guestSupportApi = {
+  list: (orderNumber: string, token: string) =>
+    requestPage<SupportCaseSummary>(
+      `/public/orders/${orderNumber}/support-cases${qs({ token })}`,
+      { method: 'GET' },
+    ),
+  create: (orderNumber: string, token: string, input: CreateGuestSupportCaseInput) =>
+    post<SupportCaseSummary>(`/public/orders/${orderNumber}/support-cases`, { token, ...input }),
+  get: (orderNumber: string, token: string, id: string) =>
+    get<SupportCaseSummary & { messages: SupportMessageView[] }>(
+      `/public/orders/${orderNumber}/support-cases/${id}${qs({ token })}`,
+    ),
+  reply: (orderNumber: string, token: string, id: string, body: string, attachments?: SupportAttachmentInput[]) =>
+    post<SupportMessageView>(`/public/orders/${orderNumber}/support-cases/${id}/messages`, {
+      token,
+      body,
+      attachments,
+    }),
+  presign: (orderNumber: string, token: string, id: string, contentType: string, sizeBytes: number) =>
+    post<SupportAttachmentPresign>(`/public/orders/${orderNumber}/support-cases/${id}/attachments/presign`, {
+      token,
+      contentType,
+      sizeBytes,
+    }),
+  download: (orderNumber: string, token: string, id: string, attachmentId: string) =>
+    get<{ url: string }>(
+      `/public/orders/${orderNumber}/support-cases/${id}/attachments/${attachmentId}${qs({ token })}`,
+    ),
+};
+
 export interface RestaurantDailyMetrics {
   date: string;
   ordersPlaced: number;

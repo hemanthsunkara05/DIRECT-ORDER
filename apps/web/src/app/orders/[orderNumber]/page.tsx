@@ -6,6 +6,7 @@ import { formatINR } from '@direct-order/money';
 import Link from 'next/link';
 import { ApiError, orderApi, type OrderTrackingView } from '@/lib/api-client';
 import { ReviewForm } from './review-form';
+import { ComplaintForm } from './complaint-form';
 import { Button } from '@/components/ui/Button';
 import { OrderStatusTimeline } from '@/components/ui/OrderStatusTimeline';
 
@@ -16,6 +17,21 @@ const TIMELINE_STATUSES = new Set([
   'READY_FOR_PICKUP',
   'OUT_FOR_DELIVERY',
   'DELIVERED',
+]);
+
+/** Every status except `PENDING_PAYMENT` — mirrors `COMPLAINABLE_STATUSES` in `public-support.controller.ts` exactly; nothing to report on before payment even completes. */
+const COMPLAINABLE_STATUSES = new Set([
+  'PLACED',
+  'PAYMENT_FAILED',
+  'EXPIRED',
+  'ACCEPTED',
+  'PREPARING',
+  'READY_FOR_PICKUP',
+  'OUT_FOR_DELIVERY',
+  'DELIVERED',
+  'DELIVERY_FAILED',
+  'REJECTED',
+  'CANCELLED',
 ]);
 
 const STATUS_LABEL: Record<string, string> = {
@@ -228,6 +244,10 @@ export default function OrderTrackingPage() {
 
       {order.status === 'DELIVERED' && token && (
         <ReviewForm orderNumber={order.orderNumber} token={token} />
+      )}
+
+      {COMPLAINABLE_STATUSES.has(order.status) && token && (
+        <ComplaintForm orderNumber={order.orderNumber} token={token} />
       )}
 
       <section className="rounded-card border border-ink-200 bg-surface p-[22px] shadow-1">

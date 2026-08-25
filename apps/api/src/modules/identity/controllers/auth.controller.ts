@@ -57,7 +57,11 @@ export class AuthController {
   }
 
   @Post('login')
-  @RateLimit({ limit: 10, windowSeconds: 900 })
+  // Raised from 10 to 100/15min for pilot testing convenience — still
+  // throttles real credential-stuffing (100 attempts/15min per IP is
+  // useless for a real brute-force attack) while no longer tripping on
+  // normal manual testing across restaurant/admin/customer logins.
+  @RateLimit({ limit: 100, windowSeconds: 900 })
   @HttpCode(200)
   async login(
     @Body() body: unknown,

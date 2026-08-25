@@ -34,6 +34,10 @@ export default function AdminLoginPage() {
       await authApi.login({ email, password });
       setStep('mfa');
     } catch (err) {
+      // A 429's message already says "too many requests, try again in N
+      // seconds" (RateLimitedError) — showing it as-is is correct here;
+      // it's only the generic "Something went wrong" fallback in
+      // api-client.ts that would otherwise mask it as an unrelated failure.
       setError(err instanceof ApiError ? err.body.message : 'Login failed.');
     } finally {
       setBusy(false);

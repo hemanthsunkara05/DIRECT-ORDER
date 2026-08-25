@@ -90,6 +90,18 @@ export class SupportCaseRepository {
     return toPage(rows, limit);
   }
 
+  /** Guest complaint path: scoped to both `customerId` AND `orderId` — a guest `Customer` row is created fresh on every checkout (`CustomerRepository.createGuest`), so `customerId` alone is already order-specific, but filtering on both keeps this correct even if that assumption ever changes. */
+  async listForCustomerOrder(customerId: string, orderId: string, options: { cursor?: string; limit?: number } = {}): Promise<Page<SupportCase>> {
+    const limit = take(options.limit);
+    const rows = await this.prisma.supportCase.findMany({
+      where: { customerId, orderId },
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+    });
+    return toPage(rows, limit);
+  }
+
   async listForRestaurant(restaurantId: string, options: { cursor?: string; limit?: number } = {}): Promise<Page<SupportCase>> {
     const limit = take(options.limit);
     const rows = await this.prisma.supportCase.findMany({

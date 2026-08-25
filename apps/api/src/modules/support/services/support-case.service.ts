@@ -75,6 +75,11 @@ export class SupportCaseService {
     return created;
   }
 
+  /** Guest complaint path (`PublicSupportController`) — cases for one order, scoped to the guest `customerId` proven by their tracking-link token. */
+  async listForCustomerOrder(customerId: string, orderId: string): Promise<{ items: SupportCase[]; hasMore: boolean }> {
+    return this.cases.listForCustomerOrder(customerId, orderId);
+  }
+
   private async resolveOwnedOrderId(
     orderNumber: string,
     owns: (order: { customerId: string; restaurantId: string }) => boolean,

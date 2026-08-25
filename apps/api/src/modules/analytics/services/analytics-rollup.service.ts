@@ -3,7 +3,12 @@ import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { dateKeyToUtcDate, localMidnightToUtc, toLocalMoment } from '../../availability/timezone.js';
 import { DailyMetricsRepository } from '../repositories/daily-metrics.repository.js';
 
-const ROLLUP_CHECK_INTERVAL_MS = 60 * 60 * 1000; // hourly check — see onModuleInit's own doc comment for why this is safe to run more often than the job itself needs to.
+// Was 60 min: the admin command-center's top tiles read only this rollup
+// for "today" while the lifecycle/funnel widget on the same page queries
+// Order live, so a new order was invisible on the tiles for up to an hour
+// while already showing in the funnel. Idempotent upsert (see doc comment
+// below), so checking every 2 min is still a cheap no-op most runs.
+const ROLLUP_CHECK_INTERVAL_MS = 2 * 60 * 1000;
 
 interface OrderDayRow {
   id: string;

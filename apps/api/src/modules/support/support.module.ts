@@ -12,6 +12,7 @@ import { SupportAttachmentService } from './services/support-attachment.service.
 import { SupportCaseService } from './services/support-case.service.js';
 import { MeSupportController } from './controllers/me-support.controller.js';
 import { RestaurantSupportController } from './controllers/restaurant-support.controller.js';
+import { PublicSupportController } from './controllers/public-support.controller.js';
 
 /**
  * Phase 17 (Support and analytics). `CustomerAccountGuard` (Phase 16,
@@ -34,7 +35,7 @@ import { RestaurantSupportController } from './controllers/restaurant-support.co
  */
 @Module({
   imports: [IdentityModule, OrderStateModule],
-  controllers: [MeSupportController, RestaurantSupportController],
+  controllers: [MeSupportController, RestaurantSupportController, PublicSupportController],
   providers: [
     CustomerRepository,
     CustomerAccountGuard,

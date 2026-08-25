@@ -242,9 +242,9 @@ describe('Authentication (Phase 3, e2e)', () => {
   });
 
   describe('rate limiting (docs/04-api-specification.md §8.2)', () => {
-    it('the 11th login attempt within the window from one IP returns 429 with Retry-After', async () => {
+    it('the 101st login attempt within the window from one IP returns 429 with Retry-After', async () => {
       let last: SupertestResponse | undefined;
-      for (let i = 0; i < 11; i++) {
+      for (let i = 0; i < 101; i++) {
         last = await login('irrelevant@spiceroute.test', 'irrelevant-password');
       }
       expect(last!.status).toBe(429);

@@ -58,11 +58,19 @@ function LoginForm() {
       }
       router.push('/account');
     } catch (err) {
-      // Deliberately the same generic message for every failure reason
-      // (wrong password, unknown account, locked, disabled) — the API
-      // already collapses these; the UI must not reintroduce a
-      // distinction by showing different copy per error code.
-      setError(err instanceof ApiError ? 'Invalid email or password.' : 'Something went wrong.');
+      // Deliberately the same generic message for every CREDENTIAL failure
+      // reason (wrong password, unknown account, locked, disabled) — the
+      // API already collapses these; the UI must not reintroduce a
+      // distinction by showing different copy per error code. A 429 is not
+      // a credential outcome (every IP gets the same rate limit regardless
+      // of whether the account exists), so it's exempt from that rule —
+      // telling someone "your password is wrong" when it's actually "you
+      // tried too many times" is actively misleading, not just generic.
+      if (err instanceof ApiError && err.status === 429) {
+        setError(err.body.message);
+      } else {
+        setError(err instanceof ApiError ? 'Invalid email or password.' : 'Something went wrong.');
+      }
     } finally {
       setSubmitting(false);
     }
