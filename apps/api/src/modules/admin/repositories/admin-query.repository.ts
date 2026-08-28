@@ -249,13 +249,23 @@ export class AdminQueryRepository {
     CANCELLED_TODAY: number;
     REJECTED_TODAY: number;
   }> {
+    // Regression (found live via scripts/dup-load-test.ts on 2026-08-26):
+    // the 5 non-terminal counts below had NO date filter at all — a
+    // widget titled "Order lifecycle (today)" was counting orders
+    // CURRENTLY in that status from any day ever, including genuinely
+    // ancient stuck test orders (the same rows `listStuckOrders` flags
+    // as 15+ days old in Priority Alerts), which is exactly why their
+    // sum never reconciled against `ordersToday`. Bounded to `placedAt`
+    // (the one timestamp every order has, regardless of current status)
+    // for consistency with how the three terminal counts below already
+    // bound themselves to their own event's timestamp.
     const [PLACED, ACCEPTED, PREPARING, READY_FOR_PICKUP, OUT_FOR_DELIVERY, DELIVERED_TODAY, CANCELLED_TODAY, REJECTED_TODAY] =
       await Promise.all([
-        this.prisma.order.count({ where: { status: 'PLACED' } }),
-        this.prisma.order.count({ where: { status: 'ACCEPTED' } }),
-        this.prisma.order.count({ where: { status: 'PREPARING' } }),
-        this.prisma.order.count({ where: { status: 'READY_FOR_PICKUP' } }),
-        this.prisma.order.count({ where: { status: 'OUT_FOR_DELIVERY' } }),
+        this.prisma.order.count({ where: { status: 'PLACED', placedAt: { gte: todayStart } } }),
+        this.prisma.order.count({ where: { status: 'ACCEPTED', placedAt: { gte: todayStart } } }),
+        this.prisma.order.count({ where: { status: 'PREPARING', placedAt: { gte: todayStart } } }),
+        this.prisma.order.count({ where: { status: 'READY_FOR_PICKUP', placedAt: { gte: todayStart } } }),
+        this.prisma.order.count({ where: { status: 'OUT_FOR_DELIVERY', placedAt: { gte: todayStart } } }),
         this.prisma.order.count({ where: { status: 'DELIVERED', deliveredAt: { gte: todayStart } } }),
         this.prisma.order.count({ where: { status: 'CANCELLED', cancelledAt: { gte: todayStart } } }),
         this.prisma.orderStatusHistory.count({ where: { toStatus: 'REJECTED', createdAt: { gte: todayStart } } }),

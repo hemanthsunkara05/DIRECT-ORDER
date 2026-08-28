@@ -8,7 +8,7 @@ import { PrismaService } from '../../../platform/database/prisma.service.js';
 import { RedisService } from '../../../platform/redis/redis.service.js';
 import { DailyMetricsRepository } from '../../analytics/repositories/daily-metrics.repository.js';
 import { AdminQueryRepository } from '../repositories/admin-query.repository.js';
-import { localMidnightToUtc, toLocalMoment } from '../../availability/timezone.js';
+import { dateKeyToUtcDate, localMidnightToUtc, toLocalMoment } from '../../availability/timezone.js';
 
 const TREND_DAYS = 7;
 
@@ -108,14 +108,32 @@ export class AdminOverviewController {
   @Permissions('analytics:platform')
   @HttpCode(200)
   async commandCenter() {
+    // Two DIFFERENT "today" boundaries are needed here, and conflating
+    // them is exactly the bug this comment replaces. `DailyPlatformMetrics
+    // .date` is a pure date-KEY (AnalyticsRollupService stores it via
+    // `dateKeyToUtcDate`, which parses "2026-08-26" as literal UTC
+    // midnight — a label, not a real instant). `Order.createdAt`/
+    // `placedAt` are real timestamps, so `funnel`/`topRestaurants` need
+    // the actual IST-midnight INSTANT (`startOfTodayIst()` /
+    // `localMidnightToUtc`, 5.5h behind the date-key's literal value).
+    // Using the real-instant boundary against the date-key column (or
+    // vice versa) silently misses today's row for the ~5.5h/day window
+    // where IST has already crossed into a new calendar day but UTC
+    // hasn't — found live via scripts/dup-load-test.ts: the rollup had
+    // genuinely written `ordersPlaced: 300` for today, but every
+    // boundary tried against it (including an initial wrong fix here)
+    // missed the row until this distinction was made explicit.
+    const todayDateKey = toLocalMoment(new Date(), 'Asia/Kolkata').dateKey;
+    const todayRollupDate = dateKeyToUtcDate(todayDateKey);
+    const todayIst = startOfTodayIst();
     const [restaurantsByStatus, trendRaw, funnel, stuckOrders, overdueApprovals, topRestaurants] =
       await Promise.all([
         this.prisma.restaurant.groupBy({ by: ['status'], _count: true }),
-        this.dailyMetrics.findPlatformRange(rangeStart(new Date(), TREND_DAYS), new Date()),
-        this.admin.orderFunnel(startOfTodayIst()),
+        this.dailyMetrics.findPlatformRange(rangeStart(todayRollupDate, TREND_DAYS), todayRollupDate),
+        this.admin.orderFunnel(todayIst),
         this.admin.listStuckOrders(STUCK_ORDER_MINUTES),
         this.admin.listOverdueApprovals(PENDING_APPROVAL_HOURS),
-        this.admin.topRestaurantsByOrderCount(rangeStart(new Date(), 7), TOP_RESTAURANTS_LIMIT),
+        this.admin.topRestaurantsByOrderCount(rangeStart(todayIst, 7), TOP_RESTAURANTS_LIMIT),
       ]);
 
     // Trend rows are ascending by date; the last entry is "today" (if

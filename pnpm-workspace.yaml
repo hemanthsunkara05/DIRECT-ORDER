@@ -9,9 +9,28 @@ packages:
 # break every fastify plugin's module augmentation (@fastify/cookie,
 # @fastify/cors, ...) with a confusing "missing properties" TS error.
 # One resolved copy, matching what @nestjs/platform-fastify itself uses,
-# avoids the whole class of problem.
+# avoids the whole class of problem. Bumped 2026-08-28 alongside the
+# Nest v10->v11 / Fastify v4->v5 security upgrade (pnpm audit: critical
+# @fastify/middie auth-bypass CVE cluster) — 5.11.3 is exactly what
+# @nestjs/platform-fastify@11.2.3 itself declares as its `fastify`
+# dependency; keep these in lockstep on every future Nest bump.
 overrides:
-  fastify: 4.28.1
+  fastify: 5.11.3
+  # Next.js's own optional image-optimization dependency, not used
+  # directly by app code anywhere. Pinned past 0.35.0 for the libvips
+  # CVE cluster (GHSA-f88m-g3jw-g9cj) flagged by pnpm audit — this app's
+  # upload allowlist already made that cluster unreachable (magic-bytes.ts
+  # only accepts JPEG/PNG/WEBP), but there's no reason to leave a known-
+  # vulnerable version resolved when a compatible patched one exists.
+  sharp: ^0.35.4
+  # next@15.1.4 hard-pins its OWN internal postcss@8.4.31 for its build
+  # pipeline, entirely separate from this workspace's own postcss
+  # devDependency (already at a patched 8.5.26 for Tailwind). That
+  # internal copy carried 3 CVEs (XSS via unescaped </style>,
+  # sourceMappingURL arbitrary file/`.map` read) per pnpm audit. Build-
+  # time only, never part of the runtime HTTP surface, but no reason to
+  # leave a known-vulnerable copy resolved when 8.5.26 already works.
+  postcss: ^8.5.26
 
 # pnpm 10+ refuses to run dependency install/postinstall scripts unless
 # explicitly allowed, to limit supply-chain risk from transitive
@@ -39,3 +58,6 @@ allowBuilds:
   prisma: true
   sharp: true
   unrs-resolver: true
+
+minimumReleaseAgeExclude:
+  - '@nestjs/jwt@12.0.1'

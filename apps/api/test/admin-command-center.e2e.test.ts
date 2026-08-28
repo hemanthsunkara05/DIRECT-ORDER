@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AdminRole } from '@prisma/client';
 import { createTestApp, type TestApp } from './support/create-test-app.js';
 import {
@@ -166,6 +166,63 @@ describe('Admin command center, order detail, and admin upload (Phase 23a, e2e)'
     expect(
       body.topRestaurants.some((r: { restaurantId: string }) => r.restaurantId === restaurantId),
     ).toBe(true);
+  });
+
+  // Regression: found live via scripts/dup-load-test.ts on 2026-08-25 —
+  // `DailyPlatformMetrics.date` is a pure date-KEY (AnalyticsRollupService
+  // stores it via `dateKeyToUtcDate`, which parses "2026-08-26" as literal
+  // UTC midnight, not a real instant), while `commandCenter()` used to
+  // bound its trend-range query with plain `new Date()` (real UTC "now").
+  // For the ~5.5h/day window where IST has already crossed into a new
+  // calendar day but UTC hasn't (UTC 18:30-23:59), today's already-rolled-up
+  // row is dated LATER than that UTC "now", so the old `lte: new Date()`
+  // filter silently excluded it and every KPI tile read 0 despite real
+  // orders existing. Freezing the clock inside that exact window
+  // reproduces it deterministically regardless of when this test runs.
+  it("reflects today's orders in the KPI tiles even during the ~5.5h/day window where IST has already crossed into a new calendar day but UTC hasn't", async () => {
+    ctx = await createTestApp();
+    vi.useFakeTimers();
+    // 2026-01-15T20:00:00Z: IST (UTC+5:30) is already 2026-01-16 01:30 —
+    // a new calendar day — while UTC is still on 2026-01-15.
+    vi.setSystemTime(new Date('2026-01-15T20:00:00.000Z'));
+    try {
+      const admin = await registerAdmin('ADMIN_OPERATIONS');
+      await setUpRestaurantWithPlacedOrder();
+      // Same IST-dateKey logic AnalyticsRollupService's own poller uses —
+      // not a UTC-sliced date, which is exactly the bug being guarded
+      // against here.
+      await ctx.app.get(AnalyticsRollupService).rollupPlatformDay('2026-01-16');
+
+      const res = await get(ctx, '/api/v1/admin/overview/command-center', admin.cookie).expect(200);
+      expect(res.body.data.kpis.ordersToday).toBeGreaterThanOrEqual(1);
+      expect(res.body.data.kpis.gmvTodayMinor).not.toBe('0');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Regression: found live via scripts/dup-load-test.ts on 2026-08-26 —
+  // `orderFunnel()`'s 5 non-terminal counts (PLACED/ACCEPTED/PREPARING/
+  // READY_FOR_PICKUP/OUT_FOR_DELIVERY) had NO date filter at all, so a
+  // widget titled "Order lifecycle (today)" was counting orders CURRENTLY
+  // in that status from any day ever — including genuinely ancient stuck
+  // orders (the same rows `listStuckOrders` flags in Priority Alerts as
+  // 15+ days old). Only the 3 terminal counts (Delivered/Cancelled/
+  // Rejected) actually bounded themselves to today. Confirmed live: the
+  // funnel's own 8 numbers summed to 307 against an ordersToday of 300.
+  it('does not count an old order stuck in a non-terminal status toward today\'s lifecycle funnel', async () => {
+    ctx = await createTestApp();
+    const admin = await registerAdmin('ADMIN_OPERATIONS');
+    const { order: oldOrder } = await setUpRestaurantWithPlacedOrder();
+    const oldRow = ctx.db.orders.find((o) => o.id === oldOrder.id)!;
+    oldRow.placedAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days ago, still PLACED
+
+    await setUpRestaurantWithPlacedOrder(); // placed today, no manipulation
+
+    const res = await get(ctx, '/api/v1/admin/overview/command-center', admin.cookie).expect(200);
+    // Two orders exist in PLACED status total; only the one actually
+    // placed today should count. Before the fix this would read 2.
+    expect(res.body.data.funnel.PLACED).toBe(1);
   });
 
   it('flags an order stuck past the 45-minute threshold, and stops flagging it once it moves on', async () => {
