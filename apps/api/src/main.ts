@@ -77,7 +77,19 @@ async function bootstrap(): Promise<void> {
   // credentials:true + an explicit origin (not '*') is required for the
   // browser to actually send the HttpOnly session cookies cross-origin
   // between the web app's and the API's domains (docs/09-security.md §15.7).
-  await app.register(fastifyCors, { origin: env.WEB_BASE_URL, credentials: true });
+  // methods/allowedHeaders must be explicit: @fastify/cors v11 (bumped
+  // 2026-08-28 alongside the Nest/Fastify security upgrade) defaults
+  // access-control-allow-methods to GET,HEAD,POST only, silently
+  // blocking every PATCH/DELETE/PUT request's real browser preflight
+  // (v9's default was more permissive) — vitest/supertest and direct
+  // fetch() calls don't enforce CORS so this regression was invisible
+  // to both automated tests and manual API probes.
+  await app.register(fastifyCors, {
+    origin: env.WEB_BASE_URL,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'x-csrf-token'],
+  });
 
   // Registered after @fastify/cookie so request.cookies is already
   // populated — a native Fastify hook, not Nest middleware, see

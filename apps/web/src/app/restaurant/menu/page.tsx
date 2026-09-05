@@ -486,6 +486,11 @@ function ItemRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(item.name);
+  const [priceRupees, setPriceRupees] = useState(formatINR(BigInt(item.priceMinor)).replace(/[^0-9.]/g, ''));
+  const [dietaryTag, setDietaryTag] = useState<DietaryTag>(item.dietaryTag);
+
   useEffect(() => setAvailable(item.isAvailable), [item.isAvailable]);
 
   async function handleToggle(next: boolean) {
@@ -501,6 +506,33 @@ function ItemRow({
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleSave() {
+    setBusy(true);
+    setError(null);
+    try {
+      const priceMinor = toMinor(priceRupees.trim());
+      await menuApi.items.update(
+        item.id,
+        { name, priceMinor: priceMinor.toString(), dietaryTag },
+        restaurantId,
+      );
+      setEditing(false);
+      onChanged();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleCancelEdit() {
+    setName(item.name);
+    setPriceRupees(formatINR(BigInt(item.priceMinor)).replace(/[^0-9.]/g, ''));
+    setDietaryTag(item.dietaryTag);
+    setError(null);
+    setEditing(false);
   }
 
   async function handleArchive() {
@@ -529,13 +561,45 @@ function ItemRow({
         if (draggedId) onDrop(draggedId);
       }}
     >
-      <div className="flex flex-col">
-        <span className="text-sm font-medium text-ink-900">{item.name}</span>
-        <span className="font-mono text-xs text-ink-500">
-          {formatINR(BigInt(item.priceMinor))} · {item.dietaryTag}
-        </span>
-        {error && <span className="text-xs font-medium text-error">{error}</span>}
-      </div>
+      {editing ? (
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <input
+            type="text"
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="input flex-1"
+          />
+          <input
+            type="text"
+            required
+            inputMode="decimal"
+            placeholder="Price (₹)"
+            value={priceRupees}
+            onChange={(e) => setPriceRupees(e.target.value)}
+            className="input w-24"
+          />
+          <select
+            value={dietaryTag}
+            onChange={(e) => setDietaryTag(e.target.value as DietaryTag)}
+            className="input w-auto shrink-0"
+          >
+            {DIETARY_TAGS.map((tag) => (
+              <option key={tag} value={tag}>
+                {tag}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : (
+        <div className="flex flex-col">
+          <span className="text-sm font-medium text-ink-900">{item.name}</span>
+          <span className="font-mono text-xs text-ink-500">
+            {formatINR(BigInt(item.priceMinor))} · {item.dietaryTag}
+          </span>
+        </div>
+      )}
+      {error && <span className="text-xs font-medium text-error">{error}</span>}
 
       <div className="flex items-center gap-3">
         <label className="flex items-center gap-1 text-xs text-ink-700">
@@ -568,6 +632,35 @@ function ItemRow({
             >
               ▼
             </button>
+            {editing ? (
+              <>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void handleSave()}
+                  className="text-xs font-semibold text-ink-700 underline"
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={handleCancelEdit}
+                  className="text-xs text-ink-500 underline"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setEditing(true)}
+                className="text-xs font-semibold text-ink-700 underline"
+              >
+                Edit
+              </button>
+            )}
             <button
               type="button"
               disabled={busy}
