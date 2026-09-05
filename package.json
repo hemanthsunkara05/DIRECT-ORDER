@@ -31,22 +31,22 @@
   },
   "devDependencies": {
     "@direct-order/config": "workspace:*",
-    "@eslint/eslintrc": "^3.2.0",
+    "@eslint/eslintrc": "^3.3.7",
     "@eslint/js": "^9.18.0",
     "@prisma/client": "^6.2.1",
     "@types/node": "^22.10.5",
-    "@types/pg": "^8.11.10",
-    "argon2": "^0.41.1",
+    "@types/pg": "^8.23.1",
+    "argon2": "^0.45.1",
     "autocannon": "^8.0.0",
     "eslint": "^9.18.0",
     "eslint-config-next": "^15.1.4",
     "eslint-config-prettier": "^9.1.0",
     "globals": "^15.14.0",
-    "pg": "^8.13.1",
+    "pg": "^8.23.0",
     "prettier": "^3.4.2",
     "prisma": "^6.2.1",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.13",
     "typescript": "^5.7.3",
-    "typescript-eslint": "^8.19.1"
+    "typescript-eslint": "^8.69.0"
   }
 }
