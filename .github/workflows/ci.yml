@@ -14,7 +14,7 @@ jobs:
     name: Lint, format, typecheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -37,7 +37,7 @@ jobs:
     name: Unit + integration tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -56,7 +56,7 @@ jobs:
     name: Build all apps and packages
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -103,7 +103,7 @@ jobs:
       LOG_LEVEL: info
       DATABASE_URL: postgresql://direct_order:direct_order@localhost:5432/direct_order
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -150,7 +150,7 @@ jobs:
     name: Playwright smoke test (apps/web)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -175,7 +175,7 @@ jobs:
     name: Dependency audit + secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4
