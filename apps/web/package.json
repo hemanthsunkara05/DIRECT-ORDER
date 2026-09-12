@@ -14,21 +14,21 @@
   "dependencies": {
     "@direct-order/contracts": "workspace:*",
     "@direct-order/money": "workspace:*",
-    "lucide-react": "^1.31.0",
+    "lucide-react": "^1.43.0",
     "next": "^15.1.4",
     "qrcode": "^1.5.4",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@direct-order/config": "workspace:*",
-    "@next/bundle-analyzer": "^16.3.1",
-    "@playwright/test": "^1.49.1",
+    "@next/bundle-analyzer": "^16.3.4",
+    "@playwright/test": "^1.63.0",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.4",
-    "@types/react-dom": "^19.0.2",
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.49",
+    "@types/react-dom": "^19.2.7",
+    "autoprefixer": "^10.5.5",
+    "postcss": "^8.5.28",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3"
   }
