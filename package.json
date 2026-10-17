@@ -41,7 +41,7 @@
     "eslint": "^9.18.0",
     "eslint-config-next": "^15.1.4",
     "eslint-config-prettier": "^9.1.0",
-    "globals": "^15.14.0",
+    "globals": "^17.10.0",
     "pg": "^8.13.1",
     "prettier": "^3.4.2",
     "prisma": "^6.2.1",
